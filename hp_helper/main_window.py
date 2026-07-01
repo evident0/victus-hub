@@ -163,7 +163,7 @@ def _start_fan_control() -> None:
                     )
 
                     delta = abs(next_pct - (last_written_pct or 0.0))
-                    if last_written_pct is None or delta >= _WRITE_MIN_DELTA_PCT:
+                    if last_written_pct is None or delta >= _WRITE_MIN_DELTA_PCT or next_pct == target:
                         pwm = max(0, min(int(next_pct * 255.0 / 100.0), 255))
                         _fan_logger.info(
                             "target=%.0f%% current=%.0f%% → next=%.0f%% delta=%.1f → pwm=%d%s",
