@@ -13,3 +13,6 @@ dependencies = [
 
 [project.scripts]
 hp-helper = "hp_helper.main:main"
+
+[tool.setuptools.packages.find]
+include = ["hp_helper*", "hp_helperd*"]
