@@ -45,7 +45,7 @@ _TEMP_WINDOW = 15
 _WRITE_MIN_DELTA_PCT = 5.0
 _RAMP_UP_PCT = 30.0
 _RAMP_DOWN_PCT = 15.0
-_RAMP_DOWN_DELAY = 10.0
+_RAMP_DOWN_DELAY = 0.0
 
 _fan_logger = logging.getLogger("fan-control")
 
