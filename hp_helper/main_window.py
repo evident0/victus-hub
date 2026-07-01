@@ -242,7 +242,7 @@ class MainWindow(QMainWindow):
         tray_menu.addAction(show_action)
 
         quit_action = QAction("Quit", self)
-        quit_action.triggered.connect(QApplication.quit)
+        quit_action.triggered.connect(self._quit_app)
         tray_menu.addAction(quit_action)
 
         self._tray.setContextMenu(tray_menu)
@@ -261,6 +261,7 @@ class MainWindow(QMainWindow):
         self._power_apply_in_flight = False
         self._last_lighting_send = 0.0
         self._last_sent_color: tuple[int, int, int] | None = None
+        self._quitting = False
 
         # ── Signal connections ──
 
@@ -336,30 +337,48 @@ class MainWindow(QMainWindow):
 
 
     def _hide_all_windows(self):
-        """Hide main window + all graph windows to tray."""
+        """Hide main window + all child windows to tray."""
         for key, win in list(self._graph_windows.items()):
             if win.isVisible():
                 win.hide()
                 self._hidden_graph_windows.add(key)
+        if self._fan_curves_window is not None and self._fan_curves_window.isVisible():
+            self._fan_curves_window.hide()
+            self._hidden_graph_windows.add("__fan_curves__")
         self.hide()
 
     def _show_all_windows(self):
-        """Show main window + restore hidden graph windows."""
+        """Show main window + restore hidden child windows."""
         self.show()
         self.raise_()
         self.activateWindow()
         for key in list(self._hidden_graph_windows):
-            win = self._graph_windows.get(key)
-            if win is not None:
-                win.show()
+            if key == "__fan_curves__":
+                if self._fan_curves_window is not None:
+                    self._fan_curves_window.show()
+            else:
+                win = self._graph_windows.get(key)
+                if win is not None:
+                    win.show()
         self._hidden_graph_windows.clear()
 
+    def _quit_app(self):
+        """Restore fan to auto, then quit the entire application."""
+        try:
+            api.set_fan_auto()
+        except Exception:
+            pass
+        self._tray.hide()
+        self._quitting = True
+        QApplication.instance().quit()
     def closeEvent(self, event: QCloseEvent):
-        """Hide all windows to tray instead of quitting."""
+        """Hide all windows to tray instead of quitting, unless actually quitting."""
+        if getattr(self, "_quitting", False):
+            event.accept()
+            return
         self._save_geometry()
         self._hide_all_windows()
         event.ignore()
-
     # ── Geometry persistence ──
 
     def _restore_geometry(self):
