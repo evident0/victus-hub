@@ -74,8 +74,10 @@ _mock_cpu_usage = 35.0
 _mock_gpu_usage = 22.0
 _mock_cpu_fan = 2100
 _mock_gpu_fan = 1800
-_mock_cpu_power = 18.5
-_mock_gpu_power = 12.0
+_mock_nvme_temp = 38.0
+_mock_nvme_sensor1 = 34.0
+_mock_battery_charge = 85.0
+_mock_battery_voltage = 16.8
 
 _mock_fan_config = FanConfig(
     profiles=[
@@ -109,6 +111,7 @@ def get_hardware_title() -> str:
 def read_sensors() -> SensorSnapshot:
     global _mock_cpu_temp, _mock_gpu_temp, _mock_cpu_usage, _mock_gpu_usage
     global _mock_cpu_fan, _mock_gpu_fan, _mock_cpu_power, _mock_gpu_power
+    global _mock_nvme_temp, _mock_nvme_sensor1, _mock_battery_charge, _mock_battery_voltage
 
     _mock_cpu_temp = _jitter(55.0, 3.0)
     _mock_gpu_temp = _jitter(48.0, 2.0)
@@ -118,6 +121,10 @@ def read_sensors() -> SensorSnapshot:
     _mock_gpu_fan = max(0, int(_jitter(1800, 150)))
     _mock_cpu_power = max(0, _jitter(18.5, 3.0))
     _mock_gpu_power = max(0, _jitter(12.0, 2.0))
+    _mock_nvme_temp = _jitter(38.0, 2.0)
+    _mock_nvme_sensor1 = _jitter(34.0, 1.5)
+    _mock_battery_charge = _jitter(85.0, 2.0)
+    _mock_battery_voltage = _jitter(16.8, 0.3)
 
     return SensorSnapshot(
         cpu_fan=SensorReading(f"{_mock_cpu_fan} RPM"),
@@ -136,7 +143,36 @@ def read_sensors() -> SensorSnapshot:
         pwm_mode=SensorReading("Auto"),
         pwm_value=SensorReading("128"),
         profile=SensorReading("Balanced"),
-        extra_sensors=[],
+        extra_sensors=[
+            ExtraSensor(
+                key="extra-nvme-temp", group="Drives",
+                name="NVMe Composite Temp", unit="\u00B0C",
+                value_min=0, value_max=80,
+                numeric_value=round(_mock_nvme_temp, 1),
+                reading=SensorReading(f"{_mock_nvme_temp:.1f}\u00B0C", "nvme-pci"),
+            ),
+            ExtraSensor(
+                key="extra-nvme-sensor1", group="Drives",
+                name="NVMe Sensor 1", unit="\u00B0C",
+                value_min=0, value_max=80,
+                numeric_value=round(_mock_nvme_sensor1, 1),
+                reading=SensorReading(f"{_mock_nvme_sensor1:.1f}\u00B0C", "nvme-pci"),
+            ),
+            ExtraSensor(
+                key="extra-battery-charge", group="Battery",
+                name="Battery Charge", unit="%",
+                value_min=0, value_max=100,
+                numeric_value=round(_mock_battery_charge, 1),
+                reading=SensorReading(f"{_mock_battery_charge:.1f}%", "BAT0"),
+            ),
+            ExtraSensor(
+                key="extra-battery-voltage", group="Battery",
+                name="Battery Voltage", unit="V",
+                value_min=10, value_max=20,
+                numeric_value=round(_mock_battery_voltage, 1),
+                reading=SensorReading(f"{_mock_battery_voltage:.2f} V", "BAT0"),
+            ),
+        ],
     )
 
 
