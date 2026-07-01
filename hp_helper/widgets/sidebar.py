@@ -1,15 +1,10 @@
 """Sidebar navigation widget with tab buttons."""
 
-from pathlib import Path
-
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QPushButton
 from PySide6.QtCore import Signal, Qt, QSize
-from PySide6.QtGui import QIcon
 
+from hp_helper.icon_utils import load_icon
 from hp_helper.theme import COLORS
-
-_RES_DIR = Path(__file__).parent.parent / "resources" / "icons"
-
 TABS = [
     ("icons8-laptop-32.png", "Home"),
     ("icons8-fan-32.png", "Fans & Power"),
@@ -38,10 +33,8 @@ class Sidebar(QWidget):
 
         for i, (icon_file, tooltip) in enumerate(TABS):
             btn = QPushButton(self)
-            icon_path = _RES_DIR / icon_file
-            if icon_path.exists():
-                btn.setIcon(QIcon(str(icon_path)))
-                btn.setIconSize(QSize(24, 24))
+            btn.setIcon(load_icon(icon_file, size=24))
+            btn.setIconSize(QSize(24, 24))
             btn.setToolTip(tooltip)
             btn.setFixedSize(48, 48)
             btn.setCursor(Qt.PointingHandCursor)

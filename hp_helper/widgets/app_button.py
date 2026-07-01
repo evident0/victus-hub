@@ -2,15 +2,12 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 from PySide6.QtWidgets import QPushButton, QSizePolicy
 from PySide6.QtCore import Qt, QSize
-from PySide6.QtGui import QFont, QIcon
+from PySide6.QtGui import QFont
 
+from hp_helper.icon_utils import load_icon
 from hp_helper.theme import COLORS
-
-_RES_DIR = Path(__file__).parent.parent / "resources" / "icons"
 
 
 class AppButton(QPushButton):
@@ -34,11 +31,15 @@ class AppButton(QPushButton):
         self.setCursor(Qt.PointingHandCursor)
 
         # Icon: file path vs unicode text
-        icon_path = _RES_DIR / icon if icon else None
-        if icon_path and icon_path.exists():
-            self.setIcon(QIcon(str(icon_path)))
-            self.setIconSize(QSize(28, 28))
-            self.setText(label)
+        image_exts = (".png", ".ico", ".svg", ".bmp", ".jpg", ".jpeg")
+        if icon and any(icon.lower().endswith(ext) for ext in image_exts):
+            ico = load_icon(icon, size=28)
+            if not ico.isNull():
+                self.setIcon(ico)
+                self.setIconSize(QSize(28, 28))
+                self.setText(label)
+            else:
+                self.setText(f"{icon}\n{label}")
         else:
             self.setText(f"{icon}\n{label}")
 
