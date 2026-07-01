@@ -1,0 +1,174 @@
+"""Root daemon that listens on a Unix socket and executes privileged operations.
+
+Ports privileged/daemon.rs exactly.
+"""
+
+import logging
+import os
+import socket
+import threading
+
+from hp_helper.backend import protocol
+from hp_helper.backend.rapl import RaplPowerSampler
+from hp_helperd import ryzenadj, sysfs
+
+SOCKET_PATH = "/run/hp-helperd/hp-helper-rs.sock"
+
+logger = logging.getLogger(__name__)
+
+
+def _parse_u8(value: str | None, name: str) -> int:
+    if value is None:
+        raise RuntimeError(f"missing {name}")
+    try:
+        return int(value)
+    except ValueError:
+        raise RuntimeError(f"invalid {name}")
+
+
+def _parse_power_limit(value: str | None, name: str) -> int:
+    if value is None:
+        raise RuntimeError(f"missing {name}")
+    try:
+        return int(value)
+    except ValueError:
+        raise RuntimeError(f"invalid {name}")
+
+
+def _parse_power_limit_request(request: str) -> tuple[int, int, int]:
+    body = request.removeprefix("power-limits\t")
+    parts = body.split("\t")
+    if len(parts) > 3:
+        raise RuntimeError("too many power limit fields")
+    stapm = _parse_power_limit(parts[0] if len(parts) > 0 else None, "stapm-limit")
+    fast = _parse_power_limit(parts[1] if len(parts) > 1 else None, "fast-limit")
+    slow = _parse_power_limit(parts[2] if len(parts) > 2 else None, "slow-limit")
+    return stapm, fast, slow
+
+
+def _parse_keyboard_color_request(request: str) -> tuple[int, int, int]:
+    body = request.removeprefix("keyboard-color\t")
+    parts = body.split("\t")
+    if len(parts) > 3:
+        raise RuntimeError("too many keyboard color fields")
+    red = _parse_u8(parts[0] if len(parts) > 0 else None, "red")
+    green = _parse_u8(parts[1] if len(parts) > 1 else None, "green")
+    blue = _parse_u8(parts[2] if len(parts) > 2 else None, "blue")
+    return red, green, blue
+
+
+def handle_client(stream: socket.socket, sampler: RaplPowerSampler) -> None:
+    """Handle one client connection. Runs in its own thread."""
+    try:
+        data = b""
+        while not data.endswith(b"\n"):
+            chunk = stream.recv(1024)
+            if not chunk:
+                break
+            data += chunk
+    except OSError as e:
+        try:
+            stream.sendall(f"ERR\t{e}\n".encode())
+        except OSError:
+            pass
+        return
+
+    if not data:
+        try:
+            stream.sendall(b"ERR\tempty request\n")
+        except OSError:
+            pass
+        return
+
+    request = data.decode().rstrip("\n")
+
+    try:
+        if request == "cpu-power":
+            sample = sampler.read()
+            response = protocol.format_cpu_power_response(sample)
+        elif request == "fan-auto":
+            logger.info("[fan-control] daemon request: fan-auto")
+            try:
+                result = sysfs.write_pwm_enable(2)
+                response = protocol.format_status_response((True, result))
+            except RuntimeError as e:
+                response = protocol.format_status_response((False, str(e)))
+        elif request.startswith("fan-pwm\t"):
+            body = request.removeprefix("fan-pwm\t")
+            try:
+                pwm = _parse_u8(body, "pwm")
+            except RuntimeError:
+                response = "ERR\tinvalid PWM value\n"
+            else:
+                logger.info("[fan-control] daemon request: fan-pwm %d/255", pwm)
+                try:
+                    result = sysfs.write_pwm(pwm)
+                    response = protocol.format_status_response((True, result))
+                except RuntimeError as e:
+                    response = protocol.format_status_response((False, str(e)))
+        elif request.startswith("keyboard-color\t"):
+            try:
+                r, g, b = _parse_keyboard_color_request(request)
+                result = sysfs.write_keyboard_color(r, g, b)
+                response = protocol.format_status_response((True, result))
+            except RuntimeError as e:
+                response = protocol.format_status_response((False, str(e)))
+        elif request.startswith("power-limits\t"):
+            try:
+                s, f, sl = _parse_power_limit_request(request)
+                result = ryzenadj.apply_power_limits(s, f, sl)
+                response = protocol.format_status_response((True, result))
+            except RuntimeError as e:
+                response = protocol.format_status_response((False, str(e)))
+        else:
+            response = "ERR\tunsupported request\n"
+    except Exception as e:
+        response = f"ERR\t{e}\n"
+
+    try:
+        stream.sendall(response.encode())
+    except OSError as e:
+        logger.warning("failed to write response: %s", e)
+    finally:
+        try:
+            stream.close()
+        except OSError:
+            pass
+
+
+def run_daemon() -> None:
+    """Start the hp-helperd Unix socket daemon."""
+    socket_path = SOCKET_PATH
+
+    # Clean up stale socket
+    if os.path.exists(socket_path):
+        os.unlink(socket_path)
+
+    os.makedirs("/run/hp-helperd", exist_ok=True, mode=0o755)
+
+    server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    server.bind(socket_path)
+    os.chmod(socket_path, 0o666)
+    server.listen(5)
+
+    sampler = RaplPowerSampler()
+    # Use a lock because sampler.read() mutates self._sample
+    sampler_lock = threading.Lock()
+
+    print(f"hp-helperd listening on {socket_path}")
+
+    while True:
+        try:
+            conn, _addr = server.accept()
+        except OSError:
+            break
+
+        def _handle(s: socket.socket):
+            try:
+                with sampler_lock:
+                    handle_client(s, sampler)
+            except Exception:
+                pass
+
+        t = threading.Thread(target=_handle, args=(conn,), daemon=True)
+        t.start()

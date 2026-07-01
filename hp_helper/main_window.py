@@ -1,6 +1,15 @@
 """Main application window with sidebar, stacked pages, and system tray."""
 
 import time
+import collections
+import threading
+import logging
+
+from hp_helper.backend import fan_config as _fan_config
+from hp_helper.backend import profiles as _profiles
+from hp_helper.backend.sensors import SensorReader as _SensorReader
+from hp_helper.backend import daemon_client as _daemon_client
+
 from pathlib import Path
 
 from PySide6.QtWidgets import (
@@ -30,6 +39,147 @@ from hp_helper.keyboard_lighting import (
     normalize_lighting_settings, lighting_frame, frame_interval_ms,
     hex_to_rgb,
 )
+# ── Fan-control loop (ported from lib.rs:118-224) ──
+
+_POLL_INTERVAL = 1.0
+_CONTROL_INTERVAL = 3.0
+_TEMP_WINDOW = 15
+_WRITE_MIN_DELTA_PCT = 5.0
+_RAMP_UP_PCT = 30.0
+_RAMP_DOWN_PCT = 15.0
+_RAMP_DOWN_DELAY = 10.0
+
+_fan_logger = logging.getLogger("fan-control")
+
+
+def _next_fan_percent(
+    target: float,
+    current: float,
+    ramp_down_since: float | None,
+    now: float,
+    ramp_up: float,
+    ramp_down: float,
+    ramp_down_delay: float,
+) -> tuple[float, float | None]:
+    """Compute the next fan speed percent with ramp-up/down logic.
+
+    Ports lib.rs::next_fan_percent exactly.
+    Returns (next_pct, new_ramp_down_since).
+    """
+    if target > current:
+        return (min(current + ramp_up, target), None)
+
+    if target < current:
+        if ramp_down_since is None:
+            ramp_down_since = now
+            if ramp_down_delay == 0.0:
+                return (max(current - ramp_down, target), ramp_down_since)
+            return (current, ramp_down_since)
+        elif now - ramp_down_since >= ramp_down_delay:
+            return (max(current - ramp_down, target), ramp_down_since)
+        else:
+            return (current, ramp_down_since)
+
+    return (target, None)
+
+
+def _start_fan_control() -> None:
+    """Background thread that implements the custom fan-control loop."""
+
+    def _loop():
+        import time as _time
+
+        temp_history: collections.deque = collections.deque(maxlen=_TEMP_WINDOW)
+        last_written_pct: float | None = None
+        ramp_down_since: float | None = None
+        next_control = _time.monotonic()
+        reader = _SensorReader()
+        was_custom = False
+
+        while True:
+            # ── poll ──
+            try:
+                snap = reader.read_all()
+            except Exception:
+                _time.sleep(_POLL_INTERVAL)
+                continue
+
+            temp_history.append((snap.cpu_temp_c, snap.gpu_temp_c))
+
+            try:
+                profile_idx = max(0, min(
+                    _profiles.current_ui_profile_index() or 1, 2
+                ))
+            except Exception:
+                profile_idx = 1
+
+            config = _fan_config.load()
+            profile = config.profiles[profile_idx]
+
+            if not config.custom_enabled:
+                if was_custom:
+                    try:
+                        _daemon_client.request_fan_auto()
+                    except Exception:
+                        pass
+                    last_written_pct = None
+                    ramp_down_since = None
+                    was_custom = False
+                _time.sleep(_POLL_INTERVAL)
+                continue
+
+            was_custom = True
+
+            # ── control tick ──
+            now = _time.monotonic()
+            if now >= next_control:
+                cpu_temps = [
+                    int(t) for t, _ in temp_history if t is not None
+                ]
+                gpu_temps = [
+                    int(t) for _, t in temp_history if t is not None
+                ]
+
+                cpu_avg: float | None = None
+                gpu_avg: float | None = None
+                target: float | None = None
+
+                if cpu_temps:
+                    cpu_avg = sum(cpu_temps) / len(cpu_temps)
+                    s = _fan_config.interpolate_fan(
+                        profile.cpu_points, round(cpu_avg)
+                    )
+                    target = s
+
+                if gpu_temps:
+                    gpu_avg = sum(gpu_temps) / len(gpu_temps)
+                    s = _fan_config.interpolate_fan(
+                        profile.gpu_points, round(gpu_avg)
+                    )
+                    target = max(target, s) if target is not None else s
+
+                if target is not None:
+                    current = last_written_pct if last_written_pct is not None else target
+                    next_pct, ramp_down_since = _next_fan_percent(
+                        target, current, ramp_down_since, now,
+                        _RAMP_UP_PCT, _RAMP_DOWN_PCT, _RAMP_DOWN_DELAY,
+                    )
+
+                    delta = abs(next_pct - (last_written_pct or 0.0))
+                    if last_written_pct is None or delta >= _WRITE_MIN_DELTA_PCT:
+                        pwm = max(0, min(round(next_pct * 255.0 / 100.0), 255))
+                        try:
+                            _daemon_client.request_fan_pwm(pwm, cpu_avg, gpu_avg)
+                        except Exception:
+                            pass
+                        last_written_pct = next_pct
+
+                next_control = now + _CONTROL_INTERVAL
+
+            _time.sleep(_POLL_INTERVAL)
+
+    t = threading.Thread(target=_loop, daemon=True, name="fan-control")
+    t.start()
 
 POWER_APPLY_DEDUPE_MS = 1000
 
@@ -161,6 +311,8 @@ class MainWindow(QMainWindow):
         self._lighting_timer.setInterval(50)
         self._lighting_timer.timeout.connect(self._tick_lighting)
         self._lighting_timer.start()
+        # Fan-control background thread
+        _start_fan_control()
 
     # ── Tab switching ──
 
@@ -282,20 +434,29 @@ class MainWindow(QMainWindow):
 
     def _set_fan_auto(self):
         try:
+            api.set_custom_fan_enabled(False)
+        except Exception:
+            pass
+        try:
             api.set_fan_auto()
         except Exception:
             pass
 
     def _set_fan_max(self):
         try:
-            api.set_fan_pwm(100)
+            api.set_custom_fan_enabled(False)
+        except Exception:
+            pass
+        try:
+            api.set_fan_pwm(255)
         except Exception:
             pass
 
     def _set_fan_custom(self):
-        # Phase 2: apply the saved custom fan curve via backend.
-        # For now this is a no-op placeholder.
-        pass
+        try:
+            api.set_custom_fan_enabled(True)
+        except Exception:
+            pass
 
     def _open_sensor_graph(self, key: str):
         """Open or focus a sensor graph window for the given sensor key."""
