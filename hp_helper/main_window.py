@@ -274,17 +274,28 @@ class MainWindow(QMainWindow):
     def _on_fan_mode(self, mode: str):
         """Handle Auto/Max/Custom fan mode button clicks."""
         if mode == "auto":
-            try:
-                api.set_fan_auto()
-            except Exception:
-                pass
+            self._set_fan_auto()
         elif mode == "max":
-            try:
-                api.set_fan_pwm(100)
-            except Exception:
-                pass
+            self._set_fan_max()
         elif mode == "custom":
-            self.set_active_tab(1)  # switch to Fans tab
+            self._set_fan_custom()
+
+    def _set_fan_auto(self):
+        try:
+            api.set_fan_auto()
+        except Exception:
+            pass
+
+    def _set_fan_max(self):
+        try:
+            api.set_fan_pwm(100)
+        except Exception:
+            pass
+
+    def _set_fan_custom(self):
+        # Phase 2: apply the saved custom fan curve via backend.
+        # For now this is a no-op placeholder.
+        pass
 
     def _open_sensor_graph(self, key: str):
         """Open or focus a sensor graph window for the given sensor key."""

@@ -9,15 +9,15 @@ from hp_helper.theme import COLORS
 
 
 PROFILES = [
-    ("Power Saver", "\u262f", COLORS["accent_green"]),   # ☯
-    ("Balanced", "\u25c7", COLORS["accent_blue"]),         # ◇
-    ("Performance", "\u21af", COLORS["accent_red"]),       # ↯
+    ("Power Saver", "eco.ico", COLORS["accent_green"]),
+    ("Balanced", "standard.ico", COLORS["accent_blue"]),
+    ("Performance", "ultimate.ico", COLORS["accent_red"]),
 ]
 
 FAN_MODES = [
-    ("Auto", "\u2699", COLORS["accent_blue"]),             # ⚙
-    ("Max", "\u25b2", COLORS["accent_red"]),               # ▲
-    ("Custom", "\u270e", COLORS["accent_blue"]),            # ✎
+    ("Auto", "icons8-automation-32.png", COLORS["accent_blue"]),
+    ("Max", "icons8-fan-48.png", COLORS["accent_red"]),
+    ("Custom", "icons8-settings-32.png", COLORS["accent_blue"]),
 ]
 
 
@@ -54,10 +54,11 @@ class ProfileSection(QWidget):
         fan_row = QHBoxLayout()
         fan_row.setSpacing(9)
         self._fan_buttons: dict[str, AppButton] = {}
+        self._selected_fan_mode = "auto"
 
         for label, icon, accent in FAN_MODES:
-            btn = AppButton(label, icon, accent, selected=False)
             key = label.lower()
+            btn = AppButton(label, icon, accent, selected=(key == self._selected_fan_mode))
             btn.clicked.connect(lambda checked, k=key: self._on_fan_click(k))
             fan_row.addWidget(btn)
             self._fan_buttons[key] = btn
@@ -100,8 +101,10 @@ class ProfileSection(QWidget):
 
     def _on_profile_click(self, index: int):
         self.profile_selected.emit(index)
-
     # ── Fan mode ──
 
     def _on_fan_click(self, mode: str):
+        self._selected_fan_mode = mode
+        for key, btn in self._fan_buttons.items():
+            btn.set_selected(key == mode)
         self.fan_mode_selected.emit(mode)

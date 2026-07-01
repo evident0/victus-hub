@@ -1,28 +1,47 @@
 """Styled push button with accent color support for profile selection."""
 
-from PySide6.QtWidgets import QPushButton
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QFont
+from __future__ import annotations
+
+from pathlib import Path
+
+from PySide6.QtWidgets import QPushButton, QSizePolicy
+from PySide6.QtCore import Qt, QSize
+from PySide6.QtGui import QFont, QIcon
 
 from hp_helper.theme import COLORS
 
+_RES_DIR = Path(__file__).parent.parent / "resources" / "icons"
+
 
 class AppButton(QPushButton):
-    """A styled button with icon text, label, and accent color border when selected."""
+    """A styled button with icon, label, and accent color border when selected.
+
+    The *icon* parameter is a filename relative to ``resources/icons/``
+    for a .png/.ico, or a Unicode string used directly as a text icon.
+    """
 
     def __init__(self, label: str, icon: str, accent: str, selected: bool = False, parent=None):
         super().__init__(parent)
         self._label = label
-        self._icon = icon
+        self._icon_spec = icon
         self._accent = accent
         self._selected = selected
         self._enabled = True
 
         self.setMinimumHeight(72)
         self.setMinimumWidth(100)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.setCursor(Qt.PointingHandCursor)
 
-        self.setText(f"{icon}\n{label}")
+        # Icon: file path vs unicode text
+        icon_path = _RES_DIR / icon if icon else None
+        if icon_path and icon_path.exists():
+            self.setIcon(QIcon(str(icon_path)))
+            self.setIconSize(QSize(28, 28))
+            self.setText(label)
+        else:
+            self.setText(f"{icon}\n{label}")
+
         font = QFont()
         font.setPointSize(11)
         self.setFont(font)
@@ -31,8 +50,6 @@ class AppButton(QPushButton):
 
     def set_selected(self, selected: bool):
         """Update the selected visual state."""
-        if self._selected == selected:
-            return
         self._selected = selected
         self._update_style()
 
