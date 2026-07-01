@@ -18,7 +18,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def _request_daemon(request: str) -> str:
+def _request_daemon(request: str, quiet: bool = False) -> str:
     """Send one line to the daemon and read one line back."""
     try:
         sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -33,7 +33,8 @@ def _request_daemon(request: str) -> str:
             response += chunk
         sock.close()
         resp = response.decode().strip()
-        logger.info("\u2190 daemon: %s", resp)
+        if not quiet:
+            logger.info("\u2190 daemon: %s", resp)
         return response.decode()
     except OSError as e:
         logger.info("\u2190 daemon: ERROR %s", e)
@@ -41,7 +42,7 @@ def _request_daemon(request: str) -> str:
 
 
 def request_cpu_power() -> CpuPowerSample:
-    response = _request_daemon("cpu-power\n")
+    response = _request_daemon("cpu-power\n", quiet=True)
     return protocol.parse_cpu_power_response(response)
 
 
