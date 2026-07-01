@@ -17,6 +17,7 @@ from hp_helper.pages.fans_power_page import FansPowerPage
 from hp_helper.pages.sensors_page import SensorsPage
 from hp_helper.pages.keyboard_page import KeyboardPage
 from hp_helper.sensor_graph_window import SensorGraphWindow
+from hp_helper.fan_curves_window import FanCurvesWindow
 from hp_helper import api
 from hp_helper.sensor_definitions import (
     SENSOR_DEFINITIONS, dynamic_sensor_definition, SensorDefinition,
@@ -115,11 +116,14 @@ class MainWindow(QMainWindow):
 
         # ── Signal connections ──
 
-        # Home: profile selection
+        # Home: profile selection + fan modes
         self._home_page.profile_selected.connect(self._on_profile_select)
+        self._home_page.fan_mode_selected.connect(self._on_fan_mode)
+        self._home_page.fan_curves_popout_requested.connect(self._open_fan_curves_window)
 
-        # Fans: custom fan state
+        # Fans: custom fan state + pop-out request
         self._fans_page.custom_fan_changed.connect(self._on_custom_fan_changed)
+        self._fans_page.fan_curves_popout_requested.connect(self._open_fan_curves_window)
 
         # Keyboard: controls
         self._keyboard_page.enabled_changed.connect(self._on_lighting_enabled)
@@ -128,9 +132,12 @@ class MainWindow(QMainWindow):
         self._keyboard_page.speed_changed.connect(self._on_lighting_speed)
         # Sensors: graph request opens a standalone sensor graph window
         self._sensors_page.open_graph_requested.connect(self._open_sensor_graph)
+
+
+        # Window tracking
         self._graph_windows: dict[str, SensorGraphWindow] = {}
         self._hidden_graph_windows: set[str] = set()  # keys hidden by tray-close
-
+        self._fan_curves_window: FanCurvesWindow | None = None
         # ── Timers ──
 
         # Sensor poll (1s)
@@ -247,27 +254,45 @@ class MainWindow(QMainWindow):
         if profile is not None and profile != self._selected_profile:
             self._selected_profile = profile
             self._home_page.set_selected_profile(profile)
+            self._fans_page.set_edit_profile(profile)
+            if self._fan_curves_window is not None:
+                self._fan_curves_window.set_edit_profile(profile)
 
     # ── Profile selection ──
 
     def _on_profile_select(self, index: int):
-        # Profile 3 (index 3 = Fans+Power button) -> switch to Fans tab
-        if index == 3:
-            self.set_active_tab(1)
-            return
         self._selected_profile = index
         self._home_page.set_selected_profile(index)
+        self._fans_page.set_edit_profile(index)
+        if self._fan_curves_window is not None:
+            self._fan_curves_window.set_edit_profile(index)
         try:
             api.set_system_profile(index)
         except Exception:
             pass
+
+    # ── Fan mode ──
+
+    def _on_fan_mode(self, mode: str):
+        """Handle Auto/Max/Custom fan mode button clicks."""
+        if mode == "auto":
+            try:
+                api.set_fan_auto()
+            except Exception:
+                pass
+        elif mode == "max":
+            try:
+                api.set_fan_pwm(100)
+            except Exception:
+                pass
+        elif mode == "custom":
+            self.set_active_tab(1)  # switch to Fans tab
 
     # ── Custom fan ──
 
     def _on_custom_fan_changed(self, enabled: bool):
         """Handle custom fan enabled/disabled state change."""
         self._custom_fan_enabled = enabled
-        self._home_page.set_custom_fan_enabled(enabled)
 
     def _open_sensor_graph(self, key: str):
         """Open or focus a sensor graph window for the given sensor key."""
@@ -290,8 +315,28 @@ class MainWindow(QMainWindow):
         self._graph_windows[key] = win
         win.show()
 
-    # ── Power reapply ──
 
+    # ── Fan curves pop-out ──
+
+    def _open_fan_curves_window(self):
+        """Open or focus the standalone fan curves window."""
+        if self._fan_curves_window is not None:
+            self._fan_curves_window.show()
+            self._fan_curves_window.raise_()
+            self._fan_curves_window.activateWindow()
+            return
+        win = FanCurvesWindow()
+        win.set_edit_profile(self._selected_profile)
+        win.setAttribute(Qt.WA_DeleteOnClose)
+        def _on_destroyed(obj=None):
+            self._fan_curves_window = None
+            self._fans_page.set_fan_curves_window_open(False)
+        win.destroyed.connect(_on_destroyed)
+        self._fan_curves_window = win
+        self._fans_page.set_fan_curves_window_open(True)
+        win.show()
+
+    # ── Power reapply ──
     def _check_power_reapply(self):
         if not read_power_enabled() or self._power_apply_in_flight:
             return

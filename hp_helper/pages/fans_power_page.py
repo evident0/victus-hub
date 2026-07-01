@@ -2,7 +2,7 @@
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QSlider, QCheckBox,
-    QSpinBox, QComboBox,
+    QSpinBox, QPushButton,
 )
 from PySide6.QtCore import Qt, Signal, QTimer
 from PySide6.QtGui import QColor
@@ -29,7 +29,6 @@ GPU_TEMP_MAX = 90
 DEFAULT_CPU_POINTS = [(TEMP_MIN, 0), (CPU_TEMP_MAX, 100)]
 DEFAULT_GPU_POINTS = [(TEMP_MIN, 0), (GPU_TEMP_MAX, 100)]
 
-PROFILE_NAMES = ["Power Saver", "Balanced", "Performance"]
 
 
 def _points_to_segments(points: list[tuple[int, int]]) -> list[dict]:
@@ -78,6 +77,7 @@ class FansPowerPage(QWidget):
     """Fans & Power tab: fan curve editor + power limit controls."""
 
     custom_fan_changed = Signal(bool)
+    fan_curves_popout_requested = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -180,35 +180,81 @@ class FansPowerPage(QWidget):
         header_row = QHBoxLayout()
         header_row.addWidget(SectionTitle(None, "Fan Curves"))
 
-        self._profile_combo = QComboBox()
-        self._profile_combo.addItems(PROFILE_NAMES)
-        self._profile_combo.setCurrentIndex(1)
-        self._profile_combo.currentIndexChanged.connect(self._on_profile_changed)
-        header_row.addWidget(self._profile_combo)
 
         header_row.addStretch()
+
+        # Pop-out button
+        self._popout_btn = QPushButton("\u2197")  # ↗
+        self._popout_btn.setToolTip("Open fan curves in separate window")
+        self._popout_btn.setFixedSize(28, 28)
+        self._popout_btn.setCursor(Qt.PointingHandCursor)
+        self._popout_btn.clicked.connect(self.fan_curves_popout_requested.emit)
+        self._popout_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {COLORS['surface_raised']};
+                color: {COLORS['text_secondary']};
+                border: 1px solid {COLORS['border']};
+                border-radius: 4px;
+                padding: 0px;
+                font-size: 14px;
+            }}
+            QPushButton:hover {{
+                background-color: #2a2a2a;
+                color: {COLORS['text']};
+            }}
+        """)
+        header_row.addWidget(self._popout_btn)
         curves_layout.addLayout(header_row)
 
-        # Fan charts
+        # Placeholder shown when fan curves are in a separate window
+        self._popout_placeholder = QWidget()
+        self._popout_placeholder.setStyleSheet(
+            f"background-color: #181818; border-radius: 4px;")
+        ph_layout = QVBoxLayout(self._popout_placeholder)
+        ph_layout.setAlignment(Qt.AlignCenter)
+        ph_icon = QLabel("\u2197")  # ↗
+        ph_icon.setStyleSheet("color: #555555; font-size: 24px;")
+        ph_icon.setAlignment(Qt.AlignCenter)
+        ph_layout.addWidget(ph_icon)
+        ph_text = QLabel("Fan curves are open in a separate window.")
+        ph_text.setStyleSheet("color: #666666; font-size: 13px;")
+        ph_text.setAlignment(Qt.AlignCenter)
+        ph_layout.addWidget(ph_text)
+        ph_sub = QLabel("Close it to resume editing here.")
+        ph_sub.setStyleSheet("color: #555555; font-size: 11px;")
+        ph_sub.setAlignment(Qt.AlignCenter)
+        ph_layout.addWidget(ph_sub)
+        self._popout_placeholder.hide()
+        curves_layout.addWidget(self._popout_placeholder, 1)
+
+        # Fan charts wrapper (hidden when pop-out is open)
+        self._charts_wrapper = QWidget()
+        charts_wrap_layout = QVBoxLayout(self._charts_wrapper)
+        charts_wrap_layout.setContentsMargins(0, 0, 0, 0)
+        charts_wrap_layout.setSpacing(8)
+
         self._cpu_chart = FanChart("CPU Fan Curve", QColor(COLORS["accent_blue"]), CPU_TEMP_MAX)
         self._cpu_chart.point_added.connect(self._on_cpu_point_added)
         self._cpu_chart.point_moved.connect(self._on_cpu_point_moved)
         self._cpu_chart.point_deleted.connect(self._on_cpu_point_deleted)
         self._cpu_chart.point_selected.connect(self._on_cpu_point_selected)
-        curves_layout.addWidget(self._cpu_chart, 1)
+        charts_wrap_layout.addWidget(self._cpu_chart, 1)
 
         self._gpu_chart = FanChart("GPU Fan Curve", QColor(COLORS["accent_red"]), GPU_TEMP_MAX)
         self._gpu_chart.point_added.connect(self._on_gpu_point_added)
         self._gpu_chart.point_moved.connect(self._on_gpu_point_moved)
         self._gpu_chart.point_deleted.connect(self._on_gpu_point_deleted)
         self._gpu_chart.point_selected.connect(self._on_gpu_point_selected)
-        curves_layout.addWidget(self._gpu_chart, 1)
+        charts_wrap_layout.addWidget(self._gpu_chart, 1)
+
+        curves_layout.addWidget(self._charts_wrapper, 1)
 
         # Custom fan checkbox
         self._custom_check = QCheckBox("Apply custom fan curve")
         self._custom_check.toggled.connect(self._on_custom_toggled)
         curves_layout.addWidget(self._custom_check)
 
+        self._fan_curves_window_open = False
         content_row.addWidget(curves_panel, 1)
         layout.addLayout(content_row, 1)
 
@@ -317,9 +363,12 @@ class FansPowerPage(QWidget):
             self._cpu_chart.selected_point = -1
             self._gpu_chart.selected_point = -1
 
-    # ── Profile switching ──
+    # ── Profile-driven editing ──
 
-    def _on_profile_changed(self, index: int):
+    def set_edit_profile(self, index: int):
+        """Switch which profile's fan curves are shown (0=Power Saver, 1=Balanced, 2=Performance)."""
+        if index == self._edit_profile:
+            return
         self._edit_profile = index
         self._hydrate_editor()
 
@@ -463,3 +512,16 @@ class FansPowerPage(QWidget):
         self._slow_wrapper._slider.setValue(pwr.slow_limit)
         self._reapply_spin.setValue(pwr.reapply_seconds)
         self._power_check.setChecked(read_power_enabled())
+
+    # ── Pop-out window management ──
+
+    def set_fan_curves_window_open(self, open: bool):
+        """Toggle between inline charts and pop-out placeholder."""
+        if open == self._fan_curves_window_open:
+            return
+        self._fan_curves_window_open = open
+        self._charts_wrapper.setVisible(not open)
+        self._popout_placeholder.setVisible(open)
+
+    def is_fan_curves_window_open(self) -> bool:
+        return self._fan_curves_window_open

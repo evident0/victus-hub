@@ -1,4 +1,4 @@
-"""Home page — gauge dials, profile selector, and footer."""
+"""Home page — gauge dials, profile selector, fan modes, and footer."""
 
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout
 from PySide6.QtCore import Signal
@@ -10,9 +10,11 @@ from hp_helper.theme import COLORS
 
 
 class HomePage(QWidget):
-    """Home tab with two gauge dials, profile buttons, and footer."""
+    """Home tab with two gauge dials, profile/fan buttons, and footer."""
 
     profile_selected = Signal(int)
+    fan_mode_selected = Signal(str)
+    fan_curves_popout_requested = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -45,9 +47,12 @@ class HomePage(QWidget):
         gauge_widget.setStyleSheet("background: transparent;")
         layout.addWidget(gauge_widget, 1)
 
-        # Profile section (hide title on Home)
+        # Profile section
         self._profile_section = ProfileSection(hide_title=True)
         self._profile_section.profile_selected.connect(self.profile_selected.emit)
+        self._profile_section.fan_mode_selected.connect(self.fan_mode_selected.emit)
+        self._profile_section.fan_curves_popout_requested.connect(
+            self.fan_curves_popout_requested.emit)
         layout.addWidget(self._profile_section)
 
         # Footer
@@ -73,9 +78,6 @@ class HomePage(QWidget):
 
     def set_selected_profile(self, index: int):
         self._profile_section.set_selected_profile(index)
-
-    def set_custom_fan_enabled(self, enabled: bool):
-        self._profile_section.set_custom_fan_enabled(enabled)
 
 
 def _parse(reading) -> float:

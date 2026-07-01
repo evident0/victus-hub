@@ -1,65 +1,107 @@
-"""Profile selection section with four AppButtons in a row."""
+"""Profile selection section with profile buttons and fan mode controls."""
 
-from PySide6.QtWidgets import QWidget, QHBoxLayout
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton
 from PySide6.QtCore import Signal, Qt
+from PySide6.QtGui import QFont
 
 from hp_helper.widgets.app_button import AppButton
-from hp_helper.widgets.section_title import SectionTitle
 from hp_helper.theme import COLORS
 
 
 PROFILES = [
-    ("Power Saver", "\u262f", COLORS["accent_green"]),   # ☯ → eco
+    ("Power Saver", "\u262f", COLORS["accent_green"]),   # ☯
     ("Balanced", "\u25c7", COLORS["accent_blue"]),         # ◇
     ("Performance", "\u21af", COLORS["accent_red"]),       # ↯
-    ("Fans + Power", "\u25ce", COLORS["accent_blue"]),     # ◎
+]
+
+FAN_MODES = [
+    ("Auto", "\u2699", COLORS["accent_blue"]),             # ⚙
+    ("Max", "\u25b2", COLORS["accent_red"]),               # ▲
+    ("Custom", "\u270e", COLORS["accent_blue"]),            # ✎
 ]
 
 
 class ProfileSection(QWidget):
-    """Row of profile selection buttons with section title."""
+    """Profile selection buttons + fan mode control row."""
 
     profile_selected = Signal(int)
+    fan_mode_selected = Signal(str)       # "auto", "max", "custom"
+    fan_curves_popout_requested = Signal()
 
     def __init__(self, hide_title: bool = False, parent=None):
         super().__init__(parent)
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(0, 4, 0, 4)
-        layout.setSpacing(9)
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 4, 0, 4)
+        root.setSpacing(9)
 
-        self._title: SectionTitle | None = None
-        self._buttons: list[AppButton] = []
-        self._selected = 1
-        self._custom_fan_enabled = False
+        self._selected_profile = 1
+
+        # ── Profile buttons row ──
+        profile_row = QHBoxLayout()
+        profile_row.setSpacing(9)
+        self._profile_buttons: list[AppButton] = []
 
         for i, (label, icon, accent) in enumerate(PROFILES):
-            btn = AppButton(label, icon, accent, selected=(i == self._selected))
-            btn.clicked.connect(lambda checked, idx=i: self._on_click(idx))
-            layout.addWidget(btn)
-            self._buttons.append(btn)
+            btn = AppButton(label, icon, accent, selected=(i == self._selected_profile))
+            btn.clicked.connect(lambda checked, idx=i: self._on_profile_click(idx))
+            profile_row.addWidget(btn)
+            self._profile_buttons.append(btn)
 
-        layout.addStretch()
+        profile_row.addStretch()
+        root.addLayout(profile_row)
+
+        # ── Fan mode buttons row ──
+        fan_row = QHBoxLayout()
+        fan_row.setSpacing(9)
+        self._fan_buttons: dict[str, AppButton] = {}
+
+        for label, icon, accent in FAN_MODES:
+            btn = AppButton(label, icon, accent, selected=False)
+            key = label.lower()
+            btn.clicked.connect(lambda checked, k=key: self._on_fan_click(k))
+            fan_row.addWidget(btn)
+            self._fan_buttons[key] = btn
+
+        # Pop-out button next to Custom
+        popout_btn = QPushButton("\u2197")  # ↗
+        popout_btn.setMinimumSize(36, 72)
+        popout_btn.setMaximumWidth(36)
+        popout_btn.setCursor(Qt.PointingHandCursor)
+        popout_btn.setToolTip("Open fan curves in separate window")
+        popout_btn.clicked.connect(self.fan_curves_popout_requested.emit)
+        popout_font = QFont()
+        popout_font.setPointSize(14)
+        popout_btn.setFont(popout_font)
+        popout_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {COLORS['surface']};
+                color: {COLORS['text_secondary']};
+                border: 1px solid {COLORS['border']};
+                border-radius: 6px;
+                padding: 4px;
+            }}
+            QPushButton:hover {{
+                background-color: #2a2a2a;
+                color: {COLORS['text']};
+            }}
+        """)
+        fan_row.addWidget(popout_btn)
+
+        fan_row.addStretch()
+        root.addLayout(fan_row)
+
+    # ── Profile selection ──
 
     def set_selected_profile(self, index: int):
         """Update which profile button is selected."""
-        self._selected = index
-        for i, btn in enumerate(self._buttons):
-            if i < 3:
-                btn.set_selected(i == index)
-            else:
-                # Fans+Power button selected when custom fan is active OR index is 3
-                btn.set_selected(i == index or self._custom_fan_enabled)
+        self._selected_profile = index
+        for i, btn in enumerate(self._profile_buttons):
+            btn.set_selected(i == index)
 
-    def set_custom_fan_enabled(self, enabled: bool):
-        """Update Fans+Power button highlight based on custom fan state."""
-        self._custom_fan_enabled = enabled
-        btn = self._buttons[3]
-        if enabled:
-            btn.set_selected(True)
-            btn.accent = COLORS["accent_blue"]
-        else:
-            btn.set_selected(False)
-            btn.accent = COLORS["text_secondary"]
-
-    def _on_click(self, index: int):
+    def _on_profile_click(self, index: int):
         self.profile_selected.emit(index)
+
+    # ── Fan mode ──
+
+    def _on_fan_click(self, mode: str):
+        self.fan_mode_selected.emit(mode)
