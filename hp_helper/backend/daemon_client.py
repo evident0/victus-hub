@@ -41,7 +41,6 @@ def _request_daemon(request: str) -> str:
 
 
 def request_cpu_power() -> CpuPowerSample:
-    logger.info("\u2192 daemon: cpu-power")
     response = _request_daemon("cpu-power\n")
     return protocol.parse_cpu_power_response(response)
 

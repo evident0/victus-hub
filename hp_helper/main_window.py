@@ -165,11 +165,21 @@ def _start_fan_control() -> None:
                     delta = abs(next_pct - (last_written_pct or 0.0))
                     if last_written_pct is None or delta >= _WRITE_MIN_DELTA_PCT:
                         pwm = max(0, min(int(next_pct * 255.0 / 100.0), 255))
+                        _fan_logger.info(
+                            "target=%.0f%% current=%.0f%% → next=%.0f%% delta=%.1f → pwm=%d%s",
+                            target, current, next_pct, delta, pwm,
+                            " WRITE" if last_written_pct is None or delta >= _WRITE_MIN_DELTA_PCT else "",
+                        )
                         try:
                             _daemon_client.request_fan_pwm(pwm, cpu_avg, gpu_avg)
                         except Exception:
                             pass
                         last_written_pct = next_pct
+                    else:
+                        _fan_logger.info(
+                            "target=%.0f%% current=%.0f%% → next=%.0f%% delta=%.1f (skip, <%.0f)",
+                            target, current, next_pct, delta, _WRITE_MIN_DELTA_PCT,
+                        )
 
                 next_control = now + _CONTROL_INTERVAL
 
