@@ -5,6 +5,9 @@ Dataclass types are imported from hp_helper.backend.types and re-exported here
 so existing UI imports (``from hp_helper.api import FanPoint, ...``) keep working.
 """
 
+import threading
+import time
+
 from hp_helper.backend import hardware, profiles, fan_config, daemon_client
 from hp_helper.backend.sensors import SensorReader
 from hp_helper.backend.types import (
@@ -37,23 +40,59 @@ __all__ = [
     "apply_power_limits",
 ]
 
-# ── Persistent state (replaces module-level mocks) ──
+
+# ── Background sensor reader ──
 
 _reader = SensorReader()
+_snapshot: SensorSnapshot | None = None
+_profile_cache: int | None = None
+_snapshot_lock = threading.Lock()
+_profile_lock = threading.Lock()
+_snapshot_running = True
+
+def _sensor_loop():
+    """Background thread: read sensors and profile every 1 s, cache results."""
+    global _snapshot, _profile_cache
+    while _snapshot_running:
+        try:
+            snap = _reader.read_all()
+        except Exception:
+            time.sleep(1.0)
+            continue
+        with _snapshot_lock:
+            _snapshot = snap
+        try:
+            prof = profiles.current_ui_profile_index()
+        except Exception:
+            prof = None
+        with _profile_lock:
+            _profile_cache = prof
+        time.sleep(1.0)
+_sensor_thread = threading.Thread(target=_sensor_loop, daemon=True, name="sensor-poll")
+_sensor_thread.start()
 
 
 # ── API functions ──
 
+_hardware_title: str = hardware.hardware_title()
+
+
 def get_hardware_title() -> str:
-    return hardware.hardware_title()
+    return _hardware_title
 
 
 def read_sensors() -> SensorSnapshot:
-    return _reader.read_all()
+    with _snapshot_lock:
+        snap = _snapshot
+    if snap is not None:
+        return snap
+    # First call before the thread has produced anything: return empty snapshot
+    return SensorSnapshot()
 
 
 def get_current_profile() -> int | None:
-    return profiles.current_ui_profile_index()
+    with _profile_lock:
+        return _profile_cache
 
 
 def set_system_profile(profile: int) -> str:

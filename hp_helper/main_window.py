@@ -6,8 +6,6 @@ import threading
 import logging
 
 from hp_helper.backend import fan_config as _fan_config
-from hp_helper.backend import profiles as _profiles
-from hp_helper.backend.sensors import SensorReader as _SensorReader
 from hp_helper.backend import daemon_client as _daemon_client
 
 from pathlib import Path
@@ -93,13 +91,12 @@ def _start_fan_control() -> None:
         last_written_pct: float | None = None
         ramp_down_since: float | None = None
         next_control = _time.monotonic()
-        reader = _SensorReader()
         was_custom = False
 
         while True:
             # ── poll ──
             try:
-                snap = reader.read_all()
+                snap = api.read_sensors()
             except Exception:
                 _time.sleep(_POLL_INTERVAL)
                 continue
@@ -108,7 +105,7 @@ def _start_fan_control() -> None:
 
             try:
                 profile_idx = max(0, min(
-                    _profiles.current_ui_profile_index() or 1, 2
+                    api.get_current_profile() or 1, 2
                 ))
             except Exception:
                 profile_idx = 1
@@ -262,6 +259,8 @@ class MainWindow(QMainWindow):
         self._lighting_started_at = time.time() * 1000
         self._last_power_apply_ms = 0
         self._power_apply_in_flight = False
+        self._last_lighting_send = 0.0
+        self._last_sent_color: tuple[int, int, int] | None = None
 
         # ── Signal connections ──
 
@@ -539,11 +538,17 @@ class MainWindow(QMainWindow):
         settings = normalize_lighting_settings(self._lighting_settings)
         elapsed = int(time.time() * 1000 - self._lighting_started_at)
         frame = lighting_frame(settings, elapsed)
-        try:
-            api.set_keyboard_color(frame.red, frame.green, frame.blue)
-        except Exception:
-            pass
-        # Update visual keyboard
+        # Throttle daemon call: only send every 200 ms and only on color change
+        now = time.monotonic()
+        color = (frame.red, frame.green, frame.blue)
+        if now - self._last_lighting_send >= 0.200 and color != self._last_sent_color:
+            try:
+                api.set_keyboard_color(*color)
+                self._last_lighting_send = now
+                self._last_sent_color = color
+            except Exception:
+                pass
+        # Update visual keyboard (always, for responsive UI)
         self._keyboard_page.apply_frame(frame)
         if settings.enabled:
             self._keyboard_page.set_status("Applied" if settings.effect != "static" else "On")
