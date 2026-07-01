@@ -129,6 +129,7 @@ class MainWindow(QMainWindow):
         # Sensors: graph request opens a standalone sensor graph window
         self._sensors_page.open_graph_requested.connect(self._open_sensor_graph)
         self._graph_windows: dict[str, SensorGraphWindow] = {}
+        self._hidden_graph_windows: set[str] = set()  # keys hidden by tray-close
 
         # ── Timers ──
 
@@ -167,27 +168,40 @@ class MainWindow(QMainWindow):
         self._stack.setCurrentIndex(index)
 
     # ── Tray ──
-
     def _on_tray_activated(self, reason):
         if reason == QSystemTrayIcon.Trigger:
-            self.show()
-            self.raise_()
-            self.activateWindow()
+            self._show_all_windows()
 
     def _toggle_visible(self):
         if self.isVisible():
-            self.hide()
+            self._hide_all_windows()
         else:
-            self.show()
-            self.raise_()
-            self.activateWindow()
+            self._show_all_windows()
 
-    # ── Close-to-tray ──
+
+    def _hide_all_windows(self):
+        """Hide main window + all graph windows to tray."""
+        for key, win in list(self._graph_windows.items()):
+            if win.isVisible():
+                win.hide()
+                self._hidden_graph_windows.add(key)
+        self.hide()
+
+    def _show_all_windows(self):
+        """Show main window + restore hidden graph windows."""
+        self.show()
+        self.raise_()
+        self.activateWindow()
+        for key in list(self._hidden_graph_windows):
+            win = self._graph_windows.get(key)
+            if win is not None:
+                win.show()
+        self._hidden_graph_windows.clear()
 
     def closeEvent(self, event: QCloseEvent):
-        """Hide to tray instead of quitting."""
+        """Hide all windows to tray instead of quitting."""
         self._save_geometry()
-        self.hide()
+        self._hide_all_windows()
         event.ignore()
 
     # ── Geometry persistence ──
@@ -251,21 +265,28 @@ class MainWindow(QMainWindow):
     # ── Custom fan ──
 
     def _on_custom_fan_changed(self, enabled: bool):
+        """Handle custom fan enabled/disabled state change."""
         self._custom_fan_enabled = enabled
         self._home_page.set_custom_fan_enabled(enabled)
-
-    # ── Sensor graph windows ──
 
     def _open_sensor_graph(self, key: str):
         """Open or focus a sensor graph window for the given sensor key."""
         existing = self._graph_windows.get(key)
-        if existing is not None and existing.isVisible():
+        if existing is not None:
+            # If previously hidden-by-tray, just show it
+            if not existing.isVisible():
+                existing.show()
             existing.raise_()
             existing.activateWindow()
+            self._hidden_graph_windows.discard(key)
             return
         win = SensorGraphWindow(key)
         win.setAttribute(Qt.WA_DeleteOnClose)
-        win.destroyed.connect(lambda obj=None, k=key: self._graph_windows.pop(k, None))
+        # Clean up from both tracking dicts when the window is closed by the user
+        def _on_destroyed(obj=None, k=key):
+            self._graph_windows.pop(k, None)
+            self._hidden_graph_windows.discard(k)
+        win.destroyed.connect(_on_destroyed)
         self._graph_windows[key] = win
         win.show()
 
