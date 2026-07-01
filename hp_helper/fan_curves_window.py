@@ -2,7 +2,6 @@
 
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
-    QCheckBox,
 )
 from PySide6.QtCore import QTimer
 from PySide6.QtGui import QColor
@@ -10,10 +9,9 @@ from PySide6.QtGui import QColor
 from hp_helper.widgets.fan_chart import FanChart
 from hp_helper.theme import COLORS
 from hp_helper.api import (
-    get_fan_config, save_fan_profile, set_custom_fan_enabled,
+    get_fan_config, save_fan_profile,
     FanPoint, FanProfileConfig,
 )
-
 
 TEMP_MIN = 30
 CPU_TEMP_MAX = 100
@@ -103,21 +101,6 @@ class FanCurvesWindow(QMainWindow):
         self._gpu_chart.point_selected.connect(self._on_gpu_point_selected)
         layout.addWidget(self._gpu_chart, 1)
 
-        # Custom fan checkbox
-        self._custom_check = QCheckBox("Apply custom fan curve")
-        self._custom_check.toggled.connect(self._on_custom_toggled)
-        self._custom_check.setStyleSheet(f"""
-            QCheckBox {{
-                color: {COLORS['text']};
-                font-size: 13px;
-                spacing: 8px;
-            }}
-            QCheckBox::indicator {{
-                width: 16px;
-                height: 16px;
-            }}
-        """)
-        layout.addWidget(self._custom_check)
 
         # Auto-save timer
         self._save_timer = QTimer()
@@ -135,7 +118,6 @@ class FanCurvesWindow(QMainWindow):
         self._profiles = config.profiles
         self._config_loaded = True
         self._edit_custom_enabled = config.custom_enabled
-        self._custom_check.setChecked(config.custom_enabled)
         self._hydrate_editor()
 
     def _hydrate_editor(self):
@@ -277,11 +259,6 @@ class FanCurvesWindow(QMainWindow):
         self._cpu_chart.selected_point = -1
         self._cpu_selected = -1
 
-    # ── Custom toggle ──
-
-    def _on_custom_toggled(self, checked: bool):
-        self._edit_custom_enabled = checked
-        set_custom_fan_enabled(checked)
 
     # ── Save ──
 
@@ -297,4 +274,3 @@ class FanCurvesWindow(QMainWindow):
         gpu_pts = [FanPoint(t, s) for t, s in self._gpu_points]
         config = save_fan_profile(self._edit_profile, cpu_pts, gpu_pts)
         self._profiles = config.profiles
-        self._custom_check.setChecked(config.custom_enabled)

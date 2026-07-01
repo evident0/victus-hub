@@ -17,7 +17,7 @@ from hp_helper.power_limits import (
     read_power_limit_settings, write_power_limit_settings,
 )
 from hp_helper.api import (
-    get_fan_config, save_fan_profile, set_custom_fan_enabled as api_set_fan_enabled,
+    get_fan_config, save_fan_profile,
     FanPoint, FanProfileConfig,
 )
 
@@ -76,9 +76,7 @@ def _normalize_curve(points: list[tuple[int, int]], temp_max: int) -> list[tuple
 class FansPowerPage(QWidget):
     """Fans & Power tab: fan curve editor + power limit controls."""
 
-    custom_fan_changed = Signal(bool)
     fan_curves_popout_requested = Signal()
-
     def __init__(self, parent=None):
         super().__init__(parent)
 
@@ -249,10 +247,6 @@ class FansPowerPage(QWidget):
 
         curves_layout.addWidget(self._charts_wrapper, 1)
 
-        # Custom fan checkbox
-        self._custom_check = QCheckBox("Apply custom fan curve")
-        self._custom_check.toggled.connect(self._on_custom_toggled)
-        curves_layout.addWidget(self._custom_check)
 
         self._fan_curves_window_open = False
         content_row.addWidget(curves_panel, 1)
@@ -342,8 +336,6 @@ class FansPowerPage(QWidget):
         self._profiles = config.profiles
         self._config_loaded = True
         self._edit_custom_enabled = config.custom_enabled
-        self._custom_check.setChecked(config.custom_enabled)
-        self.custom_fan_changed.emit(config.custom_enabled)
         self._hydrate_editor()
 
     def _hydrate_editor(self):
@@ -482,10 +474,6 @@ class FansPowerPage(QWidget):
         self._cpu_chart.selected_point = -1
         self._cpu_selected = -1
 
-    def _on_custom_toggled(self, checked: bool):
-        self._edit_custom_enabled = checked
-        api_set_fan_enabled(checked)
-        self.custom_fan_changed.emit(checked)
 
     # ── Save ──
 
@@ -501,10 +489,8 @@ class FansPowerPage(QWidget):
         gpu_pts = [FanPoint(t, s) for t, s in self._gpu_points]
         config = save_fan_profile(self._edit_profile, cpu_pts, gpu_pts)
         self._profiles = config.profiles
-        self._custom_check.setChecked(config.custom_enabled)
 
     # ── Public API for timer sync ──
-
     def sync_power_from_settings(self):
         pwr = read_power_limit_settings()
         self._stapm_wrapper._slider.setValue(pwr.stapm_limit)

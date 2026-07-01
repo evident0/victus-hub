@@ -108,7 +108,6 @@ class MainWindow(QMainWindow):
         # ── State ──
         self._stats_by_key: dict[str, dict] = {}
         self._selected_profile = 1
-        self._custom_fan_enabled = False
         self._lighting_settings = read_lighting_settings()
         self._lighting_started_at = time.time() * 1000
         self._last_power_apply_ms = 0
@@ -121,8 +120,7 @@ class MainWindow(QMainWindow):
         self._home_page.fan_mode_selected.connect(self._on_fan_mode)
         self._home_page.fan_curves_popout_requested.connect(self._open_fan_curves_window)
 
-        # Fans: custom fan state + pop-out request
-        self._fans_page.custom_fan_changed.connect(self._on_custom_fan_changed)
+        # Fans: pop-out request
         self._fans_page.fan_curves_popout_requested.connect(self._open_fan_curves_window)
 
         # Keyboard: controls
@@ -287,12 +285,6 @@ class MainWindow(QMainWindow):
                 pass
         elif mode == "custom":
             self.set_active_tab(1)  # switch to Fans tab
-
-    # ── Custom fan ──
-
-    def _on_custom_fan_changed(self, enabled: bool):
-        """Handle custom fan enabled/disabled state change."""
-        self._custom_fan_enabled = enabled
 
     def _open_sensor_graph(self, key: str):
         """Open or focus a sensor graph window for the given sensor key."""
