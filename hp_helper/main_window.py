@@ -1,0 +1,408 @@
+"""Main application window with sidebar, stacked pages, and system tray."""
+
+import time
+from pathlib import Path
+
+from PySide6.QtWidgets import (
+    QMainWindow, QWidget, QHBoxLayout, QStackedWidget,
+    QSystemTrayIcon, QMenu, QApplication,
+)
+from PySide6.QtCore import Qt, QSettings, QTimer
+from PySide6.QtGui import QIcon, QAction, QCloseEvent
+
+from hp_helper.theme import COLORS
+from hp_helper.widgets.sidebar import Sidebar
+from hp_helper.pages.home_page import HomePage
+from hp_helper.pages.fans_power_page import FansPowerPage
+from hp_helper.pages.sensors_page import SensorsPage
+from hp_helper.pages.keyboard_page import KeyboardPage
+from hp_helper.sensor_graph_window import SensorGraphWindow
+from hp_helper import api
+from hp_helper.sensor_definitions import (
+    SENSOR_DEFINITIONS, dynamic_sensor_definition, SensorDefinition,
+)
+from hp_helper.power_limits import (
+    read_power_enabled, read_power_limit_settings, write_power_enabled,
+)
+from hp_helper.keyboard_lighting import (
+    read_lighting_settings, write_lighting_settings,
+    normalize_lighting_settings, lighting_frame, frame_interval_ms,
+    hex_to_rgb,
+)
+
+POWER_APPLY_DEDUPE_MS = 1000
+
+
+class MainWindow(QMainWindow):
+    """Main application window with tray icon and close-to-tray behavior."""
+
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("HP Helper")
+        self.resize(960, 640)
+        self.setMinimumSize(520, 400)
+
+        # App icon
+        icon_path = Path(__file__).parent / "resources" / "icons" / "icon.png"
+        self._app_icon = QIcon(str(icon_path)) if icon_path.exists() else QIcon()
+        self.setWindowIcon(self._app_icon)
+
+        # Central widget
+        central = QWidget()
+        central.setStyleSheet(f"background-color: {COLORS['bg']};")
+        self.setCentralWidget(central)
+
+        layout = QHBoxLayout(central)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        # Sidebar
+        self._sidebar = Sidebar()
+        layout.addWidget(self._sidebar)
+
+        # Stacked pages
+        self._stack = QStackedWidget()
+        self._stack.setStyleSheet(f"background-color: {COLORS['bg']};")
+        layout.addWidget(self._stack, 1)
+
+        # Create pages
+        self._home_page = HomePage()
+        self._fans_page = FansPowerPage()
+        self._sensors_page = SensorsPage()
+        self._keyboard_page = KeyboardPage()
+
+        self._pages = [
+            self._home_page,
+            self._fans_page,
+            self._sensors_page,
+            self._keyboard_page,
+        ]
+        for page in self._pages:
+            self._stack.addWidget(page)
+
+        # Sidebar -> stack sync
+        self._sidebar.tab_changed.connect(self._on_tab_changed)
+
+        # ── System tray ──
+        self._tray = QSystemTrayIcon(self._app_icon, self)
+        self._tray.setToolTip("HP Helper")
+        self._tray.activated.connect(self._on_tray_activated)
+
+        tray_menu = QMenu()
+        show_action = QAction("Show/Hide", self)
+        show_action.triggered.connect(self._toggle_visible)
+        tray_menu.addAction(show_action)
+
+        quit_action = QAction("Quit", self)
+        quit_action.triggered.connect(QApplication.quit)
+        tray_menu.addAction(quit_action)
+
+        self._tray.setContextMenu(tray_menu)
+        self._tray.show()
+
+        # ── Settings ──
+        self._settings = QSettings()
+        self._restore_geometry()
+
+        # ── State ──
+        self._stats_by_key: dict[str, dict] = {}
+        self._selected_profile = 1
+        self._custom_fan_enabled = False
+        self._lighting_settings = read_lighting_settings()
+        self._lighting_started_at = time.time() * 1000
+        self._last_power_apply_ms = 0
+        self._power_apply_in_flight = False
+
+        # ── Signal connections ──
+
+        # Home: profile selection
+        self._home_page.profile_selected.connect(self._on_profile_select)
+
+        # Fans: custom fan state
+        self._fans_page.custom_fan_changed.connect(self._on_custom_fan_changed)
+
+        # Keyboard: controls
+        self._keyboard_page.enabled_changed.connect(self._on_lighting_enabled)
+        self._keyboard_page.effect_changed.connect(self._on_lighting_effect)
+        self._keyboard_page.color_changed.connect(self._on_lighting_color)
+        self._keyboard_page.speed_changed.connect(self._on_lighting_speed)
+        # Sensors: graph request opens a standalone sensor graph window
+        self._sensors_page.open_graph_requested.connect(self._open_sensor_graph)
+        self._graph_windows: dict[str, SensorGraphWindow] = {}
+
+        # ── Timers ──
+
+        # Sensor poll (1s)
+        self._sensor_timer = QTimer(self)
+        self._sensor_timer.setInterval(1000)
+        self._sensor_timer.timeout.connect(self._poll_sensors)
+        self._sensor_timer.start()
+
+        # Profile poll (2s)
+        self._profile_timer = QTimer(self)
+        self._profile_timer.setInterval(2000)
+        self._profile_timer.timeout.connect(self._poll_profile)
+        self._profile_timer.start()
+
+        # Power reapply check (1s)
+        self._power_timer = QTimer(self)
+        self._power_timer.setInterval(1000)
+        self._power_timer.timeout.connect(self._check_power_reapply)
+        self._power_timer.start()
+
+        # Lighting animation (50ms)
+        self._lighting_timer = QTimer(self)
+        self._lighting_timer.setInterval(50)
+        self._lighting_timer.timeout.connect(self._tick_lighting)
+        self._lighting_timer.start()
+
+    # ── Tab switching ──
+
+    def set_active_tab(self, index: int):
+        """Switch to the given tab index."""
+        self._sidebar.set_active(index)
+        self._stack.setCurrentIndex(index)
+
+    def _on_tab_changed(self, index: int):
+        self._stack.setCurrentIndex(index)
+
+    # ── Tray ──
+
+    def _on_tray_activated(self, reason):
+        if reason == QSystemTrayIcon.Trigger:
+            self.show()
+            self.raise_()
+            self.activateWindow()
+
+    def _toggle_visible(self):
+        if self.isVisible():
+            self.hide()
+        else:
+            self.show()
+            self.raise_()
+            self.activateWindow()
+
+    # ── Close-to-tray ──
+
+    def closeEvent(self, event: QCloseEvent):
+        """Hide to tray instead of quitting."""
+        self._save_geometry()
+        self.hide()
+        event.ignore()
+
+    # ── Geometry persistence ──
+
+    def _restore_geometry(self):
+        geo = self._settings.value("window/geometry")
+        if geo:
+            self.restoreGeometry(geo)
+        else:
+            self.resize(960, 640)
+
+    def _save_geometry(self):
+        self._settings.setValue("window/geometry", self.saveGeometry())
+
+    # ── Sensor polling ──
+
+    def _poll_sensors(self):
+        try:
+            snapshot = api.read_sensors()
+        except Exception:
+            return
+
+        # Update stats
+        self._stats_by_key = _next_stats(snapshot, self._stats_by_key)
+
+        # Update Home page gauges
+        self._home_page.update_sensor_data(snapshot)
+
+        # Update Sensors page rows
+        rows = _build_rows(snapshot, self._stats_by_key)
+        self._sensors_page.update_rows(rows)
+
+        # Update footer hardware title
+        self._home_page.set_hardware_title(api.get_hardware_title())
+
+    # ── Profile polling ──
+
+    def _poll_profile(self):
+        try:
+            profile = api.get_current_profile()
+        except Exception:
+            return
+        if profile is not None and profile != self._selected_profile:
+            self._selected_profile = profile
+            self._home_page.set_selected_profile(profile)
+
+    # ── Profile selection ──
+
+    def _on_profile_select(self, index: int):
+        # Profile 3 (index 3 = Fans+Power button) -> switch to Fans tab
+        if index == 3:
+            self.set_active_tab(1)
+            return
+        self._selected_profile = index
+        self._home_page.set_selected_profile(index)
+        try:
+            api.set_system_profile(index)
+        except Exception:
+            pass
+
+    # ── Custom fan ──
+
+    def _on_custom_fan_changed(self, enabled: bool):
+        self._custom_fan_enabled = enabled
+        self._home_page.set_custom_fan_enabled(enabled)
+
+    # ── Sensor graph windows ──
+
+    def _open_sensor_graph(self, key: str):
+        """Open or focus a sensor graph window for the given sensor key."""
+        existing = self._graph_windows.get(key)
+        if existing is not None and existing.isVisible():
+            existing.raise_()
+            existing.activateWindow()
+            return
+        win = SensorGraphWindow(key)
+        win.setAttribute(Qt.WA_DeleteOnClose)
+        win.destroyed.connect(lambda obj=None, k=key: self._graph_windows.pop(k, None))
+        self._graph_windows[key] = win
+        win.show()
+
+    # ── Power reapply ──
+
+    def _check_power_reapply(self):
+        if not read_power_enabled() or self._power_apply_in_flight:
+            return
+        now = time.time() * 1000
+        if now - self._last_power_apply_ms < POWER_APPLY_DEDUPE_MS:
+            return
+        settings = read_power_limit_settings()
+        self._last_power_apply_ms = now
+        self._power_apply_in_flight = True
+        try:
+            api.apply_power_limits(settings.stapm_limit, settings.fast_limit, settings.slow_limit)
+        except Exception:
+            pass
+        finally:
+            self._power_apply_in_flight = False
+
+    # ── Lighting ──
+
+    def _on_lighting_enabled(self, enabled: bool):
+        self._lighting_settings.enabled = enabled
+        write_lighting_settings(self._lighting_settings)
+
+    def _on_lighting_effect(self, effect: str):
+        self._lighting_settings.effect = effect
+        write_lighting_settings(self._lighting_settings)
+
+    def _on_lighting_color(self, color: str):
+        self._lighting_settings.color = color
+        write_lighting_settings(self._lighting_settings)
+
+    def _on_lighting_speed(self, speed: int):
+        self._lighting_settings.speed = speed
+        write_lighting_settings(self._lighting_settings)
+
+    def _tick_lighting(self):
+        settings = normalize_lighting_settings(self._lighting_settings)
+        elapsed = int(time.time() * 1000 - self._lighting_started_at)
+        frame = lighting_frame(settings, elapsed)
+        try:
+            api.set_keyboard_color(frame.red, frame.green, frame.blue)
+        except Exception:
+            pass
+        # Update visual keyboard
+        self._keyboard_page.apply_frame(frame)
+        if settings.enabled:
+            self._keyboard_page.set_status("Applied" if settings.effect != "static" else "On")
+        else:
+            self._keyboard_page.set_status("Off")
+
+
+# ── Stats accumulation (ported from App.tsx) ──
+
+def _format_stat(value: float, unit: str) -> str:
+    if value == int(value):
+        formatted = str(int(value))
+    else:
+        formatted = f"{value:.1f}"
+    return f"{formatted} {unit}" if unit else formatted
+
+
+def _parse_reading_num(reading) -> float | None:
+    try:
+        return float(str(reading.value).split()[0])
+    except (ValueError, AttributeError):
+        return None
+
+
+def _next_stats(snapshot, previous: dict) -> dict:
+    """Accumulate min/max/avg per sensor."""
+    changed = False
+    next_stats = dict(previous)
+    defs: list[SensorDefinition] = list(SENSOR_DEFINITIONS)
+    for es in snapshot.extra_sensors:
+        defs.append(dynamic_sensor_definition(es))
+
+    for d in defs:
+        value = d.numeric_value(snapshot)
+        if value is None:
+            continue
+        if not isinstance(value, (int, float)):
+            continue
+        cur = next_stats.get(d.key)
+        if cur:
+            next_stats[d.key] = {
+                "minimum": min(cur["minimum"], value),
+                "maximum": max(cur["maximum"], value),
+                "sum": cur["sum"] + value,
+                "count": cur["count"] + 1,
+            }
+        else:
+            next_stats[d.key] = {
+                "minimum": value,
+                "maximum": value,
+                "sum": value,
+                "count": 1,
+            }
+        changed = True
+    return next_stats if changed else previous
+
+
+def _missing_stats(reading) -> dict:
+    return {
+        "current": {"value": "—", "source": ""},
+        "minimum": "—",
+        "maximum": "—",
+        "average": "—",
+    }
+
+
+def _build_rows(snapshot, stats_by_key: dict) -> list:
+    """Build sensor table rows from snapshot + accumulated stats."""
+    defs: list[SensorDefinition] = list(SENSOR_DEFINITIONS)
+    for es in snapshot.extra_sensors:
+        defs.append(dynamic_sensor_definition(es))
+
+    rows = []
+    for d in defs:
+        current = d.reading(snapshot)
+        stats = stats_by_key.get(d.key)
+        if not stats:
+            rows.append({
+                "definition": d,
+                "stats": _missing_stats(current),
+            })
+        else:
+            rows.append({
+                "definition": d,
+                "stats": {
+                    "current": {"value": current.value, "source": getattr(current, "source", "")},
+                    "minimum": _format_stat(stats["minimum"], d.unit),
+                    "maximum": _format_stat(stats["maximum"], d.unit),
+                    "average": _format_stat(stats["sum"] / stats["count"], d.unit),
+                },
+            })
+    return rows
