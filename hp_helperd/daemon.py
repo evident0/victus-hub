@@ -81,9 +81,9 @@ def handle_client(stream: socket.socket, sampler: RaplPowerSampler) -> None:
         return
 
     request = data.decode().rstrip("\n")
-
     try:
         if request == "cpu-power":
+            logger.info("[cpu-power] daemon request")
             sample = sampler.read()
             response = protocol.format_cpu_power_response(sample)
         elif request == "fan-auto":
@@ -109,6 +109,7 @@ def handle_client(stream: socket.socket, sampler: RaplPowerSampler) -> None:
         elif request.startswith("keyboard-color\t"):
             try:
                 r, g, b = _parse_keyboard_color_request(request)
+                logger.info("[keyboard-rgb] daemon request: color %d %d %d", r, g, b)
                 result = sysfs.write_keyboard_color(r, g, b)
                 response = protocol.format_status_response((True, result))
             except RuntimeError as e:
@@ -116,6 +117,7 @@ def handle_client(stream: socket.socket, sampler: RaplPowerSampler) -> None:
         elif request.startswith("power-limits\t"):
             try:
                 s, f, sl = _parse_power_limit_request(request)
+                logger.info("[power-limits] daemon request: STAPM=%d fast=%d slow=%d", s, f, sl)
                 result = ryzenadj.apply_power_limits(s, f, sl)
                 response = protocol.format_status_response((True, result))
             except RuntimeError as e:
