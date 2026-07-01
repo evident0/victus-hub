@@ -100,7 +100,7 @@ def handle_client(stream: socket.socket, sampler: RaplPowerSampler) -> None:
             except RuntimeError:
                 response = "ERR\tinvalid PWM value\n"
             else:
-                logger.info("[fan-control] daemon request: fan-pwm %d/255", pwm)
+                logger.info("[fan-control] daemon request: fan-pwm %d/255 (%d%%)", pwm, round(pwm / 255.0 * 100))
                 try:
                     result = sysfs.write_pwm(pwm)
                     response = protocol.format_status_response((True, result))
