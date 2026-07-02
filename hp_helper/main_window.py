@@ -104,12 +104,17 @@ def _start_fan_control() -> None:
 
             temp_history.append((snap.cpu_temp_c, snap.gpu_temp_c))
 
+            raw_profile = None
             try:
-                profile_idx = max(0, min(
-                    api.get_current_profile() or 1, 2
-                ))
+                raw_profile = api.get_current_profile()
             except Exception:
-                profile_idx = 1
+                raw_profile = None
+            # Rust: unwrap_or(1) — only default when None, NOT when 0
+            profile_idx = raw_profile if raw_profile is not None else 1
+            profile_idx = max(0, min(profile_idx, 2))
+            if not hasattr(_fan_logger, '_logged_init'):
+                _fan_logger.info("fan-control init: api profile=%s → idx=%d", raw_profile, profile_idx)
+                _fan_logger._logged_init = True
 
             config = _fan_config.load()
             profile = config.profiles[profile_idx]

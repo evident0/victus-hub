@@ -98,7 +98,12 @@ def read_sensors() -> SensorSnapshot:
 
 def get_current_profile() -> int | None:
     with _profile_lock:
-        return _profile_cache
+        cached = _profile_cache
+    if cached is not None:
+        return cached
+    # Cache not populated yet (background thread hasn't run): read directly.
+    # This matches Rust's behavior of calling current_ui_profile_index() each tick.
+    return profiles.current_ui_profile_index()
 
 
 def set_system_profile(profile: int) -> str:
