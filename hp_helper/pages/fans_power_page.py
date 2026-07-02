@@ -12,7 +12,7 @@ from hp_helper.widgets.section_title import SectionTitle
 from hp_helper.theme import COLORS
 from hp_helper.power_limits import (
     POWER_MIN_MW, POWER_MAX_MW, POWER_STEP_MW, DEFAULT_POWER_LIMIT_MW,
-    DEFAULT_REAPPLY_SECONDS, clamp_power_limit,
+    DEFAULT_REAPPLY_SECONDS, PowerLimitSettings, clamp_power_limit,
     read_power_enabled, write_power_enabled,
     read_power_limit_settings, write_power_limit_settings,
 )
@@ -20,57 +20,8 @@ from hp_helper.api import (
     get_fan_config, save_fan_profile,
     FanPoint, FanProfileConfig,
 )
+from hp_helper.backend import fan_config
 
-
-TEMP_MIN = 30
-CPU_TEMP_MAX = 100
-GPU_TEMP_MAX = 90
-
-DEFAULT_CPU_POINTS = [(TEMP_MIN, 0), (CPU_TEMP_MAX, 100)]
-DEFAULT_GPU_POINTS = [(TEMP_MIN, 0), (GPU_TEMP_MAX, 100)]
-
-
-
-def _points_to_segments(points: list[tuple[int, int]]) -> list[dict]:
-    segs = []
-    for i in range(1, len(points)):
-        segs.append({
-            "leftTemp": points[i - 1][0],
-            "leftSpeed": points[i - 1][1],
-            "rightTemp": points[i][0],
-            "rightSpeed": points[i][1],
-        })
-    return segs
-
-
-def _interpolate(points: list[tuple[int, int]], temp: float) -> int:
-    if not points:
-        return 0
-    if temp <= points[0][0]:
-        return points[0][1]
-    for i in range(1, len(points)):
-        if temp <= points[i][0]:
-            dx = points[i][0] - points[i - 1][0]
-            if dx == 0:
-                return points[i][1]
-            t = (temp - points[i - 1][0]) / dx
-            return round(points[i - 1][1] + t * (points[i][1] - points[i - 1][1]))
-    return points[-1][1]
-
-
-def _normalize_curve(points: list[tuple[int, int]], temp_max: int) -> list[tuple[int, int]]:
-    if len(points) < 2:
-        return list(DEFAULT_CPU_POINTS if temp_max == CPU_TEMP_MAX else DEFAULT_GPU_POINTS)
-    sorted_pts = sorted(points, key=lambda p: p[0])
-    sorted_pts[0] = (TEMP_MIN, sorted_pts[0][1])
-    sorted_pts[-1] = (temp_max, sorted_pts[-1][1])
-    min_speed = 0
-    result = []
-    for t, s in sorted_pts:
-        s = max(min_speed, min(100, s))
-        result.append((t, s))
-        min_speed = s
-    return result
 
 
 class FansPowerPage(QWidget):
@@ -91,8 +42,8 @@ class FansPowerPage(QWidget):
         self._edit_profile = 1
         self._profiles: list[FanProfileConfig] = []
         self._config_loaded = False
-        self._cpu_points = list(DEFAULT_CPU_POINTS)
-        self._gpu_points = list(DEFAULT_GPU_POINTS)
+        self._cpu_points = list(fan_config.default_cpu_points())
+        self._gpu_points = list(fan_config.default_gpu_points())
         self._cpu_selected = -1
         self._gpu_selected = -1
         self._edit_custom_enabled = False
@@ -231,14 +182,14 @@ class FansPowerPage(QWidget):
         charts_wrap_layout.setContentsMargins(0, 0, 0, 0)
         charts_wrap_layout.setSpacing(8)
 
-        self._cpu_chart = FanChart("CPU Fan Curve", QColor(COLORS["accent_blue"]), CPU_TEMP_MAX)
+        self._cpu_chart = FanChart("CPU Fan Curve", QColor(COLORS["accent_blue"]), fan_config.CPU_TEMP_MAX_C)
         self._cpu_chart.point_added.connect(self._on_cpu_point_added)
         self._cpu_chart.point_moved.connect(self._on_cpu_point_moved)
         self._cpu_chart.point_deleted.connect(self._on_cpu_point_deleted)
         self._cpu_chart.point_selected.connect(self._on_cpu_point_selected)
         charts_wrap_layout.addWidget(self._cpu_chart, 1)
 
-        self._gpu_chart = FanChart("GPU Fan Curve", QColor(COLORS["accent_red"]), GPU_TEMP_MAX)
+        self._gpu_chart = FanChart("GPU Fan Curve", QColor(COLORS["accent_red"]), fan_config.GPU_TEMP_MAX_C)
         self._gpu_chart.point_added.connect(self._on_gpu_point_added)
         self._gpu_chart.point_moved.connect(self._on_gpu_point_moved)
         self._gpu_chart.point_deleted.connect(self._on_gpu_point_deleted)
@@ -321,7 +272,6 @@ class FansPowerPage(QWidget):
         )
 
     def _make_power_settings(self):
-        from hp_helper.power_limits import PowerLimitSettings
         return PowerLimitSettings(
             stapm_limit=self._stapm_limit,
             fast_limit=self._fast_limit,
@@ -344,10 +294,8 @@ class FansPowerPage(QWidget):
         profile = self._profiles[self._edit_profile] if self._edit_profile < len(self._profiles) else None
         if profile:
             self._dirty = False
-            self._cpu_points = _normalize_curve(
-                [(p.temp, p.speed) for p in profile.cpu_points], CPU_TEMP_MAX)
-            self._gpu_points = _normalize_curve(
-                [(p.temp, p.speed) for p in profile.gpu_points], GPU_TEMP_MAX)
+            self._cpu_points = fan_config.normalize_fan_points(list(profile.cpu_points), fan_config.CPU_TEMP_MAX_C)
+            self._gpu_points = fan_config.normalize_fan_points(list(profile.gpu_points), fan_config.GPU_TEMP_MAX_C)
             self._cpu_selected = -1
             self._gpu_selected = -1
             self._cpu_chart.points = self._cpu_points
@@ -367,31 +315,31 @@ class FansPowerPage(QWidget):
     # ── Fan curve point handlers ──
 
     def _on_cpu_point_added(self, temp: int, speed: int):
-        if temp <= TEMP_MIN or temp >= CPU_TEMP_MAX:
+        if temp <= fan_config.TEMP_MIN_C or temp >= fan_config.CPU_TEMP_MAX_C:
             return
-        if any(p[0] == temp for p in self._cpu_points):
+        if any(p.temp == temp for p in self._cpu_points):
             return
         self._dirty = True
-        new_speed = _interpolate(self._cpu_points, temp)
-        norm = _normalize_curve(self._cpu_points + [(temp, new_speed)], CPU_TEMP_MAX)
+        new_speed = fan_config.interpolate_fan(self._cpu_points, temp)
+        norm = fan_config.normalize_fan_points(self._cpu_points + [FanPoint(temp, new_speed)], fan_config.CPU_TEMP_MAX_C)
         self._cpu_points = norm
         self._cpu_chart.points = norm
-        idx = next((i for i, p in enumerate(norm) if p[0] == temp), -1)
+        idx = next((i for i, p in enumerate(norm) if p.temp == temp), -1)
         self._cpu_chart.selected_point = idx
         self._cpu_selected = idx
         self._schedule_save()
 
     def _on_gpu_point_added(self, temp: int, speed: int):
-        if temp <= TEMP_MIN or temp >= GPU_TEMP_MAX:
+        if temp <= fan_config.TEMP_MIN_C or temp >= fan_config.GPU_TEMP_MAX_C:
             return
-        if any(p[0] == temp for p in self._gpu_points):
+        if any(p.temp == temp for p in self._gpu_points):
             return
         self._dirty = True
-        new_speed = _interpolate(self._gpu_points, temp)
-        norm = _normalize_curve(self._gpu_points + [(temp, new_speed)], GPU_TEMP_MAX)
+        new_speed = fan_config.interpolate_fan(self._gpu_points, temp)
+        norm = fan_config.normalize_fan_points(self._gpu_points + [FanPoint(temp, new_speed)], fan_config.GPU_TEMP_MAX_C)
         self._gpu_points = norm
         self._gpu_chart.points = norm
-        idx = next((i for i, p in enumerate(norm) if p[0] == temp), -1)
+        idx = next((i for i, p in enumerate(norm) if p.temp == temp), -1)
         self._gpu_chart.selected_point = idx
         self._gpu_selected = idx
         self._schedule_save()
@@ -401,19 +349,19 @@ class FansPowerPage(QWidget):
             return
         self._dirty = True
         pts = list(self._cpu_points)
-        next_temp = max(TEMP_MIN, min(CPU_TEMP_MAX, temp))
+        next_temp = max(fan_config.TEMP_MIN_C, min(fan_config.CPU_TEMP_MAX_C, temp))
         next_speed = max(0, min(100, speed))
         if index == 0:
-            next_temp = TEMP_MIN
-            next_speed = max(0, min(next_speed, pts[1][1] if len(pts) > 1 else 100))
+            next_temp = fan_config.TEMP_MIN_C
+            next_speed = max(0, min(next_speed, pts[1].speed if len(pts) > 1 else 100))
         elif index == len(pts) - 1:
-            next_temp = CPU_TEMP_MAX
-            next_speed = max(pts[index - 1][1], min(next_speed, 100))
+            next_temp = fan_config.CPU_TEMP_MAX_C
+            next_speed = max(pts[index - 1].speed, min(next_speed, 100))
         else:
-            next_temp = max(pts[index - 1][0] + 1, min(next_temp, pts[index + 1][0] - 1))
-            next_speed = max(pts[index - 1][1], min(next_speed, pts[index + 1][1]))
-        pts[index] = (next_temp, next_speed)
-        norm = _normalize_curve(pts, CPU_TEMP_MAX)
+            next_temp = max(pts[index - 1].temp + 1, min(next_temp, pts[index + 1].temp - 1))
+            next_speed = max(pts[index - 1].speed, min(next_speed, pts[index + 1].speed))
+        pts[index] = FanPoint(next_temp, next_speed)
+        norm = fan_config.normalize_fan_points(pts, fan_config.CPU_TEMP_MAX_C)
         self._cpu_points = norm
         self._cpu_chart.points = norm
         self._schedule_save()
@@ -423,19 +371,19 @@ class FansPowerPage(QWidget):
             return
         self._dirty = True
         pts = list(self._gpu_points)
-        next_temp = max(TEMP_MIN, min(GPU_TEMP_MAX, temp))
+        next_temp = max(fan_config.TEMP_MIN_C, min(fan_config.GPU_TEMP_MAX_C, temp))
         next_speed = max(0, min(100, speed))
         if index == 0:
-            next_temp = TEMP_MIN
-            next_speed = max(0, min(next_speed, pts[1][1] if len(pts) > 1 else 100))
+            next_temp = fan_config.TEMP_MIN_C
+            next_speed = max(0, min(next_speed, pts[1].speed if len(pts) > 1 else 100))
         elif index == len(pts) - 1:
-            next_temp = GPU_TEMP_MAX
-            next_speed = max(pts[index - 1][1], min(next_speed, 100))
+            next_temp = fan_config.GPU_TEMP_MAX_C
+            next_speed = max(pts[index - 1].speed, min(next_speed, 100))
         else:
-            next_temp = max(pts[index - 1][0] + 1, min(next_temp, pts[index + 1][0] - 1))
-            next_speed = max(pts[index - 1][1], min(next_speed, pts[index + 1][1]))
-        pts[index] = (next_temp, next_speed)
-        norm = _normalize_curve(pts, GPU_TEMP_MAX)
+            next_temp = max(pts[index - 1].temp + 1, min(next_temp, pts[index + 1].temp - 1))
+            next_speed = max(pts[index - 1].speed, min(next_speed, pts[index + 1].speed))
+        pts[index] = FanPoint(next_temp, next_speed)
+        norm = fan_config.normalize_fan_points(pts, fan_config.GPU_TEMP_MAX_C)
         self._gpu_points = norm
         self._gpu_chart.points = norm
         self._schedule_save()
@@ -445,7 +393,7 @@ class FansPowerPage(QWidget):
             return
         self._dirty = True
         pts = [p for i, p in enumerate(self._cpu_points) if i != index]
-        norm = _normalize_curve(pts, CPU_TEMP_MAX)
+        norm = fan_config.normalize_fan_points(pts, fan_config.CPU_TEMP_MAX_C)
         self._cpu_points = norm
         self._cpu_chart.points = norm
         self._cpu_chart.selected_point = -1
@@ -457,7 +405,7 @@ class FansPowerPage(QWidget):
             return
         self._dirty = True
         pts = [p for i, p in enumerate(self._gpu_points) if i != index]
-        norm = _normalize_curve(pts, GPU_TEMP_MAX)
+        norm = fan_config.normalize_fan_points(pts, fan_config.GPU_TEMP_MAX_C)
         self._gpu_points = norm
         self._gpu_chart.points = norm
         self._gpu_chart.selected_point = -1
@@ -485,8 +433,8 @@ class FansPowerPage(QWidget):
         if not self._config_loaded or not self._dirty:
             return
         self._dirty = False
-        cpu_pts = [FanPoint(t, s) for t, s in self._cpu_points]
-        gpu_pts = [FanPoint(t, s) for t, s in self._gpu_points]
+        cpu_pts = list(self._cpu_points)
+        gpu_pts = list(self._gpu_points)
         config = save_fan_profile(self._edit_profile, cpu_pts, gpu_pts)
         self._profiles = config.profiles
 
@@ -501,13 +449,13 @@ class FansPowerPage(QWidget):
 
     # ── Pop-out window management ──
 
-    def set_fan_curves_window_open(self, open: bool):
+    def set_fan_curves_window_open(self, is_open: bool):
         """Toggle between inline charts and pop-out placeholder."""
-        if open == self._fan_curves_window_open:
+        if is_open == self._fan_curves_window_open:
             return
-        self._fan_curves_window_open = open
-        self._charts_wrapper.setVisible(not open)
-        self._popout_placeholder.setVisible(open)
+        self._fan_curves_window_open = is_open
+        self._charts_wrapper.setVisible(not is_open)
+        self._popout_placeholder.setVisible(is_open)
 
     def is_fan_curves_window_open(self) -> bool:
         return self._fan_curves_window_open

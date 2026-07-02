@@ -6,7 +6,7 @@ from PySide6.QtCore import Signal
 from hp_helper.widgets.gauge_dial import GaugeDial
 from hp_helper.widgets.profile_section import ProfileSection
 from hp_helper.widgets.footer import Footer
-from hp_helper.theme import COLORS
+from hp_helper.sensor_stats import parse_reading_num
 
 
 class HomePage(QWidget):
@@ -27,24 +27,15 @@ class HomePage(QWidget):
         gauge_row.setSpacing(32)
         gauge_row.addStretch()
 
-        self._cpu_dial = GaugeDial(
-            "CPU", outer_max=100, outer_color="#ff2020",
-            mid_max=100, mid_color="#3aaeef",
-            inner_max=6000, inner_color="#06b48a",
-        )
+        self._cpu_dial = GaugeDial("CPU", outer_max=100, mid_max=100, inner_max=6000)
         gauge_row.addWidget(self._cpu_dial)
 
-        self._gpu_dial = GaugeDial(
-            "GPU", outer_max=100, outer_color="#ff2020",
-            mid_max=100, mid_color="#3aaeef",
-            inner_max=6000, inner_color="#06b48a",
-        )
+        self._gpu_dial = GaugeDial("GPU", outer_max=100, mid_max=100, inner_max=6000)
         gauge_row.addWidget(self._gpu_dial)
         gauge_row.addStretch()
 
         gauge_widget = QWidget()
         gauge_widget.setLayout(gauge_row)
-        gauge_widget.setStyleSheet("background: transparent;")
         layout.addWidget(gauge_widget, 1)
 
         # Profile section
@@ -63,10 +54,12 @@ class HomePage(QWidget):
         """Refresh gauge values and footer from a sensor snapshot."""
         cpu_temp = snapshot.cpu_temp_c
         cpu_usage = snapshot.cpu_usage_pct
-        cpu_fan = _parse(snapshot.cpu_fan)
+        # Pass None (not 0.0) when unreadable so the dial renders its neutral color
+        # instead of a misleading "0" — see GaugeDial._temp_color.
+        cpu_fan = parse_reading_num(snapshot.cpu_fan)
         gpu_temp = snapshot.gpu_temp_c
         gpu_usage = snapshot.gpu_usage_pct
-        gpu_fan = _parse(snapshot.gpu_fan)
+        gpu_fan = parse_reading_num(snapshot.gpu_fan)
 
         self._cpu_dial.update_values(outer_value=cpu_temp, mid_value=cpu_usage,
                                       inner_value=cpu_fan)
@@ -81,10 +74,3 @@ class HomePage(QWidget):
 
     def set_selected_fan_mode(self, mode: str):
         self._profile_section.set_selected_fan_mode(mode)
-
-
-def _parse(reading) -> float:
-    try:
-        return float(reading.value.split()[0])
-    except (ValueError, AttributeError):
-        return 0.0

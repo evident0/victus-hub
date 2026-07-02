@@ -7,12 +7,14 @@ from PySide6.QtGui import (
     QMouseEvent, QPainterPath,
 )
 
+from hp_helper.backend.types import FanPoint
 from hp_helper.theme import COLORS
 
 CHART_PADDING = 52
 POINT_R = 7
 HIT_R = 14
 TEMP_MIN = 30
+
 
 
 class FanChart(QWidget):
@@ -24,12 +26,12 @@ class FanChart(QWidget):
     point_selected = Signal(int)     # index
 
     def __init__(self, title: str, accent: QColor, temp_max: int = 100,
-                 points: list | None = None, parent=None):
+                 points: list[FanPoint] | None = None, parent=None):
         super().__init__(parent)
         self._title = title
         self._accent = accent
         self._temp_max = temp_max
-        self._points: list[tuple[int, int]] = points or [(TEMP_MIN, 0), (temp_max, 100)]
+        self._points: list[FanPoint] = points or [FanPoint(TEMP_MIN, 0), FanPoint(temp_max, 100)]
         self._selected_point = -1
         self._hovered_index = -1
         self._dragging = False
@@ -42,11 +44,11 @@ class FanChart(QWidget):
     # ── Properties ──
 
     @property
-    def points(self) -> list[tuple[int, int]]:
+    def points(self) -> list[FanPoint]:
         return list(self._points)
 
     @points.setter
-    def points(self, value: list[tuple[int, int]]):
+    def points(self, value: list[FanPoint]):
         self._points = list(value)
         self.update()
 
@@ -64,11 +66,12 @@ class FanChart(QWidget):
         """Computed line segments between consecutive points."""
         segs = []
         for i in range(1, len(self._points)):
+            left, right = self._points[i - 1], self._points[i]
             segs.append({
-                "leftTemp": self._points[i - 1][0],
-                "leftSpeed": self._points[i - 1][1],
-                "rightTemp": self._points[i][0],
-                "rightSpeed": self._points[i][1],
+                "leftTemp": left.temp,
+                "leftSpeed": left.speed,
+                "rightTemp": right.temp,
+                "rightSpeed": right.speed,
             })
         return segs
 
@@ -102,9 +105,9 @@ class FanChart(QWidget):
         return round(max(0, min(100, s)))
 
     def _find_nearby_point(self, mx: float, my: float) -> int:
-        for i, (t, s) in enumerate(self._points):
-            px = self._temp_to_x(t)
-            py = self._speed_to_y(s)
+        for i, point in enumerate(self._points):
+            px = self._temp_to_x(point.temp)
+            py = self._speed_to_y(point.speed)
             if ((mx - px) ** 2 + (my - py) ** 2) ** 0.5 < HIT_R:
                 return i
         return -1
@@ -162,22 +165,19 @@ class FanChart(QWidget):
         painter.setPen(boundary_pen)
         painter.drawRect(QRectF(pl, pt, pw, ph))
 
-        # Curve segments
-        curve_pen = QPen(self._accent, 2)
-        painter.setPen(curve_pen)
         for i in range(1, len(self._points)):
-            x1 = self._temp_to_x(self._points[i - 1][0])
-            y1 = self._speed_to_y(self._points[i - 1][1])
-            x2 = self._temp_to_x(self._points[i][0])
-            y2 = self._speed_to_y(self._points[i][1])
+            left, right = self._points[i - 1], self._points[i]
+            x1 = self._temp_to_x(left.temp)
+            y1 = self._speed_to_y(left.speed)
+            x2 = self._temp_to_x(right.temp)
+            y2 = self._speed_to_y(right.speed)
             painter.drawLine(int(x1), int(y1), int(x2), int(y2))
 
         # Points
-        for i, (t, s) in enumerate(self._points):
-            px = self._temp_to_x(t)
-            py = self._speed_to_y(s)
+        for i, point in enumerate(self._points):
+            px = self._temp_to_x(point.temp)
+            py = self._speed_to_y(point.speed)
             if i == self._selected_point:
-                # Selected: white fill, accent border
                 painter.setBrush(QColor("#ffffff"))
                 painter.setPen(QPen(self._accent, 2))
             else:
@@ -186,11 +186,11 @@ class FanChart(QWidget):
             painter.drawEllipse(QPointF(px, py), POINT_R, POINT_R)
 
         # Hover tooltip
-        if self._hovered_index >= 0 and self._hovered_index < len(self._points):
-            t, s = self._points[self._hovered_index]
-            px = self._temp_to_x(t)
-            py = self._speed_to_y(s)
-            label = f"{t}\u00B0C @ {s}%"
+        if 0 <= self._hovered_index < len(self._points):
+            point = self._points[self._hovered_index]
+            px = self._temp_to_x(point.temp)
+            py = self._speed_to_y(point.speed)
+            label = f"{point.temp}\u00B0C @ {point.speed}%"
             tip_w = len(label) * 7 + 12
             tip_h = 22
             tip_x = min(px + 14, pr - tip_w)

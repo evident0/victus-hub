@@ -11,10 +11,6 @@ from hp_helper.backend.rapl import CpuPowerSample
 
 SOCKET_PATH = "/run/hp-helperd/hp-helper-rs.sock"
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(message)s",
-)
 logger = logging.getLogger(__name__)
 
 
@@ -35,11 +31,10 @@ def _request_daemon(request: str, quiet: bool = False) -> str:
         resp = response.decode().strip()
         if not quiet:
             logger.info("\u2190 daemon: %s", resp)
-        return response.decode()
+        return resp
     except OSError as e:
         logger.info("\u2190 daemon: ERROR %s", e)
         raise RuntimeError(str(e))
-
 
 def request_cpu_power() -> CpuPowerSample:
     response = _request_daemon("cpu-power\n", quiet=True)
@@ -52,7 +47,7 @@ def request_fan_auto() -> str:
     return protocol.parse_status_response(response)
 
 
-def request_fan_pwm(pwm: int, cpu_avg_c: float | None, gpu_avg_c: float | None) -> str:
+def request_fan_pwm(pwm: int) -> str:
     pct = round(pwm / 255.0 * 100)
     logger.info("\u2192 daemon: fan-pwm %d/255 (%d%%)", pwm, pct)
     response = _request_daemon(f"fan-pwm\t{pwm}\n")
@@ -66,16 +61,13 @@ def request_keyboard_color(red: int, green: int, blue: int) -> str:
 
 
 def request_keyboard_last_input() -> float:
-    """Return seconds since the last physical keypress on the laptop keyboard."""
-    response = _request_daemon("keyboard-last-input\n")
-    # Response format: "OK\t{elapsed:.3f}\n"
-    try:
-        tag, _, value = response.rstrip("\n").partition("\t")
-        if tag == "OK":
-            return float(value)
-    except (ValueError, AttributeError):
-        pass
-    raise RuntimeError(f"unexpected keyboard-last-input response: {response!r}")
+    """Return seconds since the last physical keypress on the laptop keyboard.
+
+    The daemon emits `OK\t{elapsed:.3f}\\n` (see hp_helperd/daemon.py).
+    """
+    logger.info("\u2192 daemon: keyboard-last-input")
+    response = _request_daemon("keyboard-last-input\n", quiet=True)
+    return float(protocol.parse_status_response(response))
 
 
 def request_power_limits(stapm_limit: int, fast_limit: int, slow_limit: int) -> str:

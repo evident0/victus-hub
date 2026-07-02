@@ -1,8 +1,8 @@
 """Sensors page with collapsible grouped table."""
 
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QTreeWidget, QTreeWidgetItem,
-    QPushButton,
+    QApplication, QPushButton, QStyle, QTreeWidget, QTreeWidgetItem,
+    QVBoxLayout, QWidget,
 )
 from PySide6.QtCore import Qt, Signal, QTimer
 from PySide6.QtGui import QColor
@@ -92,7 +92,11 @@ class SensorsPage(QWidget):
                 item.setText(5, "")
 
                 # Graph button in column 5
-                btn = QPushButton("\u25B6" if d.graphable else "\u2715")
+                style = QApplication.style()
+                if d.graphable:
+                    btn = QPushButton(style.standardIcon(QStyle.SP_MediaPlay), "")
+                else:
+                    btn = QPushButton(style.standardIcon(QStyle.SP_DialogCloseButton), "")
                 btn.setFixedSize(30, 28)
                 btn.setEnabled(d.graphable)
                 btn.setToolTip(f"Open {d.name} graph" if d.graphable else "Not graphable")
@@ -100,9 +104,6 @@ class SensorsPage(QWidget):
                     btn.clicked.connect(
                         lambda checked, k=d.key: self.open_graph_requested.emit(k)
                     )
-                else:
-                    btn.setStyleSheet("color: #666666; background: #242424; border: 1px solid #555; border-radius: 4px;")
-                self._tree.setItemWidget(item, 5, btn)
 
                 # Alternating row color
                 bg = "#181818" if ri % 2 == 0 else "#1d1d1d"
@@ -122,8 +123,6 @@ class SensorsPage(QWidget):
         # the next event-loop tick so the scrollbar range is up to date.
         QTimer.singleShot(0, lambda: scroll_bar.setValue(saved_scroll))
 
-        # Store rows for ref
-        self._rows = rows
 
     def _on_item_clicked(self, item: QTreeWidgetItem, col: int):
         """Toggle collapse/expand on group header click (col 0)."""

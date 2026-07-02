@@ -5,7 +5,6 @@ hwmon.rs, hp.rs, temperature.rs, cpu_usage.rs, nvidia.rs, power.rs, lm.rs, profi
 """
 
 import json
-import os
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -14,7 +13,8 @@ from hp_helper.backend import daemon_client
 from hp_helper.backend import profiles as _profiles
 from hp_helper.backend.rapl import CpuPowerSample, RaplPowerSampler
 from hp_helper.backend.types import ExtraSensor, SensorReading, SensorSnapshot
-from hp_helper.backend.util import command_exists, command_path, path_label
+from hp_helper.backend.sysfs_read import find_hwmon_by_name, iter_hwmon_dirs, read_int, read_text
+from hp_helper.backend.util import command_exists, command_path
 
 
 def reading(value: str, source: str = "") -> SensorReading:
@@ -107,60 +107,20 @@ class SensorReader:
         self._cpu_max_temp_c: float | None = None
         self._cpu_usage_reader = _CpuUsageReader()
 
-    # ── hwmon helpers (hwmon.rs) ──
-
-    def _hwmon_dirs(self) -> list[Path]:
-        hwmon_root = Path("/sys/class/hwmon")
-        dirs = []
-        try:
-            for entry in sorted(hwmon_root.iterdir()):
-                if entry.name.startswith("hwmon"):
-                    dirs.append(entry)
-        except OSError:
-            pass
-        return dirs
-
-    def _read_text(self, path: Path) -> str | None:
-        try:
-            return path.read_text().strip()
-        except OSError:
-            return None
-
-    def _read_int(self, path: Path) -> int | None:
-        text = self._read_text(path)
-        if text is None:
-            return None
-        try:
-            return int(text)
-        except ValueError:
-            return None
-
-    def _hwmon_name(self, hwmon: Path) -> str:
-        name = self._read_text(hwmon / "name")
-        if name is None:
-            name = hwmon.name
-        return name.lower()
-
-    def _find_hp_hwmon(self) -> Path | None:
-        for hwmon in self._hwmon_dirs():
-            if self._hwmon_name(hwmon) in ("hp", "hp_wmi", "hp-wmi"):
-                return hwmon
-        return None
-
     # ── HP fans / PWM (hp.rs) ──
 
     def _format_rpm(self, value: int | None, source: Path) -> SensorReading:
         if value is None:
-            return reading("Unavailable", path_label(source))
-        return reading(f"{value} RPM", path_label(source))
+            return reading("Unavailable", str(source))
+        return reading(f"{value} RPM", str(source))
 
     def _read_hp_fans(self, hp_hwmon: Path | None) -> tuple[SensorReading, SensorReading]:
         if hp_hwmon is None:
             u = reading("Unavailable", "hp hwmon not found")
             return u, u
         return (
-            self._format_rpm(self._read_int(hp_hwmon / "fan1_input"), hp_hwmon / "fan1_input"),
-            self._format_rpm(self._read_int(hp_hwmon / "fan2_input"), hp_hwmon / "fan2_input"),
+            self._format_rpm(read_int(hp_hwmon / "fan1_input"), hp_hwmon / "fan1_input"),
+            self._format_rpm(read_int(hp_hwmon / "fan2_input"), hp_hwmon / "fan2_input"),
         )
 
     def _read_hp_pwm(self, hp_hwmon: Path | None) -> tuple[SensorReading, SensorReading]:
@@ -170,23 +130,23 @@ class SensorReader:
 
         mode_path = hp_hwmon / "pwm1_enable"
         value_path = hp_hwmon / "pwm1"
-        raw = self._read_text(mode_path)
+        raw = read_text(mode_path)
         if raw == "0":
-            mode = reading("Max", path_label(mode_path))
+            mode = reading("Max", str(mode_path))
         elif raw == "1":
-            mode = reading("Manual", path_label(mode_path))
+            mode = reading("Manual", str(mode_path))
         elif raw == "2":
-            mode = reading("Automatic", path_label(mode_path))
+            mode = reading("Automatic", str(mode_path))
         elif raw is not None:
-            mode = reading(raw, path_label(mode_path))
+            mode = reading(raw, str(mode_path))
         else:
-            mode = reading("Unavailable", path_label(mode_path))
+            mode = reading("Unavailable", str(mode_path))
 
-        val = self._read_int(value_path)
+        val = read_int(value_path)
         if val is not None:
-            pwm_val = reading(f"{val} / 255", path_label(value_path))
+            pwm_val = reading(f"{val} / 255", str(value_path))
         else:
-            pwm_val = reading("Unavailable", path_label(value_path))
+            pwm_val = reading("Unavailable", str(value_path))
         return mode, pwm_val
 
     # ── Nvidia SMI (nvidia.rs) ──
@@ -235,8 +195,8 @@ class SensorReader:
         preferred_names = ["coretemp", "k10temp", "zenpower", "cpu_thermal", "acpitz"]
         candidates = []
 
-        for hwmon in self._hwmon_dirs():
-            name = self._hwmon_name(hwmon)
+        for hwmon in iter_hwmon_dirs():
+            name = (read_text(hwmon / "name") or "").lower()
             try:
                 entries = list(hwmon.iterdir())
             except OSError:
@@ -245,11 +205,11 @@ class SensorReader:
                 fname = path.name
                 if not fname.startswith("temp") or not fname.endswith("_input"):
                     continue
-                value = self._read_int(path)
+                value = read_int(path)
                 if value is None or value <= -100_000:
                     continue
                 label_path = path.with_name(fname.replace("_input", "_label"))
-                label = self._read_text(label_path) or ""
+                label = read_text(label_path) or ""
                 label_lower = label.lower()
                 if name in preferred_names or "package" in label_lower or "tctl" in label_lower:
                     display = label if label else name
@@ -270,7 +230,7 @@ class SensorReader:
         else:
             self._cpu_max_temp_c = max(self._cpu_max_temp_c, temp_c)
 
-        return reading(f"{temp_c:.1f} C", f"{label}: {path_label(source)}"), temp_c
+        return reading(f"{temp_c:.1f} C", f"{label}: {str(source)}"), temp_c
 
     def _read_cpu_max_temp(self) -> SensorReading:
         if self._cpu_max_temp_c is None:
@@ -287,8 +247,9 @@ class SensorReader:
                 temp_c = None
             return reading(f"{nvidia.temperature} C", "nvidia-smi"), temp_c
 
-        for hwmon in self._hwmon_dirs():
-            if self._hwmon_name(hwmon) not in ("amdgpu", "nouveau", "nvidia"):
+        for hwmon in iter_hwmon_dirs():
+            name = (read_text(hwmon / "name") or "").lower()
+            if name not in {"amdgpu", "nouveau", "nvidia"}:
                 continue
             temps = []
             try:
@@ -299,16 +260,16 @@ class SensorReader:
                 fname = path.name
                 if not fname.startswith("temp") or not fname.endswith("_input"):
                     continue
-                value = self._read_int(path)
+                value = read_int(path)
                 if value is not None:
                     label_path = path.with_name(fname.replace("_input", "_label"))
-                    label = self._read_text(label_path) or self._hwmon_name(hwmon)
+                    label = read_text(label_path) or name
                     temps.append((value, path, label))
             if temps:
                 best = max(temps, key=lambda x: x[0])
                 value, source, label = best
                 temp_c = value / 1000.0
-                return reading(f"{temp_c:.1f} C", f"{label}: {path_label(source)}"), temp_c
+                return reading(f"{temp_c:.1f} C", f"{label}: {str(source)}"), temp_c
 
         return reading("Unavailable", "no GPU temp sensor"), None
 
@@ -329,7 +290,7 @@ class SensorReader:
             return reading("Sampling...", f"{source_prefix}: {sample.source}")
         elif sample.kind == "unavailable":
             return reading("Unavailable", sample.message)
-        return reading("Unavailable", "unknown")
+        raise ValueError(f"unknown CpuPowerSample kind: {sample.kind!r}")
 
     def _read_cpu_power(self) -> SensorReading:
         try:
@@ -337,7 +298,7 @@ class SensorReader:
             return self._format_cpu_power_sample(sample, "hp-helperd")
         except RuntimeError as e:
             direct = self._rapl_sampler.read()
-            if direct.kind == "unavailable" and direct.message.startswith("read access needed"):
+            if direct.reason == "permission_denied":
                 return reading(
                     "Daemon unavailable",
                     f"{e}; start hp-helperd as root",
@@ -350,8 +311,8 @@ class SensorReader:
         if nvidia is not None:
             return reading(f"{nvidia.power:.1f} W", "nvidia-smi")
 
-        for hwmon in self._hwmon_dirs():
-            if self._hwmon_name(hwmon) not in ("amdgpu", "nouveau", "nvidia"):
+        for hwmon in iter_hwmon_dirs():
+            if (read_text(hwmon / "name") or "").lower() not in {"amdgpu", "nouveau", "nvidia"}:
                 continue
             try:
                 entries = list(hwmon.iterdir())
@@ -360,11 +321,11 @@ class SensorReader:
             for path in entries:
                 fname = path.name
                 if fname.startswith("power") and fname.endswith("_input"):
-                    value = self._read_int(path)
+                    value = read_int(path)
                     if value is not None:
                         return reading(
                             f"{value / 1_000_000:.1f} W",
-                            path_label(path),
+                            str(path),
                         )
 
         return reading("Unavailable", "no GPU power sensor")
@@ -441,7 +402,7 @@ class SensorReader:
     # ── read_all (sensors.rs) ──
 
     def read_all(self) -> SensorSnapshot:
-        hp_hwmon = self._find_hp_hwmon()
+        hp_hwmon = find_hwmon_by_name("hp", "hp_wmi", "hp-wmi")
         nvidia = self._read_nvidia_smi()
 
         cpu_fan, gpu_fan = self._read_hp_fans(hp_hwmon)

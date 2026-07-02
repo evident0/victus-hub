@@ -1,5 +1,6 @@
 """Entry point for HP Helper Qt application."""
 
+import logging
 import sys
 from pathlib import Path
 
@@ -7,6 +8,11 @@ from PySide6.QtWidgets import QApplication
 from PySide6.QtCore import Qt
 
 from hp_helper.main_window import MainWindow
+
+
+# Surface daemon-traffic logs in the terminal; daemon_client + main_window
+# both rely on this being configured at startup.
+logging.basicConfig(level=logging.INFO, format="%(message)s")
 
 
 def main():

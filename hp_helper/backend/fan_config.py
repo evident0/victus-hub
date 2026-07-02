@@ -13,15 +13,21 @@ CONFIG_DIR_NAME = "hp-helper"
 CONFIG_FILE_NAME = "config.json"
 PROFILE_KEYS = ["power-saver", "balanced", "performance"]
 
+# ── Curve bounds (used by the chart and any page that needs them) ──
+
+TEMP_MIN_C = 30
+CPU_TEMP_MAX_C = 100
+GPU_TEMP_MAX_C = 90
+
 
 # ── Defaults ──
 
 def default_cpu_points() -> list[FanPoint]:
-    return [FanPoint(temp=30, speed=0), FanPoint(temp=100, speed=100)]
+    return [FanPoint(temp=TEMP_MIN_C, speed=0), FanPoint(temp=CPU_TEMP_MAX_C, speed=100)]
 
 
 def default_gpu_points() -> list[FanPoint]:
-    return [FanPoint(temp=30, speed=0), FanPoint(temp=90, speed=100)]
+    return [FanPoint(temp=TEMP_MIN_C, speed=0), FanPoint(temp=GPU_TEMP_MAX_C, speed=100)]
 
 
 # ── Normalization ──
@@ -30,7 +36,7 @@ def normalize_fan_points(points: list[FanPoint], temp_max: int) -> list[FanPoint
     """Normalize a fan curve: clamp endpoints, enforce monotonic speed."""
     if len(points) >= 2:
         normalized = list(points)
-    elif temp_max == 90:
+    elif temp_max == GPU_TEMP_MAX_C:
         normalized = default_gpu_points()
     else:
         normalized = default_cpu_points()
@@ -38,7 +44,7 @@ def normalize_fan_points(points: list[FanPoint], temp_max: int) -> list[FanPoint
     normalized.sort(key=lambda p: p.temp)
 
     if normalized:
-        normalized[0].temp = 30
+        normalized[0].temp = TEMP_MIN_C
         normalized[-1].temp = temp_max
 
     minimum_speed = 0
@@ -47,19 +53,6 @@ def normalize_fan_points(points: list[FanPoint], temp_max: int) -> list[FanPoint
         minimum_speed = point.speed
 
     return normalized
-
-
-def normalize_points(tuple_points: list[tuple[int, int]], temp_max: int) -> list[FanPoint]:
-    """Normalize from tuple-of-tuples form (used by stored config)."""
-    return normalize_fan_points(
-        [FanPoint(temp=t, speed=s) for t, s in tuple_points],
-        temp_max,
-    )
-
-
-def tuple_points(points: list[FanPoint]) -> list[tuple[int, int]]:
-    """Convert FanPoint list to tuple list for JSON storage."""
-    return [(p.temp, p.speed) for p in points]
 
 
 # ── Config path ──
@@ -84,24 +77,25 @@ def load() -> FanConfig:
         stored = {}
 
     custom_enabled = stored.get("custom_curve_enabled", False) or False
+    manual_preset = stored.get("manual_preset") or None
 
     profiles = []
     for key in PROFILE_KEYS:
         cpu_raw = stored.get("curve_points_by_profile", {}).get(key)
-        if cpu_raw:
-            cpu_points = normalize_points(cpu_raw, 100)
-        else:
-            cpu_points = default_cpu_points()
+        cpu_points = normalize_fan_points(
+            [FanPoint(temp=t, speed=s) for t, s in (cpu_raw or [])],
+            CPU_TEMP_MAX_C,
+        ) if cpu_raw else default_cpu_points()
 
         gpu_raw = stored.get("gpu_curve_points_by_profile", {}).get(key)
-        if gpu_raw:
-            gpu_points = normalize_points(gpu_raw, 90)
-        else:
-            gpu_points = default_gpu_points()
+        gpu_points = normalize_fan_points(
+            [FanPoint(temp=t, speed=s) for t, s in (gpu_raw or [])],
+            GPU_TEMP_MAX_C,
+        ) if gpu_raw else default_gpu_points()
 
         profiles.append(FanProfileConfig(cpu_points=cpu_points, gpu_points=gpu_points))
 
-    return FanConfig(profiles=profiles, custom_enabled=custom_enabled)
+    return FanConfig(profiles=profiles, custom_enabled=custom_enabled, manual_preset=manual_preset)
 
 
 def save_profile(profile: int, cpu_points: list[FanPoint], gpu_points: list[FanPoint]) -> FanConfig:
@@ -122,6 +116,20 @@ def save_custom_enabled(enabled: bool) -> FanConfig:
     return config
 
 
+def save_manual_preset(preset: str | None) -> FanConfig:
+    """Record which preset the user clicked (auto / max) or clear it.
+
+    The fan-control background loop reads this on every tick and backs
+    off while a preset is active, so clicking Max does not get
+    overridden by an auto-mode cleanup the next time the loop sees
+    custom_enabled == False.
+    """
+    config = load()
+    config.manual_preset = preset
+    save_all(config)
+    return config
+
+
 def save_all(config: FanConfig) -> None:
     path = _config_path()
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -130,12 +138,13 @@ def save_all(config: FanConfig) -> None:
     gpu_map = {}
     for i, profile in enumerate(config.profiles):
         key = PROFILE_KEYS[i]
-        cpu_map[key] = tuple_points(profile.cpu_points)
-        gpu_map[key] = tuple_points(profile.gpu_points)
+        cpu_map[key] = [[p.temp, p.speed] for p in profile.cpu_points]
+        gpu_map[key] = [[p.temp, p.speed] for p in profile.gpu_points]
 
     stored = {
         "custom_tuned_profile": "balanced",
         "custom_curve_enabled": config.custom_enabled,
+        "manual_preset": config.manual_preset,
         "curve_points_by_profile": cpu_map,
         "gpu_curve_points_by_profile": gpu_map,
     }

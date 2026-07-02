@@ -58,7 +58,10 @@ class FanProfileConfig:
 class FanConfig:
     profiles: list[FanProfileConfig]
     custom_enabled: bool
-
+    # Non-None when the user has clicked a preset button (auto / max).
+    # The fan-control loop backs off while a preset is active so the
+    # manual pwm1 / pwm1_enable state survives.
+    manual_preset: str | None = None
 
 # Re-export list for api.py convenience
 __all__ = [

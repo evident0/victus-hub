@@ -2,11 +2,11 @@
 
 This module requires root privileges for most operations.
 """
-
 import logging
 from pathlib import Path
 
-from hp_helper.backend.util import path_label
+from hp_helper.backend.sysfs_read import find_hwmon_by_name
+
 
 KBD_RGB_COLOR_PATH = "/sys/devices/platform/hp-kbd-rgb/color"
 
@@ -14,28 +14,15 @@ logger = logging.getLogger(__name__)
 
 
 def hp_hwmon() -> Path | None:
-    """Find the HP hwmon directory (duplicated from backend/sensors.py)."""
-    hwmon_root = Path("/sys/class/hwmon")
-    try:
-        dirs = sorted(
-            entry for entry in hwmon_root.iterdir()
-            if entry.name.startswith("hwmon")
-        )
-    except OSError:
-        return None
-    for hwmon in dirs:
-        try:
-            name = (hwmon / "name").read_text().strip().lower()
-        except OSError:
-            continue
-        if name in ("hp", "hp_wmi", "hp-wmi"):
-            return hwmon
-    return None
+    """Find the HP hwmon directory."""
+    return find_hwmon_by_name("hp", "hp_wmi", "hp-wmi")
+
+
 
 
 def write_sysfs(path: Path, value: int | str) -> str:
     """Write a value to a sysfs path; returns path label on success."""
-    label = path_label(path)
+    label = str(path)
     try:
         path.write_text(str(value))
     except OSError as e:

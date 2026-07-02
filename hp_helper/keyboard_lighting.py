@@ -1,6 +1,7 @@
 """Keyboard lighting state — ports keyboard-lighting.ts."""
 
 import math
+import re
 from dataclasses import dataclass, field
 from typing import Literal
 
@@ -33,8 +34,7 @@ LIGHTING_EFFECTS: list[dict] = [
 
 DEFAULT_LIGHTING_SETTINGS = LightingSettings()
 
-_HEX_COLOR_RE = __import__("re").compile(r"^#[0-9a-fA-F]{6}$")
-MIN_FRAME_INTERVAL_MS = 50
+_HEX_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
 STATIC_INTERVAL_MS = 1000
 
 

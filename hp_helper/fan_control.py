@@ -12,6 +12,7 @@ import threading
 from hp_helper import api
 from hp_helper.backend import fan_config as _fan_config
 from hp_helper.backend import daemon_client as _daemon_client
+from hp_helper.backend.sysfs_read import read_hp_pwm_pct
 
 # ── Constants (ported from lib.rs:119-125) ──
 
@@ -97,7 +98,11 @@ def start_fan_control() -> None:
 
             config = _fan_config.load()
             profile = config.profiles[profile_idx]
-
+            if config.manual_preset is not None:
+                # Preset active (Auto/Max): back off, don't touch the kernel.
+                was_custom = False
+                _time.sleep(POLL_INTERVAL)
+                continue
             if not config.custom_enabled:
                 if was_custom:
                     try:
@@ -109,6 +114,13 @@ def start_fan_control() -> None:
                     was_custom = False
                 _time.sleep(POLL_INTERVAL)
                 continue
+            # Resuming custom after a preset or custom-off: seed
+            # last_written_pct from the kernel's actual pwm1 so the
+            # ramp algorithm starts from reality (e.g. 255=100% after
+            # Max) and ramps toward target instead of jumping to it.
+            if not was_custom:
+                last_written_pct = read_hp_pwm_pct()
+                ramp_down_since = None
             was_custom = True
 
             # ── control tick ──
@@ -155,7 +167,7 @@ def start_fan_control() -> None:
                             target, current, next_pct, delta, pwm,
                         )
                         try:
-                            _daemon_client.request_fan_pwm(pwm, cpu_avg, gpu_avg)
+                            _daemon_client.request_fan_pwm(pwm)
                         except Exception:
                             pass
                         last_written_pct = next_pct

@@ -20,20 +20,23 @@ class CpuPowerSample:
     watts: float = 0.0
     source: str = ""
     message: str = ""
-
-    # It's convenient that dataclasses default all fields; the unused fields
-    # per variant are acceptable for a small tagged union in Python.
+    reason: str = ""
 
 
-def _read_int(path: Path) -> int | None:
+def _read_energy(path: Path) -> tuple[int | None, str]:
+    """Read a RAPL energy file. Returns (value, reason).
+
+    `reason` is "permission_denied" for EACCES/EPERM, empty otherwise.
+    """
     try:
-        return int(path.read_text().strip())
+        return int(path.read_text().strip()), ""
+    except PermissionError:
+        return None, "permission_denied"
     except (OSError, ValueError):
-        return None
+        return None, ""
 
 
 def _rapl_package() -> Path | None:
-    import os
     powercap = Path("/sys/class/powercap")
     entries = []
     try:
@@ -45,9 +48,6 @@ def _rapl_package() -> Path | None:
         return None
     return entries[0] if entries else None
 
-
-def _path_label(path: Path) -> str:
-    return str(path)
 
 
 class RaplPowerSampler:
@@ -62,16 +62,18 @@ class RaplPowerSampler:
             return CpuPowerSample(kind="unavailable", message="no RAPL package")
 
         energy_path = package / "energy_uj"
-        energy = _read_int(energy_path)
+        energy, reason = _read_energy(energy_path)
         if energy is None:
             return CpuPowerSample(
                 kind="unavailable",
-                message=f"read access needed for {_path_label(energy_path)}",
+                message=str(energy_path),
+                reason=reason,
             )
 
-        max_range = _read_int(package / "max_energy_range_uj")
+        max_range, _ = _read_energy(package / "max_energy_range_uj")
+
         now = time.monotonic()
-        source = _path_label(energy_path)
+        source = str(energy_path)
 
         previous = self._sample
         self._sample = (package, energy, max_range, now)

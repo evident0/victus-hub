@@ -6,7 +6,7 @@ dynamicSensorDefinition, sensorDefinitionForKey.
 
 from dataclasses import dataclass, field
 from typing import Callable
-
+import re
 
 @dataclass
 class SensorDefinition:
@@ -20,8 +20,6 @@ class SensorDefinition:
     reading: Callable = field(repr=False)
     numeric_value: Callable = field(repr=False)
 
-
-import re
 _LEADING_NUMBER_RE = re.compile(r"^-?(\d+\.?\d*|\.\d+)")
 
 

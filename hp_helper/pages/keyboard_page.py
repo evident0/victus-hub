@@ -10,9 +10,8 @@ from PySide6.QtGui import QPainter, QColor, QFont, QLinearGradient
 from hp_helper.widgets.section_title import SectionTitle
 from hp_helper.theme import COLORS
 from hp_helper.keyboard_lighting import (
-    LightingEffect, LIGHTING_EFFECTS, LightingSettings,
-    read_lighting_settings, write_lighting_settings, hex_to_rgb,
-    lighting_frame, normalize_lighting_settings, hsv_to_rgb,
+    LIGHTING_EFFECTS,
+    read_lighting_settings, write_lighting_settings, hsv_to_rgb,
 )
 
 # ── Keyboard layout ──
@@ -231,8 +230,6 @@ class KeyboardPage(QWidget):
         layout.setSpacing(8)
 
         # Title
-        self._status_label = QLabel("Keyboard RGB ready")
-        self._status_label.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 11px;")
         title = SectionTitle("\u25A4", "Keyboard Lighting")
         layout.addWidget(title)
 
@@ -312,8 +309,6 @@ class KeyboardPage(QWidget):
         layout.addWidget(controls)
         self._settings = s
 
-    def set_status(self, text: str):
-        self._status_label.setText(text)
 
     def _on_enabled_changed(self, checked: bool):
         self._settings.enabled = checked

@@ -111,63 +111,109 @@ def kbd_elapsed_since_last_input() -> float:
         return time.monotonic() - _kbd_last_input
 
 
-def _parse_u8(value: str | None, name: str) -> int:
-    if value is None:
-        raise RuntimeError(f"missing {name}")
+def _recv_line(stream: socket.socket) -> bytes | None:
+    """Read exactly one newline-terminated line from `stream`.
+
+    Returns the line (with the trailing `\\n`), or `None` on socket error
+    or EOF before any data.
+    """
+    data = b""
+    while not data.endswith(b"\n"):
+        try:
+            chunk = stream.recv(1024)
+        except OSError:
+            return None
+        if not chunk:
+            return None if not data else data
+        data += chunk
+    return data
+
+
+def _parse_int(body: str, name: str) -> int:
+    """Parse a single integer body, raising RuntimeError with a clear name on failure."""
     try:
-        return int(value)
+        return int(body)
     except ValueError:
-        raise RuntimeError(f"invalid {name}")
+        raise RuntimeError(f"invalid {name}") from None
 
 
-def _parse_power_limit(value: str | None, name: str) -> int:
-    if value is None:
-        raise RuntimeError(f"missing {name}")
+def _parse_rgb(body: str) -> tuple[int, int, int]:
+    """Parse three tab-separated integers (r, g, b)."""
+    parts = body.split("\t")
+    if len(parts) != 3:
+        raise RuntimeError("expected 3 integers")
     try:
-        return int(value)
+        return int(parts[0]), int(parts[1]), int(parts[2])
     except ValueError:
-        raise RuntimeError(f"invalid {name}")
+        raise RuntimeError("invalid integer") from None
 
 
-def _parse_power_limit_request(request: str) -> tuple[int, int, int]:
-    body = request.removeprefix("power-limits\t")
-    parts = body.split("\t")
-    if len(parts) > 3:
-        raise RuntimeError("too many power limit fields")
-    stapm = _parse_power_limit(parts[0] if len(parts) > 0 else None, "stapm-limit")
-    fast = _parse_power_limit(parts[1] if len(parts) > 1 else None, "fast-limit")
-    slow = _parse_power_limit(parts[2] if len(parts) > 2 else None, "slow-limit")
-    return stapm, fast, slow
+def _make_dispatch(sampler: RaplPowerSampler, sampler_lock: threading.Lock | None):
+    """Build the (prefix -> handler) table for the request dispatch.
+
+    Each handler takes the request body (request minus its prefix) and
+    returns the response line as a string. RuntimeError propagates to the
+    caller as a structured `ERR` response.
+    """
+    def _cpu_power(_body: str) -> str:
+        logger.info("[cpu-power] daemon request")
+        if sampler_lock is not None:
+            with sampler_lock:
+                sample = sampler.read()
+        else:
+            sample = sampler.read()
+        return protocol.format_cpu_power_response(sample)
+
+    def _fan_auto(_body: str) -> str:
+        logger.info("[fan-control] daemon request: fan-auto")
+        try:
+            result = sysfs.write_pwm_enable(2)
+            return protocol.format_status_response((True, result))
+        except RuntimeError as e:
+            return protocol.format_status_response((False, str(e)))
+
+    def _fan_pwm(body: str) -> str:
+        pwm = _parse_int(body, "pwm")
+        logger.info("[fan-control] daemon request: fan-pwm %d/255 (%d%%)", pwm, round(pwm / 255.0 * 100))
+        try:
+            result = sysfs.write_pwm(pwm)
+            return protocol.format_status_response((True, result))
+        except RuntimeError as e:
+            return protocol.format_status_response((False, str(e)))
+
+    def _keyboard_color(body: str) -> str:
+        r, g, b = _parse_rgb(body)
+        logger.info("[keyboard-rgb] daemon request: color %d %d %d", r, g, b)
+        result = sysfs.write_keyboard_color(r, g, b)
+        return protocol.format_status_response((True, result))
+
+    def _power_limits(body: str) -> str:
+        s, f, sl = _parse_rgb(body)  # same shape: three tab-separated ints
+        logger.info("[power-limits] daemon request: STAPM=%d fast=%d slow=%d", s, f, sl)
+        result = ryzenadj.apply_power_limits(s, f, sl)
+        return protocol.format_status_response((True, result))
+
+    def _keyboard_last_input(_body: str) -> str:
+        logger.info("[keyboard-rgb] daemon request: keyboard-last-input")
+        elapsed = kbd_elapsed_since_last_input()
+        return f"OK\t{elapsed:.3f}\n"
+
+    return [
+        ("cpu-power", _cpu_power),
+        ("fan-auto", _fan_auto),
+        ("fan-pwm\t", _fan_pwm),
+        ("keyboard-color\t", _keyboard_color),
+        ("power-limits\t", _power_limits),
+        ("keyboard-last-input", _keyboard_last_input),
+    ]
 
 
-def _parse_keyboard_color_request(request: str) -> tuple[int, int, int]:
-    body = request.removeprefix("keyboard-color\t")
-    parts = body.split("\t")
-    if len(parts) > 3:
-        raise RuntimeError("too many keyboard color fields")
-    red = _parse_u8(parts[0] if len(parts) > 0 else None, "red")
-    green = _parse_u8(parts[1] if len(parts) > 1 else None, "green")
-    blue = _parse_u8(parts[2] if len(parts) > 2 else None, "blue")
-    return red, green, blue
 
 
 def handle_client(stream: socket.socket, sampler: RaplPowerSampler, sampler_lock: threading.Lock | None = None) -> None:
     """Handle one client connection. Runs in its own thread."""
-    try:
-        data = b""
-        while not data.endswith(b"\n"):
-            chunk = stream.recv(1024)
-            if not chunk:
-                break
-            data += chunk
-    except OSError as e:
-        try:
-            stream.sendall(f"ERR\t{e}\n".encode())
-        except OSError:
-            pass
-        return
-
-    if not data:
+    data = _recv_line(stream)
+    if data is None:
         try:
             stream.sendall(b"ERR\tempty request\n")
         except OSError:
@@ -175,68 +221,36 @@ def handle_client(stream: socket.socket, sampler: RaplPowerSampler, sampler_lock
         return
 
     request = data.decode().rstrip("\n")
-    try:
-        if request == "cpu-power":
-            logger.info("[cpu-power] daemon request")
-            if sampler_lock is not None:
-                with sampler_lock:
-                    sample = sampler.read()
-            else:
-                sample = sampler.read()
-            response = protocol.format_cpu_power_response(sample)
-        elif request == "fan-auto":
-            logger.info("[fan-control] daemon request: fan-auto")
-            try:
-                result = sysfs.write_pwm_enable(2)
-                response = protocol.format_status_response((True, result))
-            except RuntimeError as e:
-                response = protocol.format_status_response((False, str(e)))
-        elif request.startswith("fan-pwm\t"):
-            body = request.removeprefix("fan-pwm\t")
-            try:
-                pwm = _parse_u8(body, "pwm")
-            except RuntimeError:
-                response = "ERR\tinvalid PWM value\n"
-            else:
-                logger.info("[fan-control] daemon request: fan-pwm %d/255 (%d%%)", pwm, round(pwm / 255.0 * 100))
-                try:
-                    result = sysfs.write_pwm(pwm)
-                    response = protocol.format_status_response((True, result))
-                except RuntimeError as e:
-                    response = protocol.format_status_response((False, str(e)))
-        elif request.startswith("keyboard-color\t"):
-            try:
-                r, g, b = _parse_keyboard_color_request(request)
-                logger.info("[keyboard-rgb] daemon request: color %d %d %d", r, g, b)
-                result = sysfs.write_keyboard_color(r, g, b)
-                response = protocol.format_status_response((True, result))
-            except RuntimeError as e:
-                response = protocol.format_status_response((False, str(e)))
-        elif request.startswith("power-limits\t"):
-            try:
-                s, f, sl = _parse_power_limit_request(request)
-                logger.info("[power-limits] daemon request: STAPM=%d fast=%d slow=%d", s, f, sl)
-                result = ryzenadj.apply_power_limits(s, f, sl)
-                response = protocol.format_status_response((True, result))
-            except RuntimeError as e:
-                response = protocol.format_status_response((False, str(e)))
-        elif request == "keyboard-last-input":
-            elapsed = kbd_elapsed_since_last_input()
-            response = f"OK\t{elapsed:.3f}\n"
-        else:
-            response = "ERR\tunsupported request\n"
-    except Exception as e:
-        response = f"ERR\t{e}\n"
+    dispatch = _make_dispatch(sampler, sampler_lock)
+    matched_prefix: str | None = None
+    handler = None
+    for prefix, h in dispatch:
+        if request.startswith(prefix):
+            matched_prefix = prefix
+            handler = h
+            break
 
     try:
-        stream.sendall(response.encode())
-    except OSError as e:
-        logger.warning("failed to write response: %s", e)
-    finally:
+        if handler is None or matched_prefix is None:
+            response = protocol.format_status_response((False, "unsupported request"))
+        else:
+            body = request[len(matched_prefix):]
+            response = handler(body)
+    except RuntimeError as e:
+        response = protocol.format_status_response((False, str(e)))
+    except Exception:
+        logger.exception("request handler crashed: %r", request)
+        response = None
+
+    if response is not None:
         try:
-            stream.close()
-        except OSError:
-            pass
+            stream.sendall(response.encode())
+        except OSError as e:
+            logger.warning("failed to write response: %s", e)
+    try:
+        stream.close()
+    except OSError:
+        pass
 
 
 def run_daemon() -> None:
@@ -272,7 +286,7 @@ def run_daemon() -> None:
             try:
                 handle_client(s, sampler, sampler_lock)
             except Exception:
-                pass
+                logger.exception("client handler crashed")
 
         t = threading.Thread(target=_handle, args=(conn,), daemon=True)
         t.start()

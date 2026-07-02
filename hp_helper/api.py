@@ -38,6 +38,7 @@ __all__ = [
     "get_keyboard_idle_elapsed",
     "save_fan_profile",
     "set_custom_fan_enabled",
+    "set_manual_preset",
     "apply_power_limits",
 ]
 
@@ -115,7 +116,7 @@ def set_fan_auto() -> str:
 
 
 def set_fan_pwm(pwm: int) -> str:
-    return daemon_client.request_fan_pwm(pwm, None, None)
+    return daemon_client.request_fan_pwm(pwm)
 
 
 def set_keyboard_color(red: int, green: int, blue: int) -> str:
@@ -144,3 +145,12 @@ def save_fan_profile(profile: int, cpu_points: list[FanPoint],
 
 def set_custom_fan_enabled(enabled: bool) -> FanConfig:
     return fan_config.save_custom_enabled(enabled)
+
+
+def set_manual_preset(preset: str | None) -> FanConfig:
+    """Record which preset the user clicked (auto / max) or clear it.
+
+    When set to 'max' or 'auto', the fan-control background loop backs
+    off and will not override the manual pwm1 / pwm1_enable state.
+    """
+    return fan_config.save_manual_preset(preset)

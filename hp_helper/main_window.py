@@ -1,16 +1,14 @@
 """Main application window with sidebar, stacked pages, and system tray."""
 
-import threading
-import time
-
+import logging
 from pathlib import Path
 
-from PySide6.QtWidgets import (
-    QMainWindow, QWidget, QHBoxLayout, QStackedWidget,
-    QSystemTrayIcon, QMenu, QApplication,
-)
 from PySide6.QtCore import Qt, QSettings, QTimer
 from PySide6.QtGui import QIcon, QAction, QCloseEvent
+from PySide6.QtWidgets import (
+    QApplication, QHBoxLayout, QMainWindow, QMenu, QStackedWidget,
+    QSystemTrayIcon, QWidget,
+)
 
 from hp_helper.theme import COLORS
 from hp_helper.widgets.sidebar import Sidebar
@@ -22,16 +20,11 @@ from hp_helper.sensor_graph_window import SensorGraphWindow
 from hp_helper.fan_curves_window import FanCurvesWindow
 from hp_helper import api
 from hp_helper.fan_control import start_fan_control
+from hp_helper.lighting_controller import LightingController
+from hp_helper.power_controller import PowerLimitController
 from hp_helper.sensor_stats import next_stats, build_rows
-from hp_helper.power_limits import (
-    read_power_enabled, read_power_limit_settings, write_power_enabled,
-)
-from hp_helper.keyboard_lighting import (
-    read_lighting_settings, write_lighting_settings,
-    normalize_lighting_settings, lighting_frame, frame_interval_ms,
-    hex_to_rgb,
-)
 
+logger = logging.getLogger(__name__)
 
 class MainWindow(QMainWindow):
     """Main application window with tray icon and close-to-tray behavior."""
@@ -49,7 +42,6 @@ class MainWindow(QMainWindow):
 
         # Central widget
         central = QWidget()
-        central.setStyleSheet(f"background-color: {COLORS['bg']};")
         self.setCentralWidget(central)
 
         layout = QHBoxLayout(central)
@@ -62,7 +54,6 @@ class MainWindow(QMainWindow):
 
         # Stacked pages
         self._stack = QStackedWidget()
-        self._stack.setStyleSheet(f"background-color: {COLORS['bg']};")
         layout.addWidget(self._stack, 1)
 
         # Create pages
@@ -107,14 +98,6 @@ class MainWindow(QMainWindow):
         # ── State ──
         self._stats_by_key: dict[str, dict] = {}
         self._selected_profile = 1
-        self._lighting_settings = read_lighting_settings()
-        self._lighting_started_at = time.time() * 1000
-        self._last_power_apply_ms = 0
-        self._power_apply_in_flight = False
-        self._last_lighting_send = 0.0
-        self._last_sent_color: tuple[int, int, int] | None = None
-        self._last_idle_poll = 0.0
-        self._lighting_idle_off = False
         self._quitting = False
 
         # ── Signal connections ──
@@ -127,18 +110,20 @@ class MainWindow(QMainWindow):
         # Fans: pop-out request
         self._fans_page.fan_curves_popout_requested.connect(self._open_fan_curves_window)
 
-        # Keyboard: controls
-        self._keyboard_page.enabled_changed.connect(self._on_lighting_enabled)
-        self._keyboard_page.effect_changed.connect(self._on_lighting_effect)
-        self._keyboard_page.color_changed.connect(self._on_lighting_color)
-        self._keyboard_page.speed_changed.connect(self._on_lighting_speed)
-        self._keyboard_page.idle_timeout_changed.connect(self._on_lighting_idle_timeout)
-
-
         # Window tracking
         self._graph_windows: dict[str, SensorGraphWindow] = {}
         self._hidden_graph_windows: set[str] = set()  # keys hidden by tray-close
         self._fan_curves_window: FanCurvesWindow | None = None
+        self._lighting = LightingController(self)
+        self._lighting.frame_changed.connect(self._keyboard_page.apply_frame)
+        self._keyboard_page.enabled_changed.connect(self._lighting.set_enabled)
+        self._keyboard_page.effect_changed.connect(self._lighting.set_effect)
+        self._keyboard_page.color_changed.connect(self._lighting.set_color)
+        self._keyboard_page.speed_changed.connect(self._lighting.set_speed)
+        self._keyboard_page.idle_timeout_changed.connect(self._lighting.set_idle_timeout)
+
+        self._power = PowerLimitController(self)
+
         # ── Timers ──
 
         # Sensor poll (1s)
@@ -153,17 +138,6 @@ class MainWindow(QMainWindow):
         self._profile_timer.timeout.connect(self._poll_profile)
         self._profile_timer.start()
 
-        # Power reapply check (1s)
-        self._power_timer = QTimer(self)
-        self._power_timer.setInterval(1000)
-        self._power_timer.timeout.connect(self._check_power_reapply)
-        self._power_timer.start()
-
-        # Lighting animation (50ms)
-        self._lighting_timer = QTimer(self)
-        self._lighting_timer.setInterval(50)
-        self._lighting_timer.timeout.connect(self._tick_lighting)
-        self._lighting_timer.start()
         # Fan-control background thread
         start_fan_control()
         # Sync fan mode buttons from the persisted config — if custom was
@@ -174,8 +148,7 @@ class MainWindow(QMainWindow):
             if _cfg.custom_enabled:
                 self._home_page.set_selected_fan_mode("custom")
         except Exception:
-            pass
-
+            logger.exception("init fan config check failed")
     # ── Tab switching ──
 
     def set_active_tab(self, index: int):
@@ -229,7 +202,7 @@ class MainWindow(QMainWindow):
         try:
             api.set_fan_auto()
         except Exception:
-            pass
+            logger.exception("set fan auto during quit failed")
         self._tray.hide()
         self._quitting = True
         QApplication.instance().quit()
@@ -259,6 +232,7 @@ class MainWindow(QMainWindow):
         try:
             snapshot = api.read_sensors()
         except Exception:
+            logger.exception("sensor poll failed")
             return
 
         # Update stats
@@ -280,6 +254,7 @@ class MainWindow(QMainWindow):
         try:
             profile = api.get_current_profile()
         except Exception:
+            logger.exception("profile poll failed")
             return
         if profile is not None and profile != self._selected_profile:
             self._selected_profile = profile
@@ -299,7 +274,7 @@ class MainWindow(QMainWindow):
         try:
             api.set_system_profile(index)
         except Exception:
-            pass
+            logger.exception("set system profile failed")
 
     # ── Fan mode ──
 
@@ -314,30 +289,41 @@ class MainWindow(QMainWindow):
 
     def _set_fan_auto(self):
         try:
+            api.set_manual_preset("auto")
+        except Exception:
+            logger.exception("set manual preset (auto) failed")
+        try:
             api.set_custom_fan_enabled(False)
         except Exception:
-            pass
+            logger.exception("set custom fan enabled (auto) failed")
         try:
             api.set_fan_auto()
         except Exception:
-            pass
+            logger.exception("set fan auto failed")
 
     def _set_fan_max(self):
         try:
+            api.set_manual_preset("max")
+        except Exception:
+            logger.exception("set manual preset (max) failed")
+        try:
             api.set_custom_fan_enabled(False)
         except Exception:
-            pass
+            logger.exception("set custom fan enabled (max) failed")
         try:
             api.set_fan_pwm(255)
         except Exception:
-            pass
+            logger.exception("set fan pwm failed")
 
     def _set_fan_custom(self):
         try:
+            api.set_manual_preset(None)
+        except Exception:
+            logger.exception("set manual preset (custom) failed")
+        try:
             api.set_custom_fan_enabled(True)
         except Exception:
-            pass
-
+            logger.exception("set custom fan enabled failed")
     def _open_sensor_graph(self, key: str):
         """Open or focus a sensor graph window for the given sensor key."""
         existing = self._graph_windows.get(key)
@@ -379,109 +365,3 @@ class MainWindow(QMainWindow):
         self._fan_curves_window = win
         self._fans_page.set_fan_curves_window_open(True)
         win.show()
-
-    # ── Power reapply ──
-    def _check_power_reapply(self):
-        if not read_power_enabled() or self._power_apply_in_flight:
-            return
-        settings = read_power_limit_settings()
-        if settings.reapply_seconds <= 0:
-            return
-        now = time.time() * 1000
-        if now - self._last_power_apply_ms < settings.reapply_seconds * 1000:
-            return
-        self._last_power_apply_ms = now
-        self._power_apply_in_flight = True
-
-        def _apply():
-            try:
-                api.apply_power_limits(
-                    settings.stapm_limit, settings.fast_limit, settings.slow_limit)
-            except Exception:
-                pass
-            finally:
-                self._power_apply_in_flight = False
-
-        threading.Thread(target=_apply, daemon=True, name="power-apply").start()
-
-    # ── Lighting ──
-
-    def _on_lighting_enabled(self, enabled: bool):
-        self._lighting_settings.enabled = enabled
-        write_lighting_settings(self._lighting_settings)
-
-    def _on_lighting_effect(self, effect: str):
-        self._lighting_settings.effect = effect
-        write_lighting_settings(self._lighting_settings)
-
-    def _on_lighting_color(self, color: str):
-        self._lighting_settings.color = color
-        write_lighting_settings(self._lighting_settings)
-
-    def _on_lighting_speed(self, speed: int):
-        self._lighting_settings.speed = speed
-        write_lighting_settings(self._lighting_settings)
-    def _on_lighting_idle_timeout(self, timeout: int):
-        self._lighting_settings.idle_timeout = timeout
-        write_lighting_settings(self._lighting_settings)
-        # If idle timeout was disabled while dimmed, wake the backlight
-        if timeout == 0 and self._lighting_idle_off:
-            self._lighting_idle_off = False
-            self._last_sent_color = None
-
-    def _tick_lighting(self):
-        settings = normalize_lighting_settings(self._lighting_settings)
-        now = time.monotonic()
-
-        # ── Idle timeout polling (every 500 ms) ──
-        if now - self._last_idle_poll >= 0.5:
-            self._last_idle_poll = now
-            if settings.idle_timeout > 0 and settings.enabled:
-                try:
-                    idle_elapsed = api.get_keyboard_idle_elapsed()
-                except Exception:
-                    idle_elapsed = 0.0
-                if idle_elapsed < 0:
-                    # Watcher thread not running — don't dim, ensure backlight stays on
-                    if self._lighting_idle_off:
-                        self._lighting_idle_off = False
-                        self._last_sent_color = None
-                elif idle_elapsed >= settings.idle_timeout and not self._lighting_idle_off:
-                    # Dim the backlight — idle timeout expired
-                    self._lighting_idle_off = True
-                    try:
-                        api.set_keyboard_color(0, 0, 0)
-                    except Exception:
-                        pass
-                    self._last_sent_color = (0, 0, 0)
-                elif idle_elapsed < settings.idle_timeout and self._lighting_idle_off:
-                    # User typed — restore backlight on next frame
-                    self._lighting_idle_off = False
-                    self._last_sent_color = None
-            elif self._lighting_idle_off:
-                # Idle timeout was disabled while dimmed — restore
-                self._lighting_idle_off = False
-                self._last_sent_color = None
-
-        # If dimmed by idle timeout, skip all normal lighting output
-        if self._lighting_idle_off:
-            self._keyboard_page.set_status("Idle — touch a key to wake")
-            return
-
-        elapsed = int(time.time() * 1000 - self._lighting_started_at)
-        frame = lighting_frame(settings, elapsed)
-        # Throttle daemon call: only send every 200 ms and only on color change
-        color = (frame.red, frame.green, frame.blue)
-        if now - self._last_lighting_send >= 0.200 and color != self._last_sent_color:
-            try:
-                api.set_keyboard_color(*color)
-                self._last_lighting_send = now
-                self._last_sent_color = color
-            except Exception:
-                pass
-        # Update visual keyboard (always, for responsive UI)
-        self._keyboard_page.apply_frame(frame)
-        if settings.enabled:
-            self._keyboard_page.set_status("Applied" if settings.effect != "static" else "On")
-        else:
-            self._keyboard_page.set_status("Off")
