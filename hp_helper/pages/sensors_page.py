@@ -25,7 +25,7 @@ class SensorsPage(QWidget):
         self._tree.setColumnCount(6)
         self._tree.setHeaderLabels(["Sensor", "Current", "Maximum", "Minimum", "Average", ""])
         self._tree.setRootIsDecorated(True)
-        self._tree.setIndentation(16)
+        self._tree.setIndentation(0)
         self._tree.setAlternatingRowColors(False)
         self._tree.setAnimated(True)
 

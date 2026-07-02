@@ -447,6 +447,14 @@ class FansPowerPage(QWidget):
         self._reapply_spin.setValue(pwr.reapply_seconds)
         self._power_check.setChecked(read_power_enabled())
 
+    def refresh_fan_curves(self):
+        """Reload fan config from disk and update the inline charts.
+
+        Called when the pop-out fan curves window closes so any edits made
+        there are reflected in the embedded charts.
+        """
+        self._load_config()
+
     # ── Pop-out window management ──
 
     def set_fan_curves_window_open(self, is_open: bool):

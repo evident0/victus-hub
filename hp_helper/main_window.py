@@ -364,6 +364,7 @@ class MainWindow(QMainWindow):
         def _on_destroyed(obj=None):
             self._fan_curves_window = None
             self._fans_page.set_fan_curves_window_open(False)
+            self._fans_page.refresh_fan_curves()
         win.destroyed.connect(_on_destroyed)
         self._fan_curves_window = win
         self._fans_page.set_fan_curves_window_open(True)

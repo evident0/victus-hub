@@ -19,7 +19,6 @@ from hp_helper.backend import fan_config
 class FanCurvesWindow(QMainWindow):
     """Standalone fan curves editor with CPU + GPU charts."""
 
-    closed = None  # placeholder — set by signal if needed
 
     def __init__(self, parent=None):
         super().__init__(parent)
