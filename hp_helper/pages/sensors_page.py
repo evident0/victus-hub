@@ -27,7 +27,7 @@ class SensorsPage(QWidget):
 
         self._tree = QTreeWidget()
         self._tree.setColumnCount(6)
-        self._tree.setHeaderLabels(["Sensor", "Current", "Maximum", "Minimum", "Average", ""])
+        self._tree.setHeaderLabels(["Sensor", "Current", "Maximum", "Minimum", "Average", "Graph"])
         self._tree.setRootIsDecorated(True)
         self._tree.setIndentation(0)
         self._tree.setAlternatingRowColors(False)
@@ -40,7 +40,7 @@ class SensorsPage(QWidget):
         self._tree.setColumnWidth(2, 100)
         self._tree.setColumnWidth(3, 100)
         self._tree.setColumnWidth(4, 100)
-        self._tree.setColumnWidth(5, 48)
+        self._tree.setColumnWidth(5, 60)
 
         self._tree.itemClicked.connect(self._on_item_clicked)
         layout.addWidget(self._tree)
@@ -94,7 +94,6 @@ class SensorsPage(QWidget):
                 item.setText(2, max_val)
                 item.setText(3, min_val)
                 item.setText(4, avg_val)
-                item.setText(5, "")
 
                 # Graph button in column 5
                 icon = QIcon(_GRAPH_ICON)
