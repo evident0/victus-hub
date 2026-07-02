@@ -57,27 +57,16 @@ class SettingsPage(QWidget):
 
         cfg = api.get_fan_config()
 
-        # ── Ramp-down delay ──
-        ramp_label = QLabel("Fan ramp-down delay")
-        ramp_label.setStyleSheet(f"color: {COLORS['text']}; font-size: 13px; font-weight: bold;")
-        layout.addWidget(ramp_label)
+        # ── Fan control constants ──
+        constants_label = QLabel("Fan control constants")
+        constants_label.setStyleSheet(f"color: {COLORS['text']}; font-size: 13px; font-weight: bold;")
+        layout.addWidget(constants_label)
 
         self._ramp_delay = make_spin(
             "Ramp-down delay", "s",
             int(cfg.ramp_down_delay), 0, 120,
         )
         layout.addLayout(self._ramp_delay)
-
-        # ── Separator ──
-        sep = QLabel()
-        sep.setFixedHeight(1)
-        sep.setStyleSheet(f"background-color: {COLORS['border']};")
-        layout.addWidget(sep)
-
-        # ── Fan control constants ──
-        constants_label = QLabel("Fan control constants")
-        constants_label.setStyleSheet(f"color: {COLORS['text']}; font-size: 13px; font-weight: bold;")
-        layout.addWidget(constants_label)
 
         self._temp_window = self._make_spin(
             "Temperature window", "samples",
