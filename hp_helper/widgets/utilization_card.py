@@ -55,15 +55,15 @@ class _CircularProgress(QWidget):
             p.drawArc(rect, 90 * 16, span)
 
         # Percentage text (top portion of arc rect)
-        pct_font = QFont("", max(10, int(arc_diam * 0.26)), QFont.Bold)
+        pct_font = QFont("", min(14, max(10, int(arc_diam * 0.22))), QFont.Bold)
         p.setFont(pct_font)
         p.setPen(QColor(COLORS["text"]))
         pct_text = f"{int(self._percentage)}%"
-        pct_rect = QRectF(rect.left(), rect.top(), rect.width(), rect.height() * 0.52)
+        pct_rect = QRectF(rect.left(), rect.top(), rect.width(), rect.height() * 0.50)
         p.drawText(pct_rect, Qt.AlignHCenter | Qt.AlignBottom, pct_text)
 
         # Label text (bottom portion of arc rect)
-        lbl_font = QFont("", max(7, int(arc_diam * 0.1)))
+        lbl_font = QFont("", min(9, max(7, int(arc_diam * 0.09))))
         p.setFont(lbl_font)
         p.setPen(QColor(COLORS["text_secondary"]))
         lbl_rect = QRectF(rect.left(), pct_rect.bottom() + 1,
