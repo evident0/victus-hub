@@ -78,7 +78,7 @@ class KeyboardVisual(QWidget):
     def set_key_state(self, enabled: bool, effect: str, color: QColor):
         self._enabled = enabled
         self._effect = effect
-        self._key_color = color if enabled else QColor("#2a2a2a")
+        self._key_color = color if enabled else QColor(0, 0, 0)
         self.update()
 
     def set_breathing_frame(self, opacity: float):
@@ -98,7 +98,7 @@ class KeyboardVisual(QWidget):
     def _key_color_at(self, key_x: float, key_y: float) -> QColor:
         """Color for a single key at flex-space position (key_x, key_y)."""
         if not self._enabled:
-            return QColor("#2a2a2a")
+            return QColor(0, 0, 0)
 
         if self._effect == "color-cycle":
             # Rainbow wave: hue shifts with key position across board
@@ -186,7 +186,7 @@ class KeyboardVisual(QWidget):
                 border = QColor(max(color.red() + 20, color.red()),
                                 max(color.green() + 20, color.green()),
                                 max(color.blue() + 20, color.blue())) if self._enabled \
-                    else QColor("#3a3a3a")
+                    else QColor("#1a1a1a")
                 painter.setPen(border)
                 painter.setBrush(color)
                 painter.drawRoundedRect(key_rect, _KEY_RADIUS, _KEY_RADIUS)
@@ -347,15 +347,21 @@ class KeyboardPage(QWidget):
         """Update the visual keyboard from a computed frame color."""
         r, g, b = color_rgb.red, color_rgb.green, color_rgb.blue
         qc = QColor(r, g, b)
-        if self._settings.effect == "breathing":
-            max_val = max(r, g, b)
-            opacity = max_val / 255.0 if max_val > 0 else 0.0
-            self._visual.set_breathing_frame(opacity)
-        elif self._settings.effect == "color-cycle":
-            self._visual.set_cycle_hue(self._approx_hue(r, g, b))
-        elif self._settings.effect == "strobe":
-            self._visual.set_strobe_on(max(r, g, b) > 128)
-        self._visual.set_key_state(self._settings.enabled, self._settings.effect, qc)
+        is_off = max(r, g, b) == 0
+
+        if is_off:
+            # Keyboard is truly off (idle-dimmed or disabled) — show black
+            self._visual.set_key_state(False, "static", QColor(0, 0, 0))
+        else:
+            if self._settings.effect == "breathing":
+                max_val = max(r, g, b)
+                opacity = max_val / 255.0 if max_val > 0 else 0.0
+                self._visual.set_breathing_frame(opacity)
+            elif self._settings.effect == "color-cycle":
+                self._visual.set_cycle_hue(self._approx_hue(r, g, b))
+            elif self._settings.effect == "strobe":
+                self._visual.set_strobe_on(max(r, g, b) > 128)
+            self._visual.set_key_state(True, self._settings.effect, qc)
 
     @staticmethod
     def _approx_hue(r: int, g: int, b: int) -> float:

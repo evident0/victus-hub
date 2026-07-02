@@ -11,6 +11,7 @@ from PySide6.QtCore import QObject, QTimer, Signal
 from hp_helper import api
 from hp_helper.keyboard_lighting import (
     LightingSettings,
+    RgbColor,
     lighting_frame,
     normalize_lighting_settings,
     read_lighting_settings,
@@ -99,8 +100,10 @@ class LightingController(QObject):
                 self._dimmed = False
                 self._last_sent_color = None
 
-        # If dimmed by idle timeout, skip all normal lighting output
+        # If dimmed by idle timeout, emit black frame and skip normal output
         if self._dimmed:
+            if self._last_sent_color == (0, 0, 0):
+                self.frame_changed.emit(RgbColor(0, 0, 0))
             return
 
         elapsed = int(time.time() * 1000 - self._started_at_ms)
