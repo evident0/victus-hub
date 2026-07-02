@@ -1,5 +1,6 @@
 """Main application window with sidebar, stacked pages, and system tray."""
 
+import threading
 import time
 
 from pathlib import Path
@@ -30,8 +31,6 @@ from hp_helper.keyboard_lighting import (
     normalize_lighting_settings, lighting_frame, frame_interval_ms,
     hex_to_rgb,
 )
-
-POWER_APPLY_DEDUPE_MS = 1000
 
 
 class MainWindow(QMainWindow):
@@ -384,18 +383,25 @@ class MainWindow(QMainWindow):
     def _check_power_reapply(self):
         if not read_power_enabled() or self._power_apply_in_flight:
             return
-        now = time.time() * 1000
-        if now - self._last_power_apply_ms < POWER_APPLY_DEDUPE_MS:
-            return
         settings = read_power_limit_settings()
+        if settings.reapply_seconds <= 0:
+            return
+        now = time.time() * 1000
+        if now - self._last_power_apply_ms < settings.reapply_seconds * 1000:
+            return
         self._last_power_apply_ms = now
         self._power_apply_in_flight = True
-        try:
-            api.apply_power_limits(settings.stapm_limit, settings.fast_limit, settings.slow_limit)
-        except Exception:
-            pass
-        finally:
-            self._power_apply_in_flight = False
+
+        def _apply():
+            try:
+                api.apply_power_limits(
+                    settings.stapm_limit, settings.fast_limit, settings.slow_limit)
+            except Exception:
+                pass
+            finally:
+                self._power_apply_in_flight = False
+
+        threading.Thread(target=_apply, daemon=True, name="power-apply").start()
 
     # ── Lighting ──
 
