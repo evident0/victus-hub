@@ -205,8 +205,14 @@ class MainWindow(QMainWindow):
         self._hidden_graph_windows.clear()
 
     def _quit_app(self):
-        """Restore fan to auto and persist state, then quit."""
-        self._set_fan_auto()
+        """Restore fan hardware to auto, then quit.  The user's last mode
+        choice survives in config so the segmented control restores it
+        on the next start.
+        """
+        try:
+            api.set_fan_auto()
+        except Exception:
+            logger.exception("set fan auto during quit failed")
         self._tray.hide()
         self._quitting = True
         QApplication.instance().quit()
