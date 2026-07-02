@@ -86,6 +86,7 @@ def _start_fan_control() -> None:
 
     def _loop():
         import time as _time
+        import math as _math
 
         temp_history: collections.deque = collections.deque(maxlen=_TEMP_WINDOW)
         last_written_pct: float | None = None
@@ -112,11 +113,8 @@ def _start_fan_control() -> None:
 
             config = _fan_config.load()
             profile = config.profiles[profile_idx]
-            _prev_profile_idx = getattr(_fan_logger, "_last_profile_idx", -1)
-            if profile_idx != _prev_profile_idx:
-                _fan_logger.info("fan-control switched to profile %d (%s)", profile_idx,
-                                 ["power-saver", "balanced", "performance"][profile_idx])
-                _fan_logger._last_profile_idx = profile_idx
+
+            if not config.custom_enabled:
                 if was_custom:
                     try:
                         _daemon_client.request_fan_auto()
@@ -127,7 +125,6 @@ def _start_fan_control() -> None:
                     was_custom = False
                 _time.sleep(_POLL_INTERVAL)
                 continue
-
             was_custom = True
 
             # ── control tick ──
@@ -147,14 +144,14 @@ def _start_fan_control() -> None:
                 if cpu_temps:
                     cpu_avg = sum(cpu_temps) / len(cpu_temps)
                     s = _fan_config.interpolate_fan(
-                        profile.cpu_points, round(cpu_avg)
+                        profile.cpu_points, int(_math.floor(cpu_avg + 0.5))
                     )
                     target = s
 
                 if gpu_temps:
                     gpu_avg = sum(gpu_temps) / len(gpu_temps)
                     s = _fan_config.interpolate_fan(
-                        profile.gpu_points, round(gpu_avg)
+                        profile.gpu_points, int(_math.floor(gpu_avg + 0.5))
                     )
                     target = max(target, s) if target is not None else s
 
@@ -165,14 +162,13 @@ def _start_fan_control() -> None:
                         _RAMP_UP_PCT, _RAMP_DOWN_PCT, _RAMP_DOWN_DELAY,
                     )
 
-                    delta = abs(next_pct - (last_written_pct or 0.0))
-                    if last_written_pct is None or delta >= _WRITE_MIN_DELTA_PCT or next_pct == target:
+                    delta = abs(next_pct - (last_written_pct if last_written_pct is not None else 0.0))
+                    if last_written_pct is None or delta >= _WRITE_MIN_DELTA_PCT:
                         pwm = max(0, min(int(next_pct * 255.0 / 100.0), 255))
                         _fan_logger.info(
-                            "cpu=%.0f°C gpu=%s target=%.0f%% cur=%.0f%% → next=%.0f%% delta=%.1f → pwm=%d%s",
+                            "cpu=%.0f°C gpu=%s target=%.0f%% cur=%.0f%% → next=%.0f%% delta=%.1f → pwm=%d WRITE",
                             cpu_avg, f"{gpu_avg:.0f}°C" if gpu_avg is not None else "N/A",
                             target, current, next_pct, delta, pwm,
-                            " WRITE" if last_written_pct is None or delta >= _WRITE_MIN_DELTA_PCT else "",
                         )
                         try:
                             _daemon_client.request_fan_pwm(pwm, cpu_avg, gpu_avg)
