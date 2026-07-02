@@ -1,13 +1,17 @@
 """Sensors page with collapsible grouped table."""
 
 from PySide6.QtWidgets import (
-    QAbstractItemView, QApplication, QPushButton, QStyle,
+    QAbstractItemView, QPushButton,
     QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget,
 )
-from PySide6.QtCore import Qt, Signal, QTimer
-from PySide6.QtGui import QColor
+from PySide6.QtCore import QSize, Qt, Signal, QTimer
+from PySide6.QtGui import QColor, QIcon
 
 from hp_helper.theme import COLORS
+from pathlib import Path
+
+_ICONS_DIR = Path(__file__).parent.parent / "resources" / "icons"
+_GRAPH_ICON = str(_ICONS_DIR / "icons8-show-right-side-panel-48.png")
 
 
 class SensorsPage(QWidget):
@@ -93,18 +97,20 @@ class SensorsPage(QWidget):
                 item.setText(5, "")
 
                 # Graph button in column 5
-                style = QApplication.style()
+                icon = QIcon(_GRAPH_ICON)
+                btn = QPushButton()
+                btn.setIcon(icon)
+                btn.setIconSize(QSize(20, 20))
+                btn.setFixedSize(24, 24)
+                btn.setFlat(True)
                 if d.graphable:
-                    btn = QPushButton(style.standardIcon(QStyle.SP_MediaPlay), "")
-                else:
-                    btn = QPushButton(style.standardIcon(QStyle.SP_DialogCloseButton), "")
-                btn.setFixedSize(30, 28)
-                btn.setEnabled(d.graphable)
-                btn.setToolTip(f"Open {d.name} graph" if d.graphable else "Not graphable")
-                if d.graphable:
+                    btn.setToolTip(f"Open {d.name} graph")
                     btn.clicked.connect(
                         lambda checked, k=d.key: self.open_graph_requested.emit(k)
                     )
+                else:
+                    btn.setEnabled(False)
+                    btn.setToolTip("Not graphable")
                 self._tree.setItemWidget(item, 5, btn)
 
                 # Alternating row color
