@@ -8,7 +8,6 @@ from PySide6.QtCore import Qt, Signal, QTimer
 from PySide6.QtGui import QColor
 
 from hp_helper.widgets.fan_chart import FanChart
-from hp_helper.widgets.section_title import SectionTitle
 from hp_helper.theme import COLORS
 from hp_helper.power_limits import (
     POWER_MIN_MW, POWER_MAX_MW, POWER_STEP_MW, DEFAULT_POWER_LIMIT_MW,
@@ -21,6 +20,7 @@ from hp_helper.api import (
     FanPoint, FanProfileConfig,
 )
 from hp_helper.backend import fan_config
+from hp_helper.widgets.profile_section import PROFILES as _PROFILE_NAMES_SRC
 
 
 
@@ -146,7 +146,13 @@ class FansPowerPage(QWidget):
 
         # Header row
         header_row = QHBoxLayout()
-        header_row.addWidget(SectionTitle(None, "Fan Curves"))
+        header_row.setSpacing(6)
+        fan_title = QLabel("Fan Curves")
+        fan_title.setStyleSheet("font-size: 18px; font-weight: 800; color: #ffffff;")
+        header_row.addWidget(fan_title)
+        self._profile_label = QLabel("")
+        self._profile_label.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 13px; background: transparent;")
+        header_row.addWidget(self._profile_label)
 
 
         header_row.addStretch()
@@ -230,6 +236,7 @@ class FansPowerPage(QWidget):
 
         # Load config
         self._load_config()
+        self._update_profile_label()
 
     # ── Power slider helpers ──
 
@@ -338,6 +345,12 @@ class FansPowerPage(QWidget):
             return
         self._edit_profile = index
         self._hydrate_editor()
+        self._update_profile_label()
+    _PROFILE_NAMES = [p[0] for p in _PROFILE_NAMES_SRC]
+
+    def _update_profile_label(self):
+        idx = min(max(self._edit_profile, 0), len(self._PROFILE_NAMES) - 1)
+        self._profile_label.setText(f"({self._PROFILE_NAMES[idx]})")
 
     # ── Fan curve point handlers ──
 

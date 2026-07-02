@@ -13,6 +13,7 @@ from hp_helper.api import (
     FanPoint, FanProfileConfig,
 )
 from hp_helper.backend import fan_config
+from hp_helper.widgets.profile_section import PROFILES as _PROFILE_NAMES_SRC
 
 
 
@@ -50,6 +51,9 @@ class FanCurvesWindow(QMainWindow):
         title = QLabel("Fan Curves")
         title.setStyleSheet("font-size: 18px; font-weight: 800; color: #ffffff;")
         header.addWidget(title)
+        self._profile_label = QLabel("")
+        self._profile_label.setStyleSheet("color: #9d9d9d; font-size: 13px; background: transparent;")
+        header.addWidget(self._profile_label)
         header.addStretch()
         layout.addLayout(header)
 
@@ -77,6 +81,7 @@ class FanCurvesWindow(QMainWindow):
 
         # Load config
         self._load_config()
+        self._update_profile_label()
 
     # ── Config ──
 
@@ -104,13 +109,19 @@ class FanCurvesWindow(QMainWindow):
 
 
     # ── Profile-driven editing ──
-
     def set_edit_profile(self, index: int):
         """Switch which profile's fan curves are shown (0=Power Saver, 1=Balanced, 2=Performance)."""
         if index == self._edit_profile:
             return
         self._edit_profile = index
         self._hydrate_editor()
+        self._update_profile_label()
+
+    _PROFILE_NAMES = [p[0] for p in _PROFILE_NAMES_SRC]
+
+    def _update_profile_label(self):
+        idx = min(max(self._edit_profile, 0), len(self._PROFILE_NAMES) - 1)
+        self._profile_label.setText(f"({self._PROFILE_NAMES[idx]})")
 
     # ── CPU point handlers ──
 
