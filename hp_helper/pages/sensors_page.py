@@ -11,7 +11,7 @@ from hp_helper.theme import COLORS
 from pathlib import Path
 
 _ICONS_DIR = Path(__file__).parent.parent / "resources" / "icons"
-_GRAPH_ICON = str(_ICONS_DIR / "icons8-show-right-side-panel-48.png")
+_GRAPH_ICON = str(_ICONS_DIR / "icons8-show-right-side-panel-48-white.png")
 
 
 class SensorsPage(QWidget):
@@ -100,9 +100,10 @@ class SensorsPage(QWidget):
                 icon = QIcon(_GRAPH_ICON)
                 btn = QPushButton()
                 btn.setIcon(icon)
-                btn.setIconSize(QSize(20, 20))
-                btn.setFixedSize(24, 24)
+                btn.setIconSize(QSize(18, 18))
+                btn.setFixedSize(22, 22)
                 btn.setFlat(True)
+                btn.setStyleSheet("QPushButton { border: none; background: transparent; }")
                 if d.graphable:
                     btn.setToolTip(f"Open {d.name} graph")
                     btn.clicked.connect(
@@ -111,7 +112,13 @@ class SensorsPage(QWidget):
                 else:
                     btn.setEnabled(False)
                     btn.setToolTip("Not graphable")
-                self._tree.setItemWidget(item, 5, btn)
+                container = QWidget()
+                container.setStyleSheet("background: transparent;")
+                clayout = QVBoxLayout(container)
+                clayout.setContentsMargins(0, 0, 0, 0)
+                clayout.setAlignment(Qt.AlignCenter)
+                clayout.addWidget(btn)
+                self._tree.setItemWidget(item, 5, container)
 
                 # Alternating row color
                 bg = "#181818" if ri % 2 == 0 else "#1d1d1d"
