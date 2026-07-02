@@ -112,8 +112,11 @@ def _start_fan_control() -> None:
 
             config = _fan_config.load()
             profile = config.profiles[profile_idx]
-
-            if not config.custom_enabled:
+            _prev_profile_idx = getattr(_fan_logger, "_last_profile_idx", -1)
+            if profile_idx != _prev_profile_idx:
+                _fan_logger.info("fan-control switched to profile %d (%s)", profile_idx,
+                                 ["power-saver", "balanced", "performance"][profile_idx])
+                _fan_logger._last_profile_idx = profile_idx
                 if was_custom:
                     try:
                         _daemon_client.request_fan_auto()
@@ -166,7 +169,8 @@ def _start_fan_control() -> None:
                     if last_written_pct is None or delta >= _WRITE_MIN_DELTA_PCT or next_pct == target:
                         pwm = max(0, min(int(next_pct * 255.0 / 100.0), 255))
                         _fan_logger.info(
-                            "target=%.0f%% current=%.0f%% → next=%.0f%% delta=%.1f → pwm=%d%s",
+                            "cpu=%.0f°C gpu=%s target=%.0f%% cur=%.0f%% → next=%.0f%% delta=%.1f → pwm=%d%s",
+                            cpu_avg, f"{gpu_avg:.0f}°C" if gpu_avg is not None else "N/A",
                             target, current, next_pct, delta, pwm,
                             " WRITE" if last_written_pct is None or delta >= _WRITE_MIN_DELTA_PCT else "",
                         )
@@ -177,7 +181,8 @@ def _start_fan_control() -> None:
                         last_written_pct = next_pct
                     else:
                         _fan_logger.info(
-                            "target=%.0f%% current=%.0f%% → next=%.0f%% delta=%.1f (skip, <%.0f)",
+                            "cpu=%.0f°C gpu=%s target=%.0f%% cur=%.0f%% → next=%.0f%% delta=%.1f (skip, <%.0f)",
+                            cpu_avg, f"{gpu_avg:.0f}°C" if gpu_avg is not None else "N/A",
                             target, current, next_pct, delta, _WRITE_MIN_DELTA_PCT,
                         )
 
