@@ -76,15 +76,15 @@ class FansPowerPage(QWidget):
         power_layout.addWidget(subtitle)
 
         # Sliders
-        self._stapm_wrapper = self._make_power_slider("STAPM Limit")
+        self._stapm_wrapper = self._make_power_slider("STAPM Limit", self._stapm_limit)
         self._stapm_wrapper._slider.valueChanged.connect(self._on_stapm_changed)
         power_layout.addWidget(self._stapm_wrapper)
 
-        self._fast_wrapper = self._make_power_slider("Fast Limit")
+        self._fast_wrapper = self._make_power_slider("Fast Limit", self._fast_limit)
         self._fast_wrapper._slider.valueChanged.connect(self._on_fast_changed)
         power_layout.addWidget(self._fast_wrapper)
 
-        self._slow_wrapper = self._make_power_slider("Slow Limit")
+        self._slow_wrapper = self._make_power_slider("Slow Limit", self._slow_limit)
         self._slow_wrapper._slider.valueChanged.connect(self._on_slow_changed)
         power_layout.addWidget(self._slow_wrapper)
 
@@ -240,7 +240,7 @@ class FansPowerPage(QWidget):
 
     # ── Power slider helpers ──
 
-    def _make_power_slider(self, label: str) -> QWidget:
+    def _make_power_slider(self, label: str, initial_mw: int = DEFAULT_POWER_LIMIT_MW) -> QWidget:
         w = QWidget()
         w.setStyleSheet("background: transparent;")
         l = QVBoxLayout(w)
@@ -252,7 +252,7 @@ class FansPowerPage(QWidget):
         lbl.setStyleSheet(f"color: #d8d8d8; font-size: 12px;")
         row.addWidget(lbl)
         row.addStretch()
-        val_label = QLabel("25 W")
+        val_label = QLabel(f"{round(initial_mw / 1000)} W")
         val_label.setStyleSheet("color: #ffffff; font-size: 12px; font-weight: bold;")
         row.addWidget(val_label)
         l.addLayout(row)
@@ -261,7 +261,7 @@ class FansPowerPage(QWidget):
         slider.setRange(POWER_MIN_MW, POWER_MAX_MW)
         slider.setSingleStep(POWER_STEP_MW)
         slider.setPageStep(POWER_STEP_MW * 5)
-        slider.setValue(DEFAULT_POWER_LIMIT_MW)
+        slider.setValue(initial_mw)
         slider.valueChanged.connect(
             lambda v: val_label.setText(f"{round(v / 1000)} W")
         )
