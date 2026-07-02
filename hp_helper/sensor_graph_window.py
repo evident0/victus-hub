@@ -33,6 +33,7 @@ class SensorGraphWindow(QMainWindow):
         self._sensor_key = sensor_key
         self._definition: SensorDefinition = sensor_definition_for_key(sensor_key)
         self._started = False
+        self._ram_max_set = False
 
         self.setWindowTitle(f"{self._definition.name} Graph")
         self.resize(820, 260)
@@ -133,6 +134,13 @@ class SensorGraphWindow(QMainWindow):
         self._definition = sensor_definition_for_key(self._sensor_key, snap)
         reading = self._definition.reading(snap)
         value = self._definition.numeric_value(snap)
+
+        # RAM: set upper bound to system total RAM (once, so user can override)
+        if self._sensor_key == "ram-usage" and not self._ram_max_set and snap.ram_total_gb is not None:
+            self._ram_max_set = True
+            vmax = float(snap.ram_total_gb)
+            self._graph.set_value_range(0.0, vmax)
+            self._max_input.setText(f"{vmax:.1f}")
 
         self._current_label.setText(reading.value)
         self._source_label.setText(getattr(reading, "source", ""))
