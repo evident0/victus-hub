@@ -11,7 +11,7 @@ from hp_helper.theme import COLORS
 from pathlib import Path
 
 _ICONS_DIR = Path(__file__).parent.parent / "resources" / "icons"
-_GRAPH_ICON = str(_ICONS_DIR / "icons8-show-right-side-panel-48-white.png")
+_GRAPH_ICON = str(_ICONS_DIR / "line_graph_icon-white.png")
 
 
 class SensorsPage(QWidget):
