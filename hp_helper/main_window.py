@@ -34,7 +34,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("HP Helper")
         self.resize(960, 640)
-        self.setMinimumSize(520, 400)
+        self.setMinimumSize(930, 680)
 
         # App icon
         icon_path = Path(__file__).parent / "resources" / "icons" / "icon.png"

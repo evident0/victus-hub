@@ -34,6 +34,7 @@ class HomePage(QWidget):
         cards_row.addWidget(self._gpu_card)
         cards_row.addWidget(self._ram_card)
         layout.addLayout(cards_row)
+        layout.addStretch()
 
 
         # Profile section (centered)
@@ -43,11 +44,11 @@ class HomePage(QWidget):
         self._profile_section.fan_curves_popout_requested.connect(
             self.fan_curves_popout_requested.emit)
         layout.addWidget(self._profile_section)
+        layout.addStretch()
 
         # Footer
         self._footer = Footer()
         layout.addWidget(self._footer)
-        layout.addStretch()
 
     def update_sensor_data(self, snapshot):
         """Refresh utilization cards from a sensor snapshot."""
