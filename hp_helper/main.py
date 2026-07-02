@@ -21,10 +21,13 @@ def main():
     app.setOrganizationName("hp-helper")
 
     # Load global QSS stylesheet
-    style_path = Path(__file__).parent / "resources" / "style.qss"
+    resources_dir = Path(__file__).parent / "resources"
+    style_path = resources_dir / "style.qss"
     if style_path.exists():
         with open(style_path, "r") as f:
-            app.setStyleSheet(f.read())
+            qss = f.read()
+        qss = qss.replace("url(icons/", f"url({resources_dir.as_posix()}/icons/")
+        app.setStyleSheet(qss)
 
     # Allow dark title bar on Windows
     if sys.platform == "win32":

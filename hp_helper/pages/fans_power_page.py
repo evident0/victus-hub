@@ -2,13 +2,14 @@
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QSlider, QCheckBox,
-    QSpinBox, QPushButton,
+    QPushButton,
 )
 from PySide6.QtCore import Qt, Signal, QTimer
 from PySide6.QtGui import QColor
 
 from hp_helper.widgets.fan_chart import FanChart
 from hp_helper.theme import COLORS
+from hp_helper.pages.settings_page import make_spin
 from hp_helper.power_limits import (
     POWER_MIN_MW, POWER_MAX_MW, POWER_STEP_MW, DEFAULT_POWER_LIMIT_MW,
     DEFAULT_REAPPLY_SECONDS, PowerLimitSettings, clamp_power_limit,
@@ -88,17 +89,12 @@ class FansPowerPage(QWidget):
         power_layout.addWidget(self._slow_wrapper)
 
         # Reapply spinbox
-        reapply_row = QHBoxLayout()
-        reapply_label = QLabel("Auto reapply interval (s)")
-        reapply_label.setStyleSheet(f"color: {COLORS['text']}; font-size: 12px;")
-        reapply_row.addWidget(reapply_label)
-        reapply_row.addStretch()
-        self._reapply_spin = QSpinBox()
-        self._reapply_spin.setRange(0, 3600)
-        self._reapply_spin.setValue(self._reapply_seconds)
-        self._reapply_spin.valueChanged.connect(self._on_reapply_changed)
-        reapply_row.addWidget(self._reapply_spin)
-        power_layout.addLayout(reapply_row)
+        self._reapply_spin = make_spin(
+            "Auto reapply interval", "s",
+            self._reapply_seconds, 0, 3600,
+        )
+        self._reapply_spin._spin.valueChanged.connect(self._on_reapply_changed)
+        power_layout.addLayout(self._reapply_spin)
 
         reapply_help = QLabel("0 disables periodic reapply. Default is 5 seconds.")
         reapply_help.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 11px;")
@@ -459,7 +455,7 @@ class FansPowerPage(QWidget):
         self._stapm_wrapper._slider.setValue(pwr.stapm_limit)
         self._fast_wrapper._slider.setValue(pwr.fast_limit)
         self._slow_wrapper._slider.setValue(pwr.slow_limit)
-        self._reapply_spin.setValue(pwr.reapply_seconds)
+        self._reapply_spin._spin.setValue(pwr.reapply_seconds)
         self._power_check.setChecked(read_power_enabled())
 
     def refresh_fan_curves(self):

@@ -2,13 +2,14 @@
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
-    QCheckBox, QComboBox, QPushButton, QSlider, QSpinBox, QColorDialog,
+    QCheckBox, QComboBox, QPushButton, QSlider, QColorDialog,
 )
 from PySide6.QtCore import Qt, Signal, QRectF
 from PySide6.QtGui import QPainter, QColor, QFont, QLinearGradient
 
 from hp_helper.widgets.section_title import SectionTitle
 from hp_helper.theme import COLORS
+from hp_helper.pages.settings_page import make_spin
 from hp_helper.keyboard_lighting import (
     LIGHTING_EFFECTS,
     read_lighting_settings, write_lighting_settings, hsv_to_rgb,
@@ -292,18 +293,13 @@ class KeyboardPage(QWidget):
         ctrl_layout.addWidget(self._speed_slider)
 
         # Idle timeout
-        idle_label = QLabel("Idle timeout (s)")
-        idle_label.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 11px;")
-        ctrl_layout.addWidget(idle_label)
-
-        self._idle_timeout_spin = QSpinBox(controls)
-        self._idle_timeout_spin.setRange(0, 600)
-        self._idle_timeout_spin.setValue(s.idle_timeout)
-        self._idle_timeout_spin.setSuffix(" s")
-        self._idle_timeout_spin.setSpecialValueText("Off")
-        self._idle_timeout_spin.setFixedWidth(80)
-        self._idle_timeout_spin.valueChanged.connect(self._on_idle_timeout_changed)
-        ctrl_layout.addWidget(self._idle_timeout_spin)
+        self._idle_timeout = make_spin(
+            "Idle timeout", "s",
+            s.idle_timeout, 0, 600,
+        )
+        self._idle_timeout._spin.setSpecialValueText("Off")
+        self._idle_timeout._spin.valueChanged.connect(self._on_idle_timeout_changed)
+        ctrl_layout.addLayout(self._idle_timeout)
 
         ctrl_layout.addStretch()
         layout.addWidget(controls)

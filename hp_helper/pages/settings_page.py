@@ -11,6 +11,41 @@ from hp_helper.theme import COLORS
 from hp_helper.backend.types import FanConfig
 
 
+def make_spin(label: str, suffix: str, value: int,
+              vmin: int, vmax: int) -> QHBoxLayout:
+    row = QHBoxLayout()
+    lbl = QLabel(label)
+    lbl.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 12px;")
+    row.addWidget(lbl)
+    row.addStretch()
+    spin = QSpinBox()
+    spin.setRange(vmin, vmax)
+    spin.setValue(value)
+    spin.setSuffix(f" {suffix}")
+    spin.setFixedWidth(90)
+    row._spin = spin
+    row.addWidget(spin)
+    return row
+
+
+def make_double_spin(label: str, suffix: str, value: float,
+                     vmin: float, vmax: float, step: float) -> QHBoxLayout:
+    row = QHBoxLayout()
+    lbl = QLabel(label)
+    lbl.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 12px;")
+    row.addWidget(lbl)
+    row.addStretch()
+    spin = QDoubleSpinBox()
+    spin.setRange(vmin, vmax)
+    spin.setSingleStep(step)
+    spin.setDecimals(1)
+    spin.setValue(value)
+    spin.setSuffix(f" {suffix}")
+    spin.setFixedWidth(90)
+    row._spin = spin
+    row.addWidget(spin)
+    return row
+
 class SettingsPage(QWidget):
     """Settings tab for fan-control tuning constants."""
 
@@ -27,18 +62,11 @@ class SettingsPage(QWidget):
         ramp_label.setStyleSheet(f"color: {COLORS['text']}; font-size: 13px; font-weight: bold;")
         layout.addWidget(ramp_label)
 
-        ramp_row = QHBoxLayout()
-        ramp_desc = QLabel("Seconds to wait before ramping fans down")
-        ramp_desc.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 11px;")
-        ramp_row.addWidget(ramp_desc)
-        ramp_row.addStretch()
-        self._ramp_delay = QSpinBox()
-        self._ramp_delay.setRange(0, 120)
-        self._ramp_delay.setValue(int(cfg.ramp_down_delay))
-        self._ramp_delay.setSuffix(" s")
-        self._ramp_delay.setFixedWidth(90)
-        ramp_row.addWidget(self._ramp_delay)
-        layout.addLayout(ramp_row)
+        self._ramp_delay = make_spin(
+            "Ramp-down delay", "s",
+            int(cfg.ramp_down_delay), 0, 120,
+        )
+        layout.addLayout(self._ramp_delay)
 
         # ── Separator ──
         sep = QLabel()
@@ -105,41 +133,15 @@ class SettingsPage(QWidget):
 
     def _make_spin(self, label: str, suffix: str, value: int,
                    vmin: int, vmax: int) -> QHBoxLayout:
-        row = QHBoxLayout()
-        lbl = QLabel(label)
-        lbl.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 12px;")
-        row.addWidget(lbl)
-        row.addStretch()
-        spin = QSpinBox()
-        spin.setRange(vmin, vmax)
-        spin.setValue(value)
-        spin.setSuffix(f" {suffix}")
-        spin.setFixedWidth(90)
-        row._spin = spin
-        row.addWidget(spin)
-        return row
+        return make_spin(label, suffix, value, vmin, vmax)
 
     def _make_double_spin(self, label: str, suffix: str, value: float,
                           vmin: float, vmax: float, step: float) -> QHBoxLayout:
-        row = QHBoxLayout()
-        lbl = QLabel(label)
-        lbl.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 12px;")
-        row.addWidget(lbl)
-        row.addStretch()
-        spin = QDoubleSpinBox()
-        spin.setRange(vmin, vmax)
-        spin.setSingleStep(step)
-        spin.setDecimals(1)
-        spin.setValue(value)
-        spin.setSuffix(f" {suffix}")
-        spin.setFixedWidth(90)
-        row._spin = spin
-        row.addWidget(spin)
-        return row
+        return make_double_spin(label, suffix, value, vmin, vmax, step)
 
     def _on_apply(self):
         cfg = api.get_fan_config()
-        cfg.ramp_down_delay = float(self._ramp_delay.value())
+        cfg.ramp_down_delay = float(self._ramp_delay._spin.value())
         cfg.temp_window = self._temp_window._spin.value()
         cfg.write_min_delta_pct = self._write_delta._spin.value()
         cfg.ramp_up_pct = self._ramp_up._spin.value()
