@@ -104,6 +104,7 @@ class SensorsPage(QWidget):
                     btn.clicked.connect(
                         lambda checked, k=d.key: self.open_graph_requested.emit(k)
                     )
+                self._tree.setItemWidget(item, 5, btn)
 
                 # Alternating row color
                 bg = "#181818" if ri % 2 == 0 else "#1d1d1d"

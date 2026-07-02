@@ -110,6 +110,9 @@ class MainWindow(QMainWindow):
         # Fans: pop-out request
         self._fans_page.fan_curves_popout_requested.connect(self._open_fan_curves_window)
 
+        # Sensors: graph pop-out requests
+        self._sensors_page.open_graph_requested.connect(self._open_sensor_graph)
+
         # Window tracking
         self._graph_windows: dict[str, SensorGraphWindow] = {}
         self._hidden_graph_windows: set[str] = set()  # keys hidden by tray-close
