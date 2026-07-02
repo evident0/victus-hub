@@ -3,7 +3,7 @@
 import logging
 
 from PySide6.QtCore import Qt, QSettings, QTimer
-from PySide6.QtGui import QAction, QCloseEvent
+from PySide6.QtGui import QAction, QCloseEvent, QColor, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QApplication, QHBoxLayout, QMainWindow, QMenu, QStackedWidget,
     QSystemTrayIcon, QWidget,
@@ -35,9 +35,15 @@ class MainWindow(QMainWindow):
         self.resize(960, 640)
         self.setMinimumSize(930, 680)
 
-        # App icon — Vletter.png is black; recolor to white for dark-mode UI
-        from hp_helper.icon_utils import load_icon
-        self._app_icon = load_icon("Vletter.png", "#ffffff", 48)
+        # App icon — white Vletter on opaque black bg to hide GNOME titlebar arrow
+        from hp_helper.icon_utils import load_pixmap
+        _v = load_pixmap("Vletter.png", "#ff8c00", 48)
+        _bg = QPixmap(48, 48)
+        _bg.fill(QColor("#1a1a1a"))
+        _p = QPainter(_bg)
+        _p.drawPixmap(0, 0, _v)
+        _p.end()
+        self._app_icon = QIcon(_bg)
         self.setWindowIcon(self._app_icon)
 
         # Central widget

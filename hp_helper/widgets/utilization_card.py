@@ -36,8 +36,8 @@ class _CircularProgress(QWidget):
         w = self.width()
         h = self.height()
         side = min(w, h)
-        # Arc takes ~70% of the widget side — leaves breathing room
-        arc_diam = side * 0.70
+        # Arc takes ~80% of the widget side — leaves breathing room
+        arc_diam = side * 0.80
         pen_width = max(2.0, arc_diam * 0.05)
 
         # Arc rect — square, centred in widget
@@ -122,11 +122,11 @@ class UtilizationCard(QFrame):
         self._subtitle_label.setStyleSheet(f"""
             QLabel {{
                 color: {COLORS['text_secondary']};
-                font-size: 11px;
+                font-size: 14px;
                 background: transparent;
             }}
         """)
-        self._subtitle_label.setAlignment(Qt.AlignCenter)
+        self._subtitle_label.setAlignment(Qt.AlignLeft)
         layout.addWidget(self._subtitle_label, 0)
 
     def update_data(self, percentage: float, subtitle: str,
