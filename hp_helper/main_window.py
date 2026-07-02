@@ -1,10 +1,9 @@
 """Main application window with sidebar, stacked pages, and system tray."""
 
 import logging
-from pathlib import Path
 
 from PySide6.QtCore import Qt, QSettings, QTimer
-from PySide6.QtGui import QIcon, QAction, QCloseEvent
+from PySide6.QtGui import QAction, QCloseEvent
 from PySide6.QtWidgets import (
     QApplication, QHBoxLayout, QMainWindow, QMenu, QStackedWidget,
     QSystemTrayIcon, QWidget,
@@ -36,9 +35,9 @@ class MainWindow(QMainWindow):
         self.resize(960, 640)
         self.setMinimumSize(930, 680)
 
-        # App icon
-        icon_path = Path(__file__).parent / "resources" / "icons" / "icon.png"
-        self._app_icon = QIcon(str(icon_path)) if icon_path.exists() else QIcon()
+        # App icon — Vletter.png is black; recolor to white for dark-mode UI
+        from hp_helper.icon_utils import load_icon
+        self._app_icon = load_icon("Vletter.png", "#ffffff", 48)
         self.setWindowIcon(self._app_icon)
 
         # Central widget

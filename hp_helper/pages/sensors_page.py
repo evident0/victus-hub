@@ -57,32 +57,72 @@ class SensorsPage(QWidget):
         self._tree.setColumnWidth(5, 60)
 
         self._tree.itemClicked.connect(self._on_item_clicked)
+
+        # Tracking for in-place updates (avoids destroying item widgets on every poll)
+        self._sensor_items: dict[str, QTreeWidgetItem] = {}
+        self._group_items: dict[str, QTreeWidgetItem] = {}
         layout.addWidget(self._tree)
 
     def update_rows(self, rows: list):
-        """Rebuild the tree from sensor table rows, preserving scroll + expand state."""
+        """Refresh sensor values in-place when structure is stable; rebuild only on change."""
+        by_key: dict[str, dict] = {}
+        groups: dict[str, list] = {}
+        for row in rows:
+            k = row["definition"].key
+            by_key[k] = row
+            g = row["definition"].group
+            groups.setdefault(g, []).append(row)
+
+        new_keys = set(by_key.keys())
+        existing_keys = set(self._sensor_items.keys())
+
+        if new_keys == existing_keys and self._group_items:
+            # ── Structure unchanged: update text in-place ──
+            for group_name, group_rows in groups.items():
+                gitem = self._group_items.get(group_name)
+                if gitem is not None:
+                    gitem.setText(1, f"({len(group_rows)})")
+
+            for key, row in by_key.items():
+                item = self._sensor_items[key]
+                d = row["definition"]
+                stats = row["stats"]
+                current_val = stats.get("current", {}).get("value", "—")
+                item.setText(1, str(current_val))
+                item.setText(2, str(stats.get("maximum", "—")))
+                item.setText(3, str(stats.get("minimum", "—")))
+                item.setText(4, str(stats.get("average", "—")))
+                item.setToolTip(0, stats.get("current", {}).get("source", ""))
+                # Temp coloring
+                if d.unit == "\u00B0C":
+                    try:
+                        n = float(str(current_val).replace("\u00B0C", "").strip())
+                        item.setForeground(1, QColor("#ff4444") if n > 95 else QColor(COLORS["text"]))
+                    except ValueError:
+                        pass
+                else:
+                    item.setForeground(1, QColor(COLORS["text"]))
+            return
+
+        # ── Structure changed: rebuild the tree ──
         # Save scroll position and expanded groups before clearing
         scroll_bar = self._tree.verticalScrollBar()
         saved_scroll = scroll_bar.value()
         saved_expanded: set[str] = set()
         for i in range(self._tree.topLevelItemCount()):
-            item = self._tree.topLevelItem(i)
-            if item.isExpanded():
-                saved_expanded.add(item.text(0))
+            gitem = self._tree.topLevelItem(i)
+            if gitem.isExpanded():
+                saved_expanded.add(gitem.text(0))
 
         self._tree.clear()
-
-        groups: dict[str, list] = {}
-        for row in rows:
-            g = row["definition"].group
-            groups.setdefault(g, []).append(row)
+        self._sensor_items.clear()
+        self._group_items.clear()
 
         for group_name, group_rows in groups.items():
             group_item = QTreeWidgetItem(self._tree)
             group_item.setText(0, group_name)
             group_item.setText(1, f"({len(group_rows)})")
             group_item.setExpanded(group_name in saved_expanded if saved_expanded else True)
-
             # Style group header
             for c in range(6):
                 group_item.setBackground(c, QColor("#252525"))
@@ -90,6 +130,7 @@ class SensorsPage(QWidget):
             group_font.setBold(True)
             group_font.setPointSize(10)
             group_item.setFont(0, group_font)
+            self._group_items[group_name] = group_item
 
             for ri, row in enumerate(group_rows):
                 d = row["definition"]
@@ -100,13 +141,10 @@ class SensorsPage(QWidget):
                 item.setToolTip(0, stats.get("current", {}).get("source", ""))
 
                 current_val = stats.get("current", {}).get("value", "—")
-                max_val = str(stats.get("maximum", "—"))
-                min_val = str(stats.get("minimum", "—"))
-                avg_val = str(stats.get("average", "—"))
                 item.setText(1, str(current_val))
-                item.setText(2, max_val)
-                item.setText(3, min_val)
-                item.setText(4, avg_val)
+                item.setText(2, str(stats.get("maximum", "—")))
+                item.setText(3, str(stats.get("minimum", "—")))
+                item.setText(4, str(stats.get("average", "—")))
 
                 # Graph button in column 5 — transparent icon-only
                 btn = QPushButton()
@@ -153,8 +191,9 @@ class SensorsPage(QWidget):
                     except ValueError:
                         pass
 
-        # Restore scroll position after the tree repopulates; deferred to
-        # the next event-loop tick so the scrollbar range is up to date.
+                self._sensor_items[d.key] = item
+
+        # Restore scroll position after the tree repopulates
         QTimer.singleShot(0, lambda: scroll_bar.setValue(saved_scroll))
 
 
