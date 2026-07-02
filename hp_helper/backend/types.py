@@ -38,6 +38,7 @@ class SensorSnapshot:
     gpu_power: SensorReading = field(default_factory=lambda: SensorReading("0 W"))
     pwm_mode: SensorReading = field(default_factory=lambda: SensorReading("Automatic"))
     pwm_value: SensorReading = field(default_factory=lambda: SensorReading("0 / 255"))
+    ram_usage: SensorReading = field(default_factory=lambda: SensorReading("0 GB"))
     ram_usage_pct: float | None = None
     ram_used_gb: float | None = None
     ram_total_gb: float | None = None

@@ -115,6 +115,12 @@ SENSOR_DEFINITIONS: list[SensorDefinition] = [
         reading=_make_reading("profile"),
         numeric_value=lambda _snap: None,
     ),
+    SensorDefinition(
+        key="ram-usage", group="Memory", name="RAM Usage", unit="GB",
+        value_min=0, value_max=64, graphable=True,
+        reading=_make_reading("ram_usage"),
+        numeric_value=_make_numeric("ram_used_gb"),
+    ),
 ]
 
 
