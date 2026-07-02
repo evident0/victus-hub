@@ -22,7 +22,6 @@ TEMP_WINDOW = 15
 WRITE_MIN_DELTA_PCT = 5.0
 RAMP_UP_PCT = 30.0
 RAMP_DOWN_PCT = 15.0
-RAMP_DOWN_DELAY = 0.0  # Rust: 10.0 — user requested 0 for immediate ramp-down
 
 _fan_logger = logging.getLogger("fan-control")
 
@@ -155,7 +154,7 @@ def start_fan_control() -> None:
                     current = last_written_pct if last_written_pct is not None else target
                     next_pct, ramp_down_since = next_fan_percent(
                         target, current, ramp_down_since, now,
-                        RAMP_UP_PCT, RAMP_DOWN_PCT, RAMP_DOWN_DELAY,
+                        RAMP_UP_PCT, RAMP_DOWN_PCT, config.ramp_down_delay,
                     )
 
                     delta = abs(next_pct - (last_written_pct if last_written_pct is not None else 0.0))

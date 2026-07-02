@@ -78,6 +78,7 @@ def load() -> FanConfig:
 
     custom_enabled = stored.get("custom_curve_enabled", False) or False
     manual_preset = stored.get("manual_preset") or None
+    ramp_down_delay = float(stored.get("ramp_down_delay", 10.0))
 
     profiles = []
     for key in PROFILE_KEYS:
@@ -94,8 +95,7 @@ def load() -> FanConfig:
         ) if gpu_raw else default_gpu_points()
 
         profiles.append(FanProfileConfig(cpu_points=cpu_points, gpu_points=gpu_points))
-
-    return FanConfig(profiles=profiles, custom_enabled=custom_enabled, manual_preset=manual_preset)
+    return FanConfig(profiles=profiles, custom_enabled=custom_enabled, manual_preset=manual_preset, ramp_down_delay=ramp_down_delay)
 
 
 def save_profile(profile: int, cpu_points: list[FanPoint], gpu_points: list[FanPoint]) -> FanConfig:
@@ -129,6 +129,13 @@ def save_manual_preset(preset: str | None) -> FanConfig:
     save_all(config)
     return config
 
+def save_ramp_down_delay(delay: float) -> FanConfig:
+    """Persist the ramp-down delay (seconds) used by the fan-control loop."""
+    config = load()
+    config.ramp_down_delay = max(0.0, delay)
+    save_all(config)
+    return config
+
 
 def save_all(config: FanConfig) -> None:
     path = _config_path()
@@ -145,6 +152,7 @@ def save_all(config: FanConfig) -> None:
         "custom_tuned_profile": "balanced",
         "custom_curve_enabled": config.custom_enabled,
         "manual_preset": config.manual_preset,
+        "ramp_down_delay": config.ramp_down_delay,
         "curve_points_by_profile": cpu_map,
         "gpu_curve_points_by_profile": gpu_map,
     }

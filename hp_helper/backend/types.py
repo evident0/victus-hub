@@ -62,6 +62,9 @@ class FanConfig:
     # The fan-control loop backs off while a preset is active so the
     # manual pwm1 / pwm1_enable state survives.
     manual_preset: str | None = None
+    # Seconds to wait before ramping fan speed down after target drops.
+    # 0 = immediate ramp-down. Default 10s (matches the original Rust impl).
+    ramp_down_delay: float = 10.0
 
 # Re-export list for api.py convenience
 __all__ = [
