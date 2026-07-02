@@ -27,3 +27,4 @@ Thumbs.db
 *.qmlc
 moc_*.cpp
 ui_*.h
+kernel/hp-kbd-rgb/upstream-hp-wmi-rgb-v10.html
