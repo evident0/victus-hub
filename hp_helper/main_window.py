@@ -150,6 +150,10 @@ class MainWindow(QMainWindow):
                 self._home_page.set_selected_fan_mode("custom")
             elif _cfg.manual_preset == "max":
                 self._home_page.set_selected_fan_mode("max")
+                # Fan loop backs off when preset is active; explicitly set max PWM.
+                api.set_fan_pwm(255)
+            else:
+                self._home_page.set_selected_fan_mode("auto")
         except Exception:
             logger.exception("init fan config check failed")
     # ── Tab switching ──
