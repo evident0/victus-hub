@@ -26,41 +26,64 @@ _EVENT_SIZE = struct.calcsize(_EVENT_FORMAT)
 _EV_KEY = 1
 
 _kbd_last_input: float = 0.0
+_kbd_watcher_running: bool = False
 _kbd_lock = threading.Lock()
 _kbd_stop = threading.Event()
 _kbd_thread: threading.Thread | None = None
 
 
 def _kbd_watcher_loop() -> None:
-    """Read laptop keyboard events and record last keypress time."""
-    global _kbd_last_input
-    dev_path = sysfs.find_laptop_keyboard_device()
-    if dev_path is None:
-        logger.warning("kbd-watch: no laptop keyboard device found")
-        return
-    try:
-        fd = os.open(dev_path, os.O_RDONLY)
-    except OSError as e:
-        logger.warning("kbd-watch: cannot open %s: %s", dev_path, e)
-        return
-    logger.info("kbd-watch: monitoring %s", dev_path)
-    try:
-        while not _kbd_stop.is_set():
-            r, _, _ = select.select([fd], [], [], 1.0)
-            if not r:
-                continue
+    """Read laptop keyboard events and record last keypress time.
+
+    Retries device discovery and opening so the thread never exits
+    permanently — a transient udev/permission issue at startup should
+    not kill the watcher for the daemon's entire lifetime.
+    """
+    global _kbd_last_input, _kbd_watcher_running
+    while not _kbd_stop.is_set():
+        dev_path = sysfs.find_laptop_keyboard_device()
+        if dev_path is None:
+            with _kbd_lock:
+                _kbd_watcher_running = False
+            logger.warning("kbd-watch: no laptop keyboard device found, retrying in 5s")
+            _kbd_stop.wait(5.0)
+            continue
+        try:
+            fd = os.open(dev_path, os.O_RDONLY)
+        except OSError as e:
+            with _kbd_lock:
+                _kbd_watcher_running = False
+            logger.warning("kbd-watch: cannot open %s: %s, retrying in 5s", dev_path, e)
+            _kbd_stop.wait(5.0)
+            continue
+        with _kbd_lock:
+            _kbd_watcher_running = True
+        logger.info("kbd-watch: monitoring %s", dev_path)
+        try:
+            while not _kbd_stop.is_set():
+                r, _, _ = select.select([fd], [], [], 1.0)
+                if not r:
+                    continue
+                try:
+                    data = os.read(fd, _EVENT_SIZE)
+                except OSError:
+                    logger.warning("kbd-watch: read error, will reopen device")
+                    break
+                if len(data) < _EVENT_SIZE:
+                    continue
+                _, _, ev_type, _code, ev_value = struct.unpack(_EVENT_FORMAT, data)
+                if ev_type == _EV_KEY and ev_value == 1:
+                    with _kbd_lock:
+                        _kbd_last_input = time.monotonic()
+        finally:
+            with _kbd_lock:
+                _kbd_watcher_running = False
             try:
-                data = os.read(fd, _EVENT_SIZE)
+                os.close(fd)
             except OSError:
-                break
-            if len(data) < _EVENT_SIZE:
-                continue
-            _, _, ev_type, _code, ev_value = struct.unpack(_EVENT_FORMAT, data)
-            if ev_type == _EV_KEY and ev_value == 1:
-                with _kbd_lock:
-                    _kbd_last_input = time.monotonic()
-    finally:
-        os.close(fd)
+                pass
+        if not _kbd_stop.is_set():
+            _kbd_stop.wait(2.0)
 
 
 def start_keyboard_watcher() -> None:
@@ -76,8 +99,15 @@ def start_keyboard_watcher() -> None:
 
 
 def kbd_elapsed_since_last_input() -> float:
-    """Return seconds since the last physical keypress on the laptop keyboard."""
+    """Return seconds since the last physical keypress on the laptop keyboard.
+
+    Returns -1.0 when the watcher thread isn't actively monitoring the
+    keyboard device — the GUI uses this to avoid dimming (graceful
+    degradation when the device is unavailable).
+    """
     with _kbd_lock:
+        if not _kbd_watcher_running:
+            return -1.0
         return time.monotonic() - _kbd_last_input
 
 
@@ -121,7 +151,7 @@ def _parse_keyboard_color_request(request: str) -> tuple[int, int, int]:
     return red, green, blue
 
 
-def handle_client(stream: socket.socket, sampler: RaplPowerSampler) -> None:
+def handle_client(stream: socket.socket, sampler: RaplPowerSampler, sampler_lock: threading.Lock | None = None) -> None:
     """Handle one client connection. Runs in its own thread."""
     try:
         data = b""
@@ -148,7 +178,11 @@ def handle_client(stream: socket.socket, sampler: RaplPowerSampler) -> None:
     try:
         if request == "cpu-power":
             logger.info("[cpu-power] daemon request")
-            sample = sampler.read()
+            if sampler_lock is not None:
+                with sampler_lock:
+                    sample = sampler.read()
+            else:
+                sample = sampler.read()
             response = protocol.format_cpu_power_response(sample)
         elif request == "fan-auto":
             logger.info("[fan-control] daemon request: fan-auto")
@@ -236,8 +270,7 @@ def run_daemon() -> None:
 
         def _handle(s: socket.socket):
             try:
-                with sampler_lock:
-                    handle_client(s, sampler)
+                handle_client(s, sampler, sampler_lock)
             except Exception:
                 pass
 

@@ -441,7 +441,12 @@ class MainWindow(QMainWindow):
                     idle_elapsed = api.get_keyboard_idle_elapsed()
                 except Exception:
                     idle_elapsed = 0.0
-                if idle_elapsed >= settings.idle_timeout and not self._lighting_idle_off:
+                if idle_elapsed < 0:
+                    # Watcher thread not running — don't dim, ensure backlight stays on
+                    if self._lighting_idle_off:
+                        self._lighting_idle_off = False
+                        self._last_sent_color = None
+                elif idle_elapsed >= settings.idle_timeout and not self._lighting_idle_off:
                     # Dim the backlight — idle timeout expired
                     self._lighting_idle_off = True
                     try:
