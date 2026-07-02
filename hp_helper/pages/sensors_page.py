@@ -101,10 +101,27 @@ class SensorsPage(QWidget):
                 btn = QPushButton()
                 btn.setIcon(icon)
                 btn.setIconSize(QSize(18, 18))
-                btn.setFixedSize(22, 22)
-                btn.setFlat(True)
-                btn.setStyleSheet("QPushButton { border: none; background: transparent; }")
+                btn.setFixedSize(28, 28)
+                btn.setStyleSheet("""
+                    QPushButton {
+                        background-color: #303030;
+                        border: 1px solid #3a3a3a;
+                        border-radius: 4px;
+                    }
+                    QPushButton:hover {
+                        background-color: #3e3e3e;
+                        border-color: #555555;
+                    }
+                    QPushButton:pressed {
+                        background-color: #282828;
+                    }
+                    QPushButton:disabled {
+                        background-color: #252525;
+                        border-color: #2a2a2a;
+                    }
+                """)
                 if d.graphable:
+                    btn.setCursor(Qt.PointingHandCursor)
                     btn.setToolTip(f"Open {d.name} graph")
                     btn.clicked.connect(
                         lambda checked, k=d.key: self.open_graph_requested.emit(k)
