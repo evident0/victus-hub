@@ -51,7 +51,8 @@ _KEYBOARD: list[list[Key]] = [
 _MAIN_ROW_WIDTH = 15.0  # units for rows 1-5
 _GAP_PX = 3.0           # gap between keys in pixels
 _KEY_RADIUS = 4.0       # rounded-corner radius
-_CHASSIS_PAD = 8.0      # padding inside keyboard chassis
+_CHASSIS_PAD = 12.0     # padding inside the chassis to the key block
+_CHASSIS_MARGIN = 10.0  # margin around chassis within the widget
 
 
 class KeyboardVisual(QWidget):
@@ -70,7 +71,7 @@ class KeyboardVisual(QWidget):
         self._breathing_opacity = 1.0
         self._cycle_hue = 0.0
         self._strobe_on = True
-        self.setMinimumHeight(210)
+        self.setMinimumHeight(240)
         self.setSizePolicy(self.sizePolicy().horizontalPolicy(),
                            self.sizePolicy().verticalPolicy())
 
@@ -124,9 +125,11 @@ class KeyboardVisual(QWidget):
 
         w = self.width()
         h = self.height()
-
         # ── Chassis ──
-        chassis_rect = QRectF(0, 0, w, h)
+        chassis_rect = QRectF(
+            _CHASSIS_MARGIN, _CHASSIS_MARGIN,
+            w - 2 * _CHASSIS_MARGIN, h - 2 * _CHASSIS_MARGIN,
+        )
         grad = QLinearGradient(0, 0, 0, h)
         grad.setColorAt(0.0, QColor("#1a1a1a"))
         grad.setColorAt(1.0, QColor("#121212"))
@@ -134,15 +137,20 @@ class KeyboardVisual(QWidget):
         painter.setBrush(grad)
         painter.drawRoundedRect(chassis_rect, 8, 8)
 
-        # Pre-compute row heights
+        # Pre-compute row heights from the chassis interior
         n_rows = len(_KEYBOARD)
-        inner_h = h - 2 * _CHASSIS_PAD
+        chassis_w = w - 2 * _CHASSIS_MARGIN
+        chassis_h = h - 2 * _CHASSIS_MARGIN
+        inner_h = chassis_h - 2 * _CHASSIS_PAD
         row_h = (inner_h - (n_rows - 1) * _GAP_PX) / n_rows
 
         # Compute the unit width from a main row (15u), but the first row
         # (function keys) is narrower — we'll center it.
-        main_inner_w = w - 2 * _CHASSIS_PAD
+        main_inner_w = chassis_w - 2 * _CHASSIS_PAD
         unit = main_inner_w / _MAIN_ROW_WIDTH
+
+        base_x = _CHASSIS_MARGIN + _CHASSIS_PAD
+        base_y = _CHASSIS_MARGIN + _CHASSIS_PAD
 
         for row_idx, row in enumerate(_KEYBOARD):
             # Total flex width for this row
@@ -150,10 +158,10 @@ class KeyboardVisual(QWidget):
             row_w = total_flex * unit
             if row_idx == 0:
                 # Center the function row
-                x = _CHASSIS_PAD + (main_inner_w - row_w) / 2
+                x = base_x + (main_inner_w - row_w) / 2
             else:
-                x = _CHASSIS_PAD
-            y = _CHASSIS_PAD + row_idx * (row_h + _GAP_PX)
+                x = base_x
+            y = base_y + row_idx * (row_h + _GAP_PX)
 
             flex_x = 0.0  # running flex-space x for hue computation
             for label, kw, gap in row:
@@ -219,7 +227,7 @@ class KeyboardPage(QWidget):
         s = read_lighting_settings()
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setContentsMargins(16, 12, 16, 12)
         layout.setSpacing(8)
 
         # Title
