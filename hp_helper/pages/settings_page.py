@@ -14,14 +14,13 @@ from hp_helper.backend.types import FanConfig
 def make_spin(label: str, suffix: str, value: int,
               vmin: int, vmax: int) -> QHBoxLayout:
     row = QHBoxLayout()
-    lbl = QLabel(label)
+    lbl = QLabel(f"{label} ({suffix})")
     lbl.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 12px;")
     row.addWidget(lbl)
     row.addStretch()
     spin = QSpinBox()
     spin.setRange(vmin, vmax)
     spin.setValue(value)
-    spin.setSuffix(f" {suffix}")
     spin.setFixedWidth(90)
     row._spin = spin
     row.addWidget(spin)
@@ -31,7 +30,7 @@ def make_spin(label: str, suffix: str, value: int,
 def make_double_spin(label: str, suffix: str, value: float,
                      vmin: float, vmax: float, step: float) -> QHBoxLayout:
     row = QHBoxLayout()
-    lbl = QLabel(label)
+    lbl = QLabel(f"{label} ({suffix})")
     lbl.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 12px;")
     row.addWidget(lbl)
     row.addStretch()
@@ -40,7 +39,6 @@ def make_double_spin(label: str, suffix: str, value: float,
     spin.setSingleStep(step)
     spin.setDecimals(1)
     spin.setValue(value)
-    spin.setSuffix(f" {suffix}")
     spin.setFixedWidth(90)
     row._spin = spin
     row.addWidget(spin)
