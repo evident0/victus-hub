@@ -79,6 +79,9 @@ class HomePage(QWidget):
     def set_selected_profile(self, index: int):
         self._profile_section.set_selected_profile(index)
 
+    def set_selected_fan_mode(self, mode: str):
+        self._profile_section.set_selected_fan_mode(mode)
+
 
 def _parse(reading) -> float:
     try:

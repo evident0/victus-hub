@@ -103,6 +103,12 @@ class ProfileSection(QWidget):
         self.profile_selected.emit(index)
     # ── Fan mode ──
 
+    def set_selected_fan_mode(self, mode: str):
+        """Update which fan mode button is selected (used for startup sync)."""
+        self._selected_fan_mode = mode
+        for key, btn in self._fan_buttons.items():
+            btn.set_selected(key == mode)
+
     def _on_fan_click(self, mode: str):
         self._selected_fan_mode = mode
         for key, btn in self._fan_buttons.items():

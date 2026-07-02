@@ -329,6 +329,15 @@ class MainWindow(QMainWindow):
         self._lighting_timer.start()
         # Fan-control background thread
         _start_fan_control()
+        # Sync fan mode buttons from the persisted config — if custom was
+        # enabled when the app was last used, the fan-control loop will resume
+        # writing PWM values, so the UI must show "custom" as selected.
+        try:
+            _cfg = api.get_fan_config()
+            if _cfg.custom_enabled:
+                self._home_page.set_selected_fan_mode("custom")
+        except Exception:
+            pass
 
     # ── Tab switching ──
 
