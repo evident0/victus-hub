@@ -141,24 +141,35 @@ class KeyboardVisual(QWidget):
         n_rows = len(_KEYBOARD)
         chassis_w = w - 2 * _CHASSIS_MARGIN
         chassis_h = h - 2 * _CHASSIS_MARGIN
+        inner_w = chassis_w - 2 * _CHASSIS_PAD
         inner_h = chassis_h - 2 * _CHASSIS_PAD
-        row_h = (inner_h - (n_rows - 1) * _GAP_PX) / n_rows
 
-        # Compute the unit width from a main row (15u), but the first row
-        # (function keys) is narrower — we'll center it.
-        main_inner_w = chassis_w - 2 * _CHASSIS_PAD
-        unit = main_inner_w / _MAIN_ROW_WIDTH
+        # Compute unit from width
+        unit_w = inner_w / _MAIN_ROW_WIDTH
 
-        base_x = _CHASSIS_MARGIN + _CHASSIS_PAD
-        base_y = _CHASSIS_MARGIN + _CHASSIS_PAD
+        # Compute unit from height — enforce square 1u keys
+        # row_h = (inner_h - (n_rows - 1) * _GAP_PX) / n_rows
+        # square → unit - _GAP_PX == row_h  →  unit_h = row_h + _GAP_PX
+        row_h_limit = (inner_h - (n_rows - 1) * _GAP_PX) / n_rows
+        unit_h = row_h_limit + _GAP_PX
+
+        unit = min(unit_w, unit_h)
+        row_h = unit - _GAP_PX
+
+        # Keyboard block dimensions for centering
+        block_w = _MAIN_ROW_WIDTH * unit
+        block_h = n_rows * unit - _GAP_PX
+
+        base_x = _CHASSIS_MARGIN + _CHASSIS_PAD + (inner_w - block_w) / 2
+        base_y = _CHASSIS_MARGIN + _CHASSIS_PAD + (inner_h - block_h) / 2
 
         for row_idx, row in enumerate(_KEYBOARD):
             # Total flex width for this row
             total_flex = sum(kw for _, kw, _ in row) + sum(kg for _, _, kg in row)
             row_w = total_flex * unit
             if row_idx == 0:
-                # Center the function row
-                x = base_x + (main_inner_w - row_w) / 2
+                # Center the function row within the block
+                x = base_x + (block_w - row_w) / 2
             else:
                 x = base_x
             y = base_y + row_idx * (row_h + _GAP_PX)
