@@ -55,7 +55,7 @@ class _CircularProgress(QWidget):
             p.drawArc(rect, 90 * 16, span)
 
         # Percentage text (top portion of arc rect)
-        pct_font = QFont("", min(14, max(10, int(arc_diam * 0.22))), QFont.Bold)
+        pct_font = QFont("", min(18, max(11, int(arc_diam * 0.28))), QFont.Bold)
         p.setFont(pct_font)
         p.setPen(QColor(COLORS["text"]))
         pct_text = f"{int(self._percentage)}%"
