@@ -143,13 +143,13 @@ class MainWindow(QMainWindow):
 
         # Fan-control background thread
         start_fan_control()
-        # Sync fan mode buttons from the persisted config — if custom was
-        # enabled when the app was last used, the fan-control loop will resume
-        # writing PWM values, so the UI must show "custom" as selected.
+        # Sync fan mode segmented control from persisted config.
         try:
             _cfg = api.get_fan_config()
             if _cfg.custom_enabled:
                 self._home_page.set_selected_fan_mode("custom")
+            elif _cfg.manual_preset == "max":
+                self._home_page.set_selected_fan_mode("max")
         except Exception:
             logger.exception("init fan config check failed")
     # ── Tab switching ──
@@ -201,11 +201,8 @@ class MainWindow(QMainWindow):
         self._hidden_graph_windows.clear()
 
     def _quit_app(self):
-        """Restore fan to auto, then quit the entire application."""
-        try:
-            api.set_fan_auto()
-        except Exception:
-            logger.exception("set fan auto during quit failed")
+        """Restore fan to auto and persist state, then quit."""
+        self._set_fan_auto()
         self._tray.hide()
         self._quitting = True
         QApplication.instance().quit()

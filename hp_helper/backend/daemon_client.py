@@ -65,7 +65,6 @@ def request_keyboard_last_input() -> float:
 
     The daemon emits `OK\t{elapsed:.3f}\\n` (see hp_helperd/daemon.py).
     """
-    logger.info("\u2192 daemon: keyboard-last-input")
     response = _request_daemon("keyboard-last-input\n", quiet=True)
     return float(protocol.parse_status_response(response))
 
