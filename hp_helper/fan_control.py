@@ -171,11 +171,19 @@ def start_fan_control() -> None:
                             pass
                         last_written_pct = next_pct
                     else:
-                        _fan_logger.info(
-                            "cpu=%.0f°C gpu=%s target=%.0f%% cur=%.0f%% → next=%.0f%% delta=%.1f (skip, <%.0f)",
-                            cpu_avg, f"{gpu_avg:.0f}°C" if gpu_avg is not None else "N/A",
-                            target, current, next_pct, delta, WRITE_MIN_DELTA_PCT,
-                        )
+                        if target < current and next_pct == current:
+                            # Held by ramp-down delay
+                            _fan_logger.info(
+                                "cpu=%.0f°C gpu=%s target=%.0f%% cur=%.0f%% → next=%.0f%% (ramp-down delay %.0fs)",
+                                cpu_avg, f"{gpu_avg:.0f}°C" if gpu_avg is not None else "N/A",
+                                target, current, next_pct, config.ramp_down_delay,
+                            )
+                        else:
+                            _fan_logger.info(
+                                "cpu=%.0f°C gpu=%s target=%.0f%% cur=%.0f%% → next=%.0f%% delta=%.1f (skip, <%.0f)",
+                                cpu_avg, f"{gpu_avg:.0f}°C" if gpu_avg is not None else "N/A",
+                                target, current, next_pct, delta, WRITE_MIN_DELTA_PCT,
+                            )
 
                 next_control = now + CONTROL_INTERVAL
 
