@@ -1,8 +1,8 @@
 """Sensors page with collapsible grouped table."""
 
 from PySide6.QtWidgets import (
-    QApplication, QPushButton, QStyle, QTreeWidget, QTreeWidgetItem,
-    QVBoxLayout, QWidget,
+    QAbstractItemView, QApplication, QPushButton, QStyle,
+    QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget,
 )
 from PySide6.QtCore import Qt, Signal, QTimer
 from PySide6.QtGui import QColor
@@ -28,6 +28,7 @@ class SensorsPage(QWidget):
         self._tree.setIndentation(0)
         self._tree.setAlternatingRowColors(False)
         self._tree.setAnimated(True)
+        self._tree.setSelectionMode(QAbstractItemView.NoSelection)
 
         # Column widths
         self._tree.setColumnWidth(0, 200)

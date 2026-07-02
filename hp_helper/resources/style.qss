@@ -255,11 +255,6 @@ QTreeWidget::item, QTableWidget::item {
     padding: 4px 8px;
 }
 
-QTreeWidget::item:selected, QTableWidget::item:selected {
-    background-color: #3aaeef;
-    color: #ffffff;
-}
-
 QTreeWidget::item:hover, QTableWidget::item:hover {
     background-color: #2a2a2a;
 }
