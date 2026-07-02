@@ -5,6 +5,7 @@ Dataclass types are imported from hp_helper.backend.types and re-exported here
 so existing UI imports (``from hp_helper.api import FanPoint, ...``) keep working.
 """
 
+import logging
 import threading
 import time
 
@@ -50,23 +51,30 @@ _snapshot_lock = threading.Lock()
 _profile_lock = threading.Lock()
 _snapshot_running = True
 
+_bg_logger = logging.getLogger("sensor-bg")
+
+
 def _sensor_loop():
     """Background thread: read sensors and profile every 1 s, cache results."""
     global _snapshot, _profile_cache
     while _snapshot_running:
         try:
             snap = _reader.read_all()
-        except Exception:
+        except Exception as e:
+            _bg_logger.info("read_all failed: %s", e)
             time.sleep(1.0)
             continue
         with _snapshot_lock:
             _snapshot = snap
         try:
             prof = profiles.current_ui_profile_index()
-        except Exception:
+        except Exception as e:
+            _bg_logger.info("profile read failed: %s", e)
             prof = None
         with _profile_lock:
             _profile_cache = prof
+        _bg_logger.info("cached profile=%s, cpu=%.0f°C", prof,
+                        snap.cpu_temp_c if snap.cpu_temp_c is not None else -1)
         time.sleep(1.0)
 _sensor_thread = threading.Thread(target=_sensor_loop, daemon=True, name="sensor-poll")
 _sensor_thread.start()
