@@ -35,7 +35,6 @@ class HomePage(QWidget):
         cards_row.addWidget(self._ram_card)
         layout.addLayout(cards_row)
 
-        layout.addStretch(1)
 
         # Profile section (centered)
         self._profile_section = ProfileSection(hide_title=True)
@@ -54,12 +53,12 @@ class HomePage(QWidget):
         # CPU: usage % + temperature
         cpu_pct = snapshot.cpu_usage_pct or 0.0
         cpu_temp = f"{snapshot.cpu_temp_c:.0f}°C" if snapshot.cpu_temp_c is not None else "— °C"
-        self._cpu_card.update_data(cpu_pct, cpu_temp, COLORS["accent_blue"])
+        self._cpu_card.update_data(cpu_pct, cpu_temp, COLORS["accent_blue"], "CPU Utilization")
 
         # GPU: usage % + temperature
         gpu_pct = snapshot.gpu_usage_pct or 0.0
         gpu_temp = f"{snapshot.gpu_temp_c:.0f}°C" if snapshot.gpu_temp_c is not None else "— °C"
-        self._gpu_card.update_data(gpu_pct, gpu_temp, COLORS["accent_green"])
+        self._gpu_card.update_data(gpu_pct, gpu_temp, COLORS["accent_green"], "GPU Utilization")
 
         # RAM: usage % + used/total GB
         ram_pct = snapshot.ram_usage_pct or 0.0
@@ -67,7 +66,7 @@ class HomePage(QWidget):
             ram_sub = f"{snapshot.ram_used_gb:.1f} / {snapshot.ram_total_gb:.1f} GB"
         else:
             ram_sub = "— GB"
-        self._ram_card.update_data(ram_pct, ram_sub, COLORS["accent_red"])
+        self._ram_card.update_data(ram_pct, ram_sub, COLORS["accent_red"], "RAM Utilization")
 
     def set_hardware_title(self, title: str):
         self._footer.set_hardware_title(title)

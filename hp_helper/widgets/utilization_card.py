@@ -17,7 +17,7 @@ class _CircularProgress(QWidget):
         self._percentage: float = 0.0
         self._accent: str = COLORS["accent_blue"]
         self._label: str = "Utilization"
-        self.setMinimumSize(90, 90)
+        self.setMinimumSize(110, 110)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
     def set_value(self, percentage: float, accent: str, label: str = "Utilization"):
@@ -33,9 +33,9 @@ class _CircularProgress(QWidget):
         w = self.width()
         h = self.height()
         side = min(w, h)
-        pen_width = max(3.0, side * 0.08)
+        pen_width = max(4.0, side * 0.07)
 
-        # Arc rect — square, centred in widget, inset for pen width
+        # Arc rect — square, centred in widget, minimal inset
         margin = pen_width / 2.0 + 2
         arc_side = side - 2 * margin
         offset_x = (w - arc_side) / 2.0
@@ -54,26 +54,21 @@ class _CircularProgress(QWidget):
             p.setPen(fg_pen)
             p.drawArc(rect, 90 * 16, span)
 
-        # Percentage text (centred in arc rect)
-        pct_font = QFont("", max(10, int(side * 0.22)), QFont.Bold)
+        # Percentage text (centred, upper portion of circle)
+        pct_font = QFont("", max(12, int(side * 0.24)), QFont.Bold)
         p.setFont(pct_font)
         p.setPen(QColor(COLORS["text"]))
         pct_text = f"{int(self._percentage)}%"
-        p.drawText(rect, Qt.AlignHCenter | Qt.AlignVCenter, pct_text)
+        pct_rect = QRectF(rect.left(), rect.top(), rect.width(), rect.height() * 0.55)
+        p.drawText(pct_rect, Qt.AlignHCenter | Qt.AlignBottom, pct_text)
 
         # Label text below percentage (still inside circle)
-        lbl_font = QFont("", max(7, int(side * 0.09)))
+        lbl_font = QFont("", max(8, int(side * 0.1)))
         p.setFont(lbl_font)
         p.setPen(QColor(COLORS["text_secondary"]))
-        center_y = rect.center().y()
-        label_rect = QRectF(
-            rect.left(),
-            center_y + side * 0.04,
-            rect.width(),
-            rect.bottom() - center_y - side * 0.04,
-        )
-        p.drawText(label_rect, Qt.AlignHCenter | Qt.AlignTop,
-                    f"{int(self._percentage)} {self._label}")
+        lbl_rect = QRectF(rect.left(), pct_rect.bottom() + side * 0.02,
+                          rect.width(), rect.bottom() - pct_rect.bottom() - side * 0.02)
+        p.drawText(lbl_rect, Qt.AlignHCenter | Qt.AlignTop, self._label)
 
         p.end()
 
@@ -89,8 +84,8 @@ class UtilizationCard(QFrame):
                  accent: str = COLORS["accent_blue"], parent=None):
         super().__init__(parent)
         self.setObjectName("utilCard")
-        self.setMinimumSize(130, 160)
-        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.setMinimumSize(140, 190)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.setStyleSheet(f"""
             #utilCard {{
                 background-color: {COLORS['surface']};
@@ -115,7 +110,7 @@ class UtilizationCard(QFrame):
         """)
         layout.addWidget(self._title_label, 0, Qt.AlignLeft)
 
-        # Circular progress
+        # Circular progress — fills available space
         self._circular = _CircularProgress()
         layout.addWidget(self._circular, 1)
 
@@ -132,10 +127,10 @@ class UtilizationCard(QFrame):
         layout.addWidget(self._subtitle_label, 0)
 
     def update_data(self, percentage: float, subtitle: str,
-                     accent: str | None = None):
+                     accent: str | None = None, label: str = "Utilization"):
         """Update the card with new sensor data."""
         if accent is not None:
-            self._circular.set_value(percentage, accent)
+            self._circular.set_value(percentage, accent, label)
         else:
-            self._circular.set_value(percentage, self._circular._accent)
+            self._circular.set_value(percentage, self._circular._accent, label)
         self._subtitle_label.setText(subtitle)
