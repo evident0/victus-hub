@@ -18,7 +18,7 @@ class _CircularProgress(QWidget):
         self._accent: str = COLORS["accent_blue"]
         self._label: str = "Utilization"
         self.setMinimumSize(100, 100)
-        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
 
     def set_value(self, percentage: float, accent: str, label: str = "Utilization"):
         self._percentage = max(0.0, min(100.0, percentage))
@@ -85,7 +85,7 @@ class UtilizationCard(QFrame):
         super().__init__(parent)
         self.setObjectName("utilCard")
         self.setMinimumSize(140, 155)
-        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         self.setStyleSheet(f"""
             #utilCard {{
                 background-color: {COLORS['surface']};

@@ -47,6 +47,7 @@ class HomePage(QWidget):
         # Footer
         self._footer = Footer()
         layout.addWidget(self._footer)
+        layout.addStretch()
 
     def update_sensor_data(self, snapshot):
         """Refresh utilization cards from a sensor snapshot."""
