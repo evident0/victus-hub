@@ -19,6 +19,7 @@ ReadWritePaths=/run/hp-helperd -/sys/class/hwmon -/sys/devices/platform/hp-wmi -
 ReadOnlyPaths=/sys/class/powercap /usr/local/bin/ryzenadj
 RestrictAddressFamilies=AF_UNIX
 DeviceAllow=/dev/mem r
+DeviceAllow=char-input r
 
 [Install]
 WantedBy=multi-user.target
