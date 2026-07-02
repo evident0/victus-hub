@@ -79,6 +79,10 @@ def load() -> FanConfig:
     custom_enabled = stored.get("custom_curve_enabled", False) or False
     manual_preset = stored.get("manual_preset") or None
     ramp_down_delay = float(stored.get("ramp_down_delay", 10.0))
+    temp_window = int(stored.get("temp_window", 15))
+    write_min_delta_pct = float(stored.get("write_min_delta_pct", 5.0))
+    ramp_up_pct = float(stored.get("ramp_up_pct", 30.0))
+    ramp_down_pct = float(stored.get("ramp_down_pct", 15.0))
 
     profiles = []
     for key in PROFILE_KEYS:
@@ -95,7 +99,7 @@ def load() -> FanConfig:
         ) if gpu_raw else default_gpu_points()
 
         profiles.append(FanProfileConfig(cpu_points=cpu_points, gpu_points=gpu_points))
-    return FanConfig(profiles=profiles, custom_enabled=custom_enabled, manual_preset=manual_preset, ramp_down_delay=ramp_down_delay)
+    return FanConfig(profiles=profiles, custom_enabled=custom_enabled, manual_preset=manual_preset, ramp_down_delay=ramp_down_delay, temp_window=temp_window, write_min_delta_pct=write_min_delta_pct, ramp_up_pct=ramp_up_pct, ramp_down_pct=ramp_down_pct)
 
 
 def save_profile(profile: int, cpu_points: list[FanPoint], gpu_points: list[FanPoint]) -> FanConfig:
@@ -153,6 +157,10 @@ def save_all(config: FanConfig) -> None:
         "custom_curve_enabled": config.custom_enabled,
         "manual_preset": config.manual_preset,
         "ramp_down_delay": config.ramp_down_delay,
+        "temp_window": config.temp_window,
+        "write_min_delta_pct": config.write_min_delta_pct,
+        "ramp_up_pct": config.ramp_up_pct,
+        "ramp_down_pct": config.ramp_down_pct,
         "curve_points_by_profile": cpu_map,
         "gpu_curve_points_by_profile": gpu_map,
     }

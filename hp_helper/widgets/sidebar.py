@@ -9,6 +9,7 @@ TABS = [
     ("icons8-fan-32.png", "Fans & Power"),
     ("icons8-temperature-32.png", "Sensors"),
     ("icons8-keyboard-32.png", "Keyboard"),
+    ("icons8-settings-32.png", "Settings"),
 ]
 
 

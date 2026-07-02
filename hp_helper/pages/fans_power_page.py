@@ -16,7 +16,7 @@ from hp_helper.power_limits import (
     read_power_limit_settings, write_power_limit_settings,
 )
 from hp_helper.api import (
-    get_fan_config, save_fan_profile, save_ramp_down_delay,
+    get_fan_config, save_fan_profile,
     FanPoint, FanProfileConfig,
 )
 from hp_helper.backend import fan_config
@@ -48,7 +48,6 @@ class FansPowerPage(QWidget):
         self._gpu_selected = -1
         self._edit_custom_enabled = False
         self._dirty = False
-        self._ramp_down_delay: float = 10.0
 
         # ── Layout ──
         layout = QVBoxLayout(self)
@@ -106,23 +105,6 @@ class FansPowerPage(QWidget):
         reapply_help.setWordWrap(True)
         power_layout.addWidget(reapply_help)
 
-        # Ramp-down delay spinbox
-        ramp_row = QHBoxLayout()
-        ramp_label = QLabel("Fan ramp-down delay (s)")
-        ramp_label.setStyleSheet(f"color: {COLORS['text']}; font-size: 12px;")
-        ramp_row.addWidget(ramp_label)
-        ramp_row.addStretch()
-        self._ramp_spin = QSpinBox()
-        self._ramp_spin.setRange(0, 120)
-        self._ramp_spin.setValue(int(self._ramp_down_delay))
-        self._ramp_spin.valueChanged.connect(self._on_ramp_down_delay_changed)
-        ramp_row.addWidget(self._ramp_spin)
-        power_layout.addLayout(ramp_row)
-
-        ramp_help = QLabel("Seconds to wait before ramping fans down. 0 = immediate. Default is 10.")
-        ramp_help.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 11px;")
-        ramp_help.setWordWrap(True)
-        power_layout.addWidget(ramp_help)
 
         # Enable checkbox
         self._power_check = QCheckBox("Enable power limits")
@@ -289,9 +271,6 @@ class FansPowerPage(QWidget):
         self._reapply_seconds = max(0, value)
         write_power_limit_settings(self._make_power_settings())
 
-    def _on_ramp_down_delay_changed(self, value: int):
-        self._ramp_down_delay = float(value)
-        save_ramp_down_delay(float(value))
 
     def _on_power_enabled_changed(self, checked: bool):
         self._power_enabled = checked
@@ -316,10 +295,6 @@ class FansPowerPage(QWidget):
         self._profiles = config.profiles
         self._config_loaded = True
         self._edit_custom_enabled = config.custom_enabled
-        self._ramp_down_delay = config.ramp_down_delay
-        self._ramp_spin.blockSignals(True)
-        self._ramp_spin.setValue(int(config.ramp_down_delay))
-        self._ramp_spin.blockSignals(False)
         self._hydrate_editor()
 
     def _hydrate_editor(self):

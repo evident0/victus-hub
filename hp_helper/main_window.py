@@ -16,6 +16,7 @@ from hp_helper.pages.home_page import HomePage
 from hp_helper.pages.fans_power_page import FansPowerPage
 from hp_helper.pages.sensors_page import SensorsPage
 from hp_helper.pages.keyboard_page import KeyboardPage
+from hp_helper.pages.settings_page import SettingsPage
 from hp_helper.sensor_graph_window import SensorGraphWindow
 from hp_helper.fan_curves_window import FanCurvesWindow
 from hp_helper import api
@@ -56,17 +57,18 @@ class MainWindow(QMainWindow):
         self._stack = QStackedWidget()
         layout.addWidget(self._stack, 1)
 
-        # Create pages
         self._home_page = HomePage()
         self._fans_page = FansPowerPage()
         self._sensors_page = SensorsPage()
         self._keyboard_page = KeyboardPage()
+        self._settings_page = SettingsPage()
 
         self._pages = [
             self._home_page,
             self._fans_page,
             self._sensors_page,
             self._keyboard_page,
+            self._settings_page,
         ]
         for page in self._pages:
             self._stack.addWidget(page)

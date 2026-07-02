@@ -93,7 +93,7 @@ class AppButton(QPushButton):
             style = f"""
                 QPushButton {{
                     background-color: {bg};
-                    color: {self._accent};
+                    color: {text_color};
                     border: 3px solid {self._accent};
                     border-radius: 6px;
                     padding: 6px 2px;

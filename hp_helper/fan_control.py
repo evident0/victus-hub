@@ -1,8 +1,7 @@
 """Custom fan-control background loop.
 
 Ported from hp_tauri src-tauri/src/lib.rs:85-224 (start_fan_control +
-next_fan_percent).  The only intentional divergence from Rust is
-``RAMP_DOWN_DELAY = 0.0`` (Rust uses 10 s).
+next_fan_percent).
 """
 
 import collections
@@ -14,14 +13,8 @@ from hp_helper.backend import fan_config as _fan_config
 from hp_helper.backend import daemon_client as _daemon_client
 from hp_helper.backend.sysfs_read import read_hp_pwm_pct
 
-# ── Constants (ported from lib.rs:119-125) ──
-
 POLL_INTERVAL = 1.0
 CONTROL_INTERVAL = 3.0
-TEMP_WINDOW = 15
-WRITE_MIN_DELTA_PCT = 5.0
-RAMP_UP_PCT = 30.0
-RAMP_DOWN_PCT = 15.0
 
 _fan_logger = logging.getLogger("fan-control")
 
@@ -64,7 +57,10 @@ def start_fan_control() -> None:
         import time as _time
         import math as _math
 
-        temp_history: collections.deque = collections.deque(maxlen=TEMP_WINDOW)
+        # Seed with config values
+        cfg = _fan_config.load()
+        temp_window = cfg.temp_window
+        temp_history: collections.deque = collections.deque(maxlen=temp_window)
         last_written_pct: float | None = None
         ramp_down_since: float | None = None
         next_control = _time.monotonic()
@@ -85,7 +81,6 @@ def start_fan_control() -> None:
                 raw_profile = api.get_current_profile()
             except Exception:
                 raw_profile = None
-            # Rust: unwrap_or(1) — only default when None, NOT when 0
             profile_idx = raw_profile if raw_profile is not None else 1
             profile_idx = max(0, min(profile_idx, 2))
             if not hasattr(_fan_logger, "_logged_init"):
@@ -95,14 +90,13 @@ def start_fan_control() -> None:
                 )
                 _fan_logger._logged_init = True
 
-            config = _fan_config.load()
-            profile = config.profiles[profile_idx]
-            if config.manual_preset is not None:
-                # Preset active (Auto/Max): back off, don't touch the kernel.
+            cfg = _fan_config.load()
+            profile = cfg.profiles[profile_idx]
+            if cfg.manual_preset is not None:
                 was_custom = False
                 _time.sleep(POLL_INTERVAL)
                 continue
-            if not config.custom_enabled:
+            if not cfg.custom_enabled:
                 if was_custom:
                     try:
                         _daemon_client.request_fan_auto()
@@ -113,10 +107,6 @@ def start_fan_control() -> None:
                     was_custom = False
                 _time.sleep(POLL_INTERVAL)
                 continue
-            # Resuming custom after a preset or custom-off: seed
-            # last_written_pct from the kernel's actual pwm1 so the
-            # ramp algorithm starts from reality (e.g. 255=100% after
-            # Max) and ramps toward target instead of jumping to it.
             if not was_custom:
                 last_written_pct = read_hp_pwm_pct()
                 ramp_down_since = None
@@ -125,6 +115,12 @@ def start_fan_control() -> None:
             # ── control tick ──
             now = _time.monotonic()
             if now >= next_control:
+                # Rebuild temp history if window size changed
+                if cfg.temp_window != temp_window:
+                    temp_window = cfg.temp_window
+                    old = list(temp_history)
+                    temp_history = collections.deque(old, maxlen=temp_window)
+
                 cpu_temps = [
                     int(t) for t, _ in temp_history if t is not None
                 ]
@@ -154,11 +150,11 @@ def start_fan_control() -> None:
                     current = last_written_pct if last_written_pct is not None else target
                     next_pct, ramp_down_since = next_fan_percent(
                         target, current, ramp_down_since, now,
-                        RAMP_UP_PCT, RAMP_DOWN_PCT, config.ramp_down_delay,
+                        cfg.ramp_up_pct, cfg.ramp_down_pct, cfg.ramp_down_delay,
                     )
 
                     delta = abs(next_pct - (last_written_pct if last_written_pct is not None else 0.0))
-                    if last_written_pct is None or delta >= WRITE_MIN_DELTA_PCT:
+                    if last_written_pct is None or delta >= cfg.write_min_delta_pct:
                         pwm = max(0, min(int(next_pct * 255.0 / 100.0), 255))
                         _fan_logger.info(
                             "cpu=%.0f°C gpu=%s target=%.0f%% cur=%.0f%% → next=%.0f%% delta=%.1f → pwm=%d WRITE",
@@ -172,17 +168,16 @@ def start_fan_control() -> None:
                         last_written_pct = next_pct
                     else:
                         if target < current and next_pct == current:
-                            # Held by ramp-down delay
                             _fan_logger.info(
                                 "cpu=%.0f°C gpu=%s target=%.0f%% cur=%.0f%% → next=%.0f%% (ramp-down delay %.0fs)",
                                 cpu_avg, f"{gpu_avg:.0f}°C" if gpu_avg is not None else "N/A",
-                                target, current, next_pct, config.ramp_down_delay,
+                                target, current, next_pct, cfg.ramp_down_delay,
                             )
                         else:
                             _fan_logger.info(
                                 "cpu=%.0f°C gpu=%s target=%.0f%% cur=%.0f%% → next=%.0f%% delta=%.1f (skip, <%.0f)",
                                 cpu_avg, f"{gpu_avg:.0f}°C" if gpu_avg is not None else "N/A",
-                                target, current, next_pct, delta, WRITE_MIN_DELTA_PCT,
+                                target, current, next_pct, delta, cfg.write_min_delta_pct,
                             )
 
                 next_control = now + CONTROL_INTERVAL
