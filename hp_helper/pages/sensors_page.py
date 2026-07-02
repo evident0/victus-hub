@@ -10,8 +10,22 @@ from PySide6.QtGui import QColor, QIcon
 from hp_helper.theme import COLORS
 from pathlib import Path
 
-_ICONS_DIR = Path(__file__).parent.parent / "resources" / "icons"
-_GRAPH_ICON = str(_ICONS_DIR / "line_graph_icon-white.png")
+from hp_helper.icon_utils import load_pixmap
+
+# Lazily built so QApplication exists before QPixmap allocation
+_graph_icon: QIcon | None = None
+
+
+def _get_graph_icon() -> QIcon:
+    """Return the graph button icon, building it on first call."""
+    global _graph_icon
+    if _graph_icon is None:
+        normal = load_pixmap("line_graph_icon-white.png", "#c0c0c0", 18)
+        disabled = load_pixmap("line_graph_icon-white.png", "#2a2a2a", 18)
+        _graph_icon = QIcon()
+        _graph_icon.addPixmap(normal, QIcon.Mode.Normal, QIcon.State.Off)
+        _graph_icon.addPixmap(disabled, QIcon.Mode.Disabled, QIcon.State.Off)
+    return _graph_icon
 
 
 class SensorsPage(QWidget):
@@ -89,34 +103,30 @@ class SensorsPage(QWidget):
                 max_val = str(stats.get("maximum", "—"))
                 min_val = str(stats.get("minimum", "—"))
                 avg_val = str(stats.get("average", "—"))
-
                 item.setText(1, str(current_val))
                 item.setText(2, max_val)
                 item.setText(3, min_val)
                 item.setText(4, avg_val)
 
-                # Graph button in column 5
-                icon = QIcon(_GRAPH_ICON)
+                # Graph button in column 5 — transparent icon-only
                 btn = QPushButton()
-                btn.setIcon(icon)
+                btn.setIcon(_get_graph_icon())
                 btn.setIconSize(QSize(18, 18))
-                btn.setFixedSize(28, 28)
+                btn.setFixedSize(24, 24)
                 btn.setStyleSheet("""
                     QPushButton {
-                        background-color: #303030;
-                        border: 1px solid #3a3a3a;
-                        border-radius: 4px;
+                        background: transparent;
+                        border: none;
+                        border-radius: 3px;
                     }
                     QPushButton:hover {
-                        background-color: #3e3e3e;
-                        border-color: #555555;
+                        background: rgba(255, 255, 255, 0.10);
                     }
                     QPushButton:pressed {
-                        background-color: #282828;
+                        background: rgba(255, 255, 255, 0.15);
                     }
                     QPushButton:disabled {
-                        background-color: #252525;
-                        border-color: #2a2a2a;
+                        background: transparent;
                     }
                 """)
                 if d.graphable:
@@ -128,12 +138,7 @@ class SensorsPage(QWidget):
                 else:
                     btn.setEnabled(False)
                     btn.setToolTip("Not graphable")
-                container = QWidget()
-                container.setStyleSheet("background: transparent;")
-                clayout = QVBoxLayout(container)
-                clayout.setContentsMargins(0, 0, 0, 0)
-                clayout.addWidget(btn, 0, Qt.AlignLeft | Qt.AlignVCenter)
-                self._tree.setItemWidget(item, 5, container)
+                self._tree.setItemWidget(item, 5, btn)
                 # Alternating row color
                 bg = "#181818" if ri % 2 == 0 else "#1d1d1d"
                 for c in range(6):
