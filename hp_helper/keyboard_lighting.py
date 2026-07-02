@@ -22,7 +22,7 @@ class LightingSettings:
     effect: LightingEffect = "static"
     color: str = "#35baf2"
     speed: int = 50
-
+    idle_timeout: int = 0  # seconds, 0 = disabled
 
 LIGHTING_EFFECTS: list[dict] = [
     {"value": "static", "label": "Static"},
@@ -47,6 +47,7 @@ def normalize_lighting_settings(settings: LightingSettings) -> LightingSettings:
         color=settings.color if _HEX_COLOR_RE.match(settings.color)
               else DEFAULT_LIGHTING_SETTINGS.color,
         speed=min(100, max(1, round(settings.speed))),
+        idle_timeout=max(0, min(settings.idle_timeout, 3600)),
     )
 
 
@@ -137,6 +138,7 @@ def read_lighting_settings() -> LightingSettings:
             effect=raw.get("effect", "static"),
             color=raw.get("color", "#35baf2"),
             speed=int(raw.get("speed", 50)),
+            idle_timeout=int(raw.get("idle_timeout", 0)),
         )
     except Exception:
         return DEFAULT_LIGHTING_SETTINGS
@@ -149,4 +151,5 @@ def write_lighting_settings(settings: LightingSettings):
         "effect": settings.effect,
         "color": settings.color,
         "speed": settings.speed,
+        "idle_timeout": settings.idle_timeout,
     })

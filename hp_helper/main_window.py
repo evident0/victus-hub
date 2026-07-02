@@ -113,6 +113,8 @@ class MainWindow(QMainWindow):
         self._power_apply_in_flight = False
         self._last_lighting_send = 0.0
         self._last_sent_color: tuple[int, int, int] | None = None
+        self._last_idle_poll = 0.0
+        self._lighting_idle_off = False
         self._quitting = False
 
         # ── Signal connections ──
@@ -130,8 +132,7 @@ class MainWindow(QMainWindow):
         self._keyboard_page.effect_changed.connect(self._on_lighting_effect)
         self._keyboard_page.color_changed.connect(self._on_lighting_color)
         self._keyboard_page.speed_changed.connect(self._on_lighting_speed)
-        # Sensors: graph request opens a standalone sensor graph window
-        self._sensors_page.open_graph_requested.connect(self._open_sensor_graph)
+        self._keyboard_page.idle_timeout_changed.connect(self._on_lighting_idle_timeout)
 
 
         # Window tracking
@@ -420,13 +421,51 @@ class MainWindow(QMainWindow):
     def _on_lighting_speed(self, speed: int):
         self._lighting_settings.speed = speed
         write_lighting_settings(self._lighting_settings)
+    def _on_lighting_idle_timeout(self, timeout: int):
+        self._lighting_settings.idle_timeout = timeout
+        write_lighting_settings(self._lighting_settings)
+        # If idle timeout was disabled while dimmed, wake the backlight
+        if timeout == 0 and self._lighting_idle_off:
+            self._lighting_idle_off = False
+            self._last_sent_color = None
 
     def _tick_lighting(self):
         settings = normalize_lighting_settings(self._lighting_settings)
+        now = time.monotonic()
+
+        # ── Idle timeout polling (every 500 ms) ──
+        if now - self._last_idle_poll >= 0.5:
+            self._last_idle_poll = now
+            if settings.idle_timeout > 0 and settings.enabled:
+                try:
+                    idle_elapsed = api.get_keyboard_idle_elapsed()
+                except Exception:
+                    idle_elapsed = 0.0
+                if idle_elapsed >= settings.idle_timeout and not self._lighting_idle_off:
+                    # Dim the backlight — idle timeout expired
+                    self._lighting_idle_off = True
+                    try:
+                        api.set_keyboard_color(0, 0, 0)
+                    except Exception:
+                        pass
+                    self._last_sent_color = (0, 0, 0)
+                elif idle_elapsed < settings.idle_timeout and self._lighting_idle_off:
+                    # User typed — restore backlight on next frame
+                    self._lighting_idle_off = False
+                    self._last_sent_color = None
+            elif self._lighting_idle_off:
+                # Idle timeout was disabled while dimmed — restore
+                self._lighting_idle_off = False
+                self._last_sent_color = None
+
+        # If dimmed by idle timeout, skip all normal lighting output
+        if self._lighting_idle_off:
+            self._keyboard_page.set_status("Idle — touch a key to wake")
+            return
+
         elapsed = int(time.time() * 1000 - self._lighting_started_at)
         frame = lighting_frame(settings, elapsed)
         # Throttle daemon call: only send every 200 ms and only on color change
-        now = time.monotonic()
         color = (frame.red, frame.green, frame.blue)
         if now - self._last_lighting_send >= 0.200 and color != self._last_sent_color:
             try:

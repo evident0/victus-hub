@@ -35,7 +35,7 @@ __all__ = [
     "set_fan_auto",
     "set_fan_pwm",
     "set_keyboard_color",
-    "get_fan_config",
+    "get_keyboard_idle_elapsed",
     "save_fan_profile",
     "set_custom_fan_enabled",
     "apply_power_limits",
@@ -120,6 +120,13 @@ def set_fan_pwm(pwm: int) -> str:
 
 def set_keyboard_color(red: int, green: int, blue: int) -> str:
     return daemon_client.request_keyboard_color(red, green, blue)
+
+def get_keyboard_idle_elapsed() -> float:
+    """Return seconds since the last physical keypress on the laptop keyboard."""
+    try:
+        return daemon_client.request_keyboard_last_input()
+    except Exception:
+        return 0.0
 
 
 def apply_power_limits(stapm: int, fast: int, slow: int) -> str:

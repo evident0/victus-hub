@@ -2,7 +2,7 @@
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
-    QCheckBox, QComboBox, QPushButton, QSlider, QColorDialog,
+    QCheckBox, QComboBox, QPushButton, QSlider, QSpinBox, QColorDialog,
 )
 from PySide6.QtCore import Qt, Signal, QRectF
 from PySide6.QtGui import QPainter, QColor, QFont, QLinearGradient
@@ -219,10 +219,10 @@ class KeyboardPage(QWidget):
     effect_changed = Signal(str)
     color_changed = Signal(str)
     speed_changed = Signal(int)
+    idle_timeout_changed = Signal(int)
 
     def __init__(self, parent=None):
         super().__init__(parent)
-
         # Load settings
         s = read_lighting_settings()
 
@@ -294,10 +294,22 @@ class KeyboardPage(QWidget):
         self._speed_slider.valueChanged.connect(self._on_speed_changed)
         ctrl_layout.addWidget(self._speed_slider)
 
+        # Idle timeout
+        idle_label = QLabel("Idle timeout (s)")
+        idle_label.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 11px;")
+        ctrl_layout.addWidget(idle_label)
+
+        self._idle_timeout_spin = QSpinBox(controls)
+        self._idle_timeout_spin.setRange(0, 600)
+        self._idle_timeout_spin.setValue(s.idle_timeout)
+        self._idle_timeout_spin.setSuffix(" s")
+        self._idle_timeout_spin.setSpecialValueText("Off")
+        self._idle_timeout_spin.setFixedWidth(80)
+        self._idle_timeout_spin.valueChanged.connect(self._on_idle_timeout_changed)
+        ctrl_layout.addWidget(self._idle_timeout_spin)
+
         ctrl_layout.addStretch()
         layout.addWidget(controls)
-
-        # Store state
         self._settings = s
 
     def set_status(self, text: str):
@@ -332,9 +344,12 @@ class KeyboardPage(QWidget):
 
     def _on_speed_changed(self, value: int):
         self._settings.speed = value
-        write_lighting_settings(self._settings)
         self.speed_changed.emit(value)
 
+    def _on_idle_timeout_changed(self, value: int):
+        self._settings.idle_timeout = max(0, value)
+        write_lighting_settings(self._settings)
+        self.idle_timeout_changed.emit(self._settings.idle_timeout)
     # ── Animation frame update ──
 
     def apply_frame(self, color_rgb):

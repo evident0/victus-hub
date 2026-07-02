@@ -65,6 +65,19 @@ def request_keyboard_color(red: int, green: int, blue: int) -> str:
     return protocol.parse_status_response(response)
 
 
+def request_keyboard_last_input() -> float:
+    """Return seconds since the last physical keypress on the laptop keyboard."""
+    response = _request_daemon("keyboard-last-input\n")
+    # Response format: "OK\t{elapsed:.3f}\n"
+    try:
+        tag, _, value = response.rstrip("\n").partition("\t")
+        if tag == "OK":
+            return float(value)
+    except (ValueError, AttributeError):
+        pass
+    raise RuntimeError(f"unexpected keyboard-last-input response: {response!r}")
+
+
 def request_power_limits(stapm_limit: int, fast_limit: int, slow_limit: int) -> str:
     logger.info("\u2192 daemon: power-limits STAPM=%d fast=%d slow=%d", stapm_limit, fast_limit, slow_limit)
     response = _request_daemon(f"power-limits\t{stapm_limit}\t{fast_limit}\t{slow_limit}\n")

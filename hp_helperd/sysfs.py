@@ -83,3 +83,24 @@ def write_keyboard_color(red: int, green: int, blue: int) -> str:
         KBD_RGB_COLOR_PATH, value,
     )
     return KBD_RGB_COLOR_PATH
+
+
+# ── Keyboard input device ──
+
+_KBD_BY_PATH = "/dev/input/by-path/platform-i8042-serio-0-event-kbd"
+
+
+def find_laptop_keyboard_device() -> str | None:
+    """Return the path to the built-in laptop keyboard input device.
+
+    Looks for the i8042 (AT keyboard controller) event device which
+    is the internal laptop keyboard, excluding external USB keyboards.
+    """
+    if Path(_KBD_BY_PATH).exists():
+        return _KBD_BY_PATH
+    # Fallback: search for any i8042 keyboard device
+    for child in Path("/dev/input/by-path").iterdir():
+        name = child.name
+        if "i8042" in name and name.endswith("-event-kbd"):
+            return str(child)
+    return None
