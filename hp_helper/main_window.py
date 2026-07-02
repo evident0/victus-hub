@@ -150,8 +150,7 @@ class MainWindow(QMainWindow):
                 self._home_page.set_selected_fan_mode("custom")
             elif _cfg.manual_preset == "max":
                 self._home_page.set_selected_fan_mode("max")
-                # Fan loop backs off when preset is active; explicitly set max PWM.
-                api.set_fan_pwm(255)
+                self._set_fan_max()
             else:
                 self._home_page.set_selected_fan_mode("auto")
         except Exception:
