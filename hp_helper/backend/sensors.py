@@ -399,6 +399,37 @@ class SensorReader:
 
         return sensors
 
+
+    # ── RAM (proc/meminfo) ──
+
+    def _read_ram(self) -> tuple[float | None, float | None, float | None]:
+        """Return (usage_pct, used_gb, total_gb) from /proc/meminfo."""
+        try:
+            with open("/proc/meminfo") as f:
+                meminfo = {}
+                for line in f:
+                    parts = line.split(":")
+                    if len(parts) >= 2:
+                        key = parts[0].strip()
+                        val_str = parts[1].strip().split()[0]
+                        try:
+                            meminfo[key] = int(val_str)
+                        except ValueError:
+                            pass
+        except OSError:
+            return None, None, None
+
+        total_kb = meminfo.get("MemTotal")
+        available_kb = meminfo.get("MemAvailable")
+        if total_kb is None or available_kb is None or total_kb == 0:
+            return None, None, None
+
+        used_kb = total_kb - available_kb
+        usage_pct = used_kb / total_kb * 100.0
+        total_gb = total_kb / (1024 * 1024)
+        used_gb = used_kb / (1024 * 1024)
+        return usage_pct, used_gb, total_gb
+
     # ── read_all (sensors.rs) ──
 
     def read_all(self) -> SensorSnapshot:
@@ -425,6 +456,8 @@ class SensorReader:
             else reading("N/A", "nvidia-smi (dGPU off?)")
         )
 
+        ram_usage_pct, ram_used_gb, ram_total_gb = self._read_ram()
+
         return SensorSnapshot(
             cpu_fan=cpu_fan,
             gpu_fan=gpu_fan,
@@ -441,6 +474,9 @@ class SensorReader:
             gpu_power=self._read_gpu_power(nvidia),
             pwm_mode=pwm_mode,
             pwm_value=pwm_value,
+            ram_usage_pct=ram_usage_pct,
+            ram_used_gb=ram_used_gb,
+            ram_total_gb=ram_total_gb,
             profile=self._read_current_profile(),
             extra_sensors=self._read_lm_sensors(),
         )

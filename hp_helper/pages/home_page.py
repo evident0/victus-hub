@@ -1,16 +1,16 @@
-"""Home page — gauge dials, profile selector, fan modes, and footer."""
+"""Home page — profile selector, fan modes, and footer."""
 
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout
 from PySide6.QtCore import Signal
 
-from hp_helper.widgets.gauge_dial import GaugeDial
 from hp_helper.widgets.profile_section import ProfileSection
 from hp_helper.widgets.footer import Footer
-from hp_helper.sensor_stats import parse_reading_num
+from hp_helper.widgets.utilization_card import UtilizationCard
+from hp_helper.theme import COLORS
 
 
 class HomePage(QWidget):
-    """Home tab with two gauge dials, profile/fan controls, and footer."""
+    """Home tab with profile/fan controls and footer."""
 
     profile_selected = Signal(int)
     fan_mode_selected = Signal(str)
@@ -22,21 +22,20 @@ class HomePage(QWidget):
         layout.setContentsMargins(12, 12, 12, 12)
         layout.setSpacing(8)
 
-        # Gauge panel: centered row of two dials
-        gauge_row = QHBoxLayout()
-        gauge_row.setSpacing(40)
-        gauge_row.addStretch()
+        # ── Utilization cards ──
+        cards_row = QHBoxLayout()
+        cards_row.setSpacing(12)
 
-        self._cpu_dial = GaugeDial("CPU", outer_max=100, mid_max=100, inner_max=6000)
-        gauge_row.addWidget(self._cpu_dial)
+        self._cpu_card = UtilizationCard("CPU", "— °C", COLORS["accent_blue"])
+        self._gpu_card = UtilizationCard("GPU", "— °C", COLORS["accent_green"])
+        self._ram_card = UtilizationCard("RAM", "— GB", COLORS["accent_red"])
 
-        self._gpu_dial = GaugeDial("GPU", outer_max=100, mid_max=100, inner_max=6000)
-        gauge_row.addWidget(self._gpu_dial)
-        gauge_row.addStretch()
+        cards_row.addWidget(self._cpu_card)
+        cards_row.addWidget(self._gpu_card)
+        cards_row.addWidget(self._ram_card)
+        layout.addLayout(cards_row)
 
-        gauge_widget = QWidget()
-        gauge_widget.setLayout(gauge_row)
-        layout.addWidget(gauge_widget, 1)
+        layout.addStretch(1)
 
         # Profile section (centered)
         self._profile_section = ProfileSection(hide_title=True)
@@ -51,18 +50,24 @@ class HomePage(QWidget):
         layout.addWidget(self._footer)
 
     def update_sensor_data(self, snapshot):
-        """Refresh gauge values and footer from a sensor snapshot."""
-        cpu_temp = snapshot.cpu_temp_c
-        cpu_usage = snapshot.cpu_usage_pct
-        cpu_fan = parse_reading_num(snapshot.cpu_fan)
-        gpu_temp = snapshot.gpu_temp_c
-        gpu_usage = snapshot.gpu_usage_pct
-        gpu_fan = parse_reading_num(snapshot.gpu_fan)
+        """Refresh utilization cards from a sensor snapshot."""
+        # CPU: usage % + temperature
+        cpu_pct = snapshot.cpu_usage_pct or 0.0
+        cpu_temp = f"{snapshot.cpu_temp_c:.0f}°C" if snapshot.cpu_temp_c is not None else "— °C"
+        self._cpu_card.update_data(cpu_pct, cpu_temp, COLORS["accent_blue"])
 
-        self._cpu_dial.update_values(outer_value=cpu_temp, mid_value=cpu_usage,
-                                      inner_value=cpu_fan)
-        self._gpu_dial.update_values(outer_value=gpu_temp, mid_value=gpu_usage,
-                                      inner_value=gpu_fan)
+        # GPU: usage % + temperature
+        gpu_pct = snapshot.gpu_usage_pct or 0.0
+        gpu_temp = f"{snapshot.gpu_temp_c:.0f}°C" if snapshot.gpu_temp_c is not None else "— °C"
+        self._gpu_card.update_data(gpu_pct, gpu_temp, COLORS["accent_green"])
+
+        # RAM: usage % + used/total GB
+        ram_pct = snapshot.ram_usage_pct or 0.0
+        if snapshot.ram_used_gb is not None and snapshot.ram_total_gb is not None:
+            ram_sub = f"{snapshot.ram_used_gb:.1f} / {snapshot.ram_total_gb:.1f} GB"
+        else:
+            ram_sub = "— GB"
+        self._ram_card.update_data(ram_pct, ram_sub, COLORS["accent_red"])
 
     def set_hardware_title(self, title: str):
         self._footer.set_hardware_title(title)

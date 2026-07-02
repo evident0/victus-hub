@@ -9,9 +9,9 @@ from hp_helper.theme import COLORS
 
 
 PROFILES = [
-    ("Power Saver", "eco.ico", COLORS["accent_green"]),
-    ("Balanced", "standard.ico", COLORS["accent_blue"]),
-    ("Performance", "ultimate.ico", COLORS["accent_red"]),
+    ("Power Saver", None, COLORS["accent_green"]),
+    ("Balanced", None, COLORS["accent_blue"]),
+    ("Performance", None, COLORS["accent_red"]),
 ]
 
 FAN_MODES = [

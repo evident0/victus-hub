@@ -247,7 +247,7 @@ class MainWindow(QMainWindow):
         # Update stats
         self._stats_by_key = next_stats(snapshot, self._stats_by_key)
 
-        # Update Home page gauges
+        # Update Home page
         self._home_page.update_sensor_data(snapshot)
 
         # Update Sensors page rows

@@ -17,7 +17,7 @@ class AppButton(QPushButton):
     for a .png/.ico, or a Unicode string used directly as a text icon.
     """
 
-    def __init__(self, label: str, icon: str, accent: str, selected: bool = False, parent=None):
+    def __init__(self, label: str, icon: str | None, accent: str, selected: bool = False, parent=None):
         super().__init__(parent)
         self._label = label
         self._icon_spec = icon
@@ -30,7 +30,7 @@ class AppButton(QPushButton):
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.setCursor(Qt.PointingHandCursor)
 
-        # Icon: file path vs unicode text
+        # Icon: file path vs unicode text, or None for text-only
         image_exts = (".png", ".ico", ".svg", ".bmp", ".jpg", ".jpeg")
         if icon and any(icon.lower().endswith(ext) for ext in image_exts):
             ico = load_icon(icon, size=28)
@@ -40,11 +40,12 @@ class AppButton(QPushButton):
                 self.setText(label)
             else:
                 self.setText(f"{icon}\n{label}")
-        else:
+        elif icon:
             self.setText(f"{icon}\n{label}")
+        else:
+            self.setText(label)
 
-        font = QFont()
-        font.setPointSize(11)
+        font = QFont("", 11, QFont.Bold)
         self.setFont(font)
 
         self._update_style()
