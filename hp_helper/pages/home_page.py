@@ -10,7 +10,7 @@ from hp_helper.sensor_stats import parse_reading_num
 
 
 class HomePage(QWidget):
-    """Home tab with two gauge dials, profile/fan buttons, and footer."""
+    """Home tab with two gauge dials, profile/fan controls, and footer."""
 
     profile_selected = Signal(int)
     fan_mode_selected = Signal(str)
@@ -22,9 +22,9 @@ class HomePage(QWidget):
         layout.setContentsMargins(12, 12, 12, 12)
         layout.setSpacing(8)
 
-        # Gauge panel: horizontal row of two dials
+        # Gauge panel: centered row of two dials
         gauge_row = QHBoxLayout()
-        gauge_row.setSpacing(32)
+        gauge_row.setSpacing(40)
         gauge_row.addStretch()
 
         self._cpu_dial = GaugeDial("CPU", outer_max=100, mid_max=100, inner_max=6000)
@@ -38,7 +38,7 @@ class HomePage(QWidget):
         gauge_widget.setLayout(gauge_row)
         layout.addWidget(gauge_widget, 1)
 
-        # Profile section
+        # Profile section (centered)
         self._profile_section = ProfileSection(hide_title=True)
         self._profile_section.profile_selected.connect(self.profile_selected.emit)
         self._profile_section.fan_mode_selected.connect(self.fan_mode_selected.emit)
@@ -54,8 +54,6 @@ class HomePage(QWidget):
         """Refresh gauge values and footer from a sensor snapshot."""
         cpu_temp = snapshot.cpu_temp_c
         cpu_usage = snapshot.cpu_usage_pct
-        # Pass None (not 0.0) when unreadable so the dial renders its neutral color
-        # instead of a misleading "0" — see GaugeDial._temp_color.
         cpu_fan = parse_reading_num(snapshot.cpu_fan)
         gpu_temp = snapshot.gpu_temp_c
         gpu_usage = snapshot.gpu_usage_pct

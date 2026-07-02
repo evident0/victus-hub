@@ -1,41 +1,39 @@
-"""Gauge dial widget with three concentric arcs for temp/usage/RPM."""
+"""Modern circular gauge widget with gradient arcs and glow effects."""
 
 from PySide6.QtWidgets import QWidget
 from PySide6.QtCore import Qt, QRectF, QPointF
-from PySide6.QtGui import QPainter, QPen, QColor, QFont, QFontMetrics
+from PySide6.QtGui import (
+    QPainter, QPen, QColor, QFont, QRadialGradient, QBrush,
+)
 
 from hp_helper.theme import COLORS
 
 
 class GaugeDial(QWidget):
-    """Custom widget drawing three concentric arcs with value labels."""
+    """Circular gauge with three concentric progress arcs.
+
+    Outer arc  — temperature (°C), color shifts green→orange→red.
+    Middle arc — usage (%), blue.
+    Inner arc  — fan RPM, green.
+    """
 
     def __init__(
         self,
         label: str,
-        outer_value: float | None = None,
         outer_max: int = 100,
-        outer_color: str = "#ff2020",
-        mid_value: float | None = None,
         mid_max: int = 100,
-        mid_color: str = "#3aaeef",
-        inner_value: float | None = None,
         inner_max: int = 6000,
-        inner_color: str = "#06b48a",
         parent=None,
     ):
         super().__init__(parent)
         self._label = label
-        self._outer_value = outer_value
+        self._outer_value: float | None = None
         self._outer_max = outer_max
-        self._outer_color = QColor(outer_color)
-        self._mid_value = mid_value
+        self._mid_value: float | None = None
         self._mid_max = mid_max
-        self._mid_color = QColor(mid_color)
-        self._inner_value = inner_value
+        self._inner_value: float | None = None
         self._inner_max = inner_max
-        self._inner_color = QColor(inner_color)
-        self.setMinimumSize(160, 160)
+        self.setMinimumSize(180, 180)
 
     def update_values(
         self,
@@ -49,97 +47,111 @@ class GaugeDial(QWidget):
         self._inner_value = inner_value
         self.update()
 
+    # ── Painting ──
+
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
 
-        w = self.width()
-        h = self.height()
-        cx = w / 2.0
-        cy = h * 0.55
+        w, h = self.width(), self.height()
+        cx, cy = w / 2.0, h / 2.0
 
-        # Size arcs relative to widget
-        base_r = min(w, h) * 0.35
-        outer_r = base_r
-        mid_r = base_r * 0.70
-        inner_r = base_r * 0.40
+        # Subtle radial background for depth
+        bg_r = min(w, h) * 0.46
+        bg_grad = QRadialGradient(cx, cy, bg_r)
+        bg_grad.setColorAt(0.0, QColor(255, 255, 255, 10))
+        bg_grad.setColorAt(0.7, QColor(255, 255, 255, 3))
+        bg_grad.setColorAt(1.0, QColor(0, 0, 0, 0))
+        painter.setBrush(QBrush(bg_grad))
+        painter.setPen(Qt.NoPen)
+        painter.drawEllipse(QPointF(cx, cy), bg_r, bg_r)
 
-        # Draw arcs
-        self._draw_arc(painter, cx, cy, outer_r, 10, self._outer_color, self._outer_value, self._outer_max)
-        self._draw_arc(painter, cx, cy, mid_r, 8, self._mid_color, self._mid_value, self._mid_max)
-        self._draw_arc(painter, cx, cy, inner_r, 6, self._inner_color, self._inner_value, self._inner_max)
+        # Arc geometry — 270° sweep starting at 135°
+        base_r = min(w, h) * 0.38
+        arcs = [
+            (base_r, 11, self._temp_color(self._outer_value),
+             self._outer_value, self._outer_max),
+            (base_r * 0.74, 8, QColor(COLORS["accent_blue"]),
+             self._mid_value, self._mid_max),
+            (base_r * 0.52, 5, QColor(COLORS["accent_green"]),
+             self._inner_value, self._inner_max),
+        ]
+        for r, width, color, value, vmax in arcs:
+            self._draw_arc(painter, cx, cy, r, width, color, value, vmax)
 
-        # Label at top center
+        # ── Label (top) ──
         label_font = QFont()
-        label_font.setPointSize(11)
+        label_font.setPointSize(10)
         label_font.setBold(True)
-        label_font.setCapitalization(QFont.AllUppercase)
+        label_font.setLetterSpacing(QFont.AbsoluteSpacing, 2)
         painter.setFont(label_font)
         painter.setPen(QColor(COLORS["text_secondary"]))
-        label_rect = QRectF(0, cy - base_r - 30, w, 20)
-        painter.drawText(label_rect, Qt.AlignCenter, self._label)
+        painter.drawText(
+            QRectF(0, cy - base_r - 28, w, 20),
+            Qt.AlignCenter, self._label.upper(),
+        )
 
-        # Center values
-        # Main value (temp or speed)
+        # ── Center: temperature (large) ──
         main_font = QFont()
-        main_font.setPointSize(22)
+        main_font.setPointSize(28)
         main_font.setBold(True)
         painter.setFont(main_font)
+        painter.setPen(self._temp_color(self._outer_value))
+        main_text = f"{self._outer_value:.0f}\u00B0" if self._outer_value is not None else "\u2014"
+        painter.drawText(QRectF(0, cy - 22, w, 36), Qt.AlignCenter, main_text)
 
-        if self._outer_value is not None:
-            main_text = f"{self._outer_value:.0f}\u00B0C"
-        else:
-            main_text = "--\u00B0C"
-        painter.setPen(QColor(self._temp_color(self._outer_value)))
-        main_rect = QRectF(0, cy - 16, w, 30)
-        painter.drawText(main_rect, Qt.AlignCenter, main_text)
-
-        # Sub value (RPM or %)
+        # ── Sub: RPM (below center) ──
         sub_font = QFont()
         sub_font.setPointSize(10)
         painter.setFont(sub_font)
-
-        if self._inner_value is not None:
-            sub_text = f"{self._inner_value:.0f} RPM"
-        else:
-            sub_text = "-- RPM"
         painter.setPen(QColor(COLORS["text_secondary"]))
-        sub_rect = QRectF(0, cy + 10, w, 18)
-        painter.drawText(sub_rect, Qt.AlignCenter, sub_text)
+        sub_text = f"{self._inner_value:.0f} RPM" if self._inner_value is not None else "\u2014 RPM"
+        painter.drawText(QRectF(0, cy + 14, w, 18), Qt.AlignCenter, sub_text)
+
+        # ── Usage % (bottom) ──
+        usage_text = f"{self._mid_value:.0f}%" if self._mid_value is not None else "\u2014%"
+        painter.drawText(QRectF(0, cy + 32, w, 16), Qt.AlignCenter, usage_text)
 
         painter.end()
 
     def _draw_arc(self, painter, cx, cy, r, width, color, value, vmax):
-        """Draw a track arc and a filled progress arc."""
-        # Track arc (background)
+        """Draw a track arc and a glowing progress arc."""
+        rect = QRectF(cx - r, cy - r, r * 2, r * 2)
+        start = 135 * 16
+        sweep = 270 * 16
+
+        # Track
         track_pen = QPen(QColor(COLORS["surface_raised"]), width)
         track_pen.setCapStyle(Qt.RoundCap)
         painter.setPen(track_pen)
-        # Draw 270° arc starting at 135° (top-left)
-        rect = QRectF(cx - r, cy - r, r * 2, r * 2)
-        # QPainter.drawArc uses 1/16 degree units, starts at 3 o'clock, goes counter-clockwise
-        # 135° = 3 o'clock counter-clockwise... actually in Qt, angles go counter-clockwise
-        # 270° sweep = 270 * 16 = 4320
-        painter.drawArc(rect, 135 * 16, 270 * 16)
+        painter.drawArc(rect, start, sweep)
 
-        # Value arc
+        # Progress
         progress = 0.0
         if value is not None and vmax > 0:
             progress = min(max(value / vmax, 0.0), 1.0)
+        if progress <= 0:
+            return
 
-        if progress > 0:
-            val_pen = QPen(color, width)
-            val_pen.setCapStyle(Qt.RoundCap)
-            painter.setPen(val_pen)
-            painter.drawArc(rect, 135 * 16, int(-270 * progress * 16))
+        # Glow (wider, semi-transparent)
+        glow_pen = QPen(QColor(color.red(), color.green(), color.blue(), 50), width + 6)
+        glow_pen.setCapStyle(Qt.RoundCap)
+        painter.setPen(glow_pen)
+        painter.drawArc(rect, start, int(-sweep * progress))
+
+        # Main arc
+        val_pen = QPen(color, width)
+        val_pen.setCapStyle(Qt.RoundCap)
+        painter.setPen(val_pen)
+        painter.drawArc(rect, start, int(-sweep * progress))
 
     @staticmethod
-    def _temp_color(value: float | None) -> str:
+    def _temp_color(value: float | None) -> QColor:
         """Return color based on temperature thresholds."""
         if value is None:
-            return COLORS["text"]
+            return QColor(COLORS["text"])
         if value >= 85:
-            return "#ff2020"
+            return QColor("#ff2020")
         if value >= 70:
-            return "#ff8c00"
-        return COLORS["text"]
+            return QColor("#ff8c00")
+        return QColor("#06b48a")
