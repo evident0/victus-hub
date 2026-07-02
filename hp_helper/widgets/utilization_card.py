@@ -35,7 +35,7 @@ class _CircularProgress(QWidget):
         side = min(w, h)
         # Arc takes ~70% of the widget side — leaves breathing room
         arc_diam = side * 0.70
-        pen_width = max(3.0, arc_diam * 0.08)
+        pen_width = max(2.0, arc_diam * 0.05)
 
         # Arc rect — square, centred in widget
         offset_x = (w - arc_diam) / 2.0
