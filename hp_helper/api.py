@@ -114,6 +114,10 @@ def set_system_profile(profile: int) -> str:
 def set_fan_auto() -> str:
     return daemon_client.request_fan_auto()
 
+def set_fan_manual() -> str:
+    """Set pwm_enable=1 — call immediately when switching to custom or max mode."""
+    return daemon_client.request_fan_manual()
+
 
 def set_fan_pwm(pwm: int) -> str:
     return daemon_client.request_fan_pwm(pwm)

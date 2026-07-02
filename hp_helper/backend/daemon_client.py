@@ -46,6 +46,12 @@ def request_fan_auto() -> str:
     response = _request_daemon("fan-auto\n")
     return protocol.parse_status_response(response)
 
+def request_fan_manual() -> str:
+    """Set pwm_enable=1 without writing a PWM value — use when entering manual mode."""
+    logger.info("\u2192 daemon: fan-manual")
+    response = _request_daemon("fan-manual\n")
+    return protocol.parse_status_response(response)
+
 
 def request_fan_pwm(pwm: int) -> str:
     pct = round(pwm / 255.0 * 100)

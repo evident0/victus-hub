@@ -327,6 +327,10 @@ class MainWindow(QMainWindow):
         except Exception:
             logger.exception("set custom fan enabled (max) failed")
         try:
+            api.set_fan_manual()
+        except Exception:
+            logger.exception("set fan manual (max) failed")
+        try:
             api.set_fan_pwm(255)
         except Exception:
             logger.exception("set fan pwm failed")
@@ -340,6 +344,10 @@ class MainWindow(QMainWindow):
             api.set_custom_fan_enabled(True)
         except Exception:
             logger.exception("set custom fan enabled failed")
+        try:
+            api.set_fan_manual()
+        except Exception:
+            logger.exception("set fan manual failed")
     def _open_sensor_graph(self, key: str):
         """Open or focus a sensor graph window for the given sensor key."""
         existing = self._graph_windows.get(key)

@@ -172,6 +172,14 @@ def _make_dispatch(sampler: RaplPowerSampler, sampler_lock: threading.Lock | Non
         except RuntimeError as e:
             return protocol.format_status_response((False, str(e)))
 
+    def _fan_manual(_body: str) -> str:
+        logger.info("[fan-control] daemon request: fan-manual")
+        try:
+            result = sysfs.write_pwm_enable(1)
+            return protocol.format_status_response((True, result))
+        except RuntimeError as e:
+            return protocol.format_status_response((False, str(e)))
+
     def _fan_pwm(body: str) -> str:
         pwm = _parse_int(body, "pwm")
         logger.info("[fan-control] daemon request: fan-pwm %d/255 (%d%%)", pwm, round(pwm / 255.0 * 100))
@@ -202,6 +210,7 @@ def _make_dispatch(sampler: RaplPowerSampler, sampler_lock: threading.Lock | Non
         ("cpu-power", _cpu_power),
         ("fan-auto", _fan_auto),
         ("fan-pwm\t", _fan_pwm),
+        ("fan-manual", _fan_manual),
         ("keyboard-color\t", _keyboard_color),
         ("power-limits\t", _power_limits),
         ("keyboard-last-input", _keyboard_last_input),
