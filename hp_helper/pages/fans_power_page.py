@@ -61,7 +61,7 @@ class FansPowerPage(QWidget):
 
         # ── Left: Power panel ──
         power_panel = QWidget()
-        power_panel.setStyleSheet(f"background-color: {COLORS['surface']}; border-radius: 4px;")
+        power_panel.setMinimumWidth(240)
         power_layout = QVBoxLayout(power_panel)
         power_layout.setContentsMargins(14, 14, 14, 14)
         power_layout.setSpacing(14)
@@ -136,7 +136,7 @@ class FansPowerPage(QWidget):
         power_layout.addWidget(self._power_status)
 
         power_layout.addStretch()
-        content_row.addWidget(power_panel)
+        content_row.addWidget(power_panel, 1)
 
         # ── Right: Fan curves ──
         curves_panel = QWidget()
@@ -219,7 +219,7 @@ class FansPowerPage(QWidget):
 
 
         self._fan_curves_window_open = False
-        content_row.addWidget(curves_panel, 1)
+        content_row.addWidget(curves_panel, 2)
         layout.addLayout(content_row, 1)
 
         # Auto-save timer

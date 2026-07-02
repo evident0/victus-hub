@@ -171,7 +171,10 @@ class FanChart(QWidget):
             y1 = self._speed_to_y(left.speed)
             x2 = self._temp_to_x(right.temp)
             y2 = self._speed_to_y(right.speed)
-            painter.drawLine(int(x1), int(y1), int(x2), int(y2))
+            line_pen = QPen(self._accent, 3)
+            line_pen.setCapStyle(Qt.RoundCap)
+            painter.setPen(line_pen)
+            painter.drawLine(QPointF(x1, y1), QPointF(x2, y2))
 
         # Points
         for i, point in enumerate(self._points):
