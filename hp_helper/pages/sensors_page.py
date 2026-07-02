@@ -132,10 +132,8 @@ class SensorsPage(QWidget):
                 container.setStyleSheet("background: transparent;")
                 clayout = QVBoxLayout(container)
                 clayout.setContentsMargins(0, 0, 0, 0)
-                clayout.setAlignment(Qt.AlignCenter)
-                clayout.addWidget(btn)
+                clayout.addWidget(btn, 0, Qt.AlignLeft | Qt.AlignVCenter)
                 self._tree.setItemWidget(item, 5, container)
-
                 # Alternating row color
                 bg = "#181818" if ri % 2 == 0 else "#1d1d1d"
                 for c in range(6):
