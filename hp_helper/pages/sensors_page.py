@@ -4,7 +4,7 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QTreeWidget, QTreeWidgetItem,
     QPushButton,
 )
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, Signal, QTimer
 from PySide6.QtGui import QColor
 
 from hp_helper.theme import COLORS
@@ -41,7 +41,16 @@ class SensorsPage(QWidget):
         layout.addWidget(self._tree)
 
     def update_rows(self, rows: list):
-        """Rebuild the tree from sensor table rows."""
+        """Rebuild the tree from sensor table rows, preserving scroll + expand state."""
+        # Save scroll position and expanded groups before clearing
+        scroll_bar = self._tree.verticalScrollBar()
+        saved_scroll = scroll_bar.value()
+        saved_expanded: set[str] = set()
+        for i in range(self._tree.topLevelItemCount()):
+            item = self._tree.topLevelItem(i)
+            if item.isExpanded():
+                saved_expanded.add(item.text(0))
+
         self._tree.clear()
 
         groups: dict[str, list] = {}
@@ -53,7 +62,7 @@ class SensorsPage(QWidget):
             group_item = QTreeWidgetItem(self._tree)
             group_item.setText(0, group_name)
             group_item.setText(1, f"({len(group_rows)})")
-            group_item.setExpanded(True)
+            group_item.setExpanded(group_name in saved_expanded if saved_expanded else True)
 
             # Style group header
             for c in range(6):
@@ -108,6 +117,10 @@ class SensorsPage(QWidget):
                             item.setForeground(1, QColor("#ff4444"))
                     except ValueError:
                         pass
+
+        # Restore scroll position after the tree repopulates; deferred to
+        # the next event-loop tick so the scrollbar range is up to date.
+        QTimer.singleShot(0, lambda: scroll_bar.setValue(saved_scroll))
 
         # Store rows for ref
         self._rows = rows

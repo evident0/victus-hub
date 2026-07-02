@@ -1,51 +1,84 @@
 """Keyboard page with lighting controls and visual keyboard preview."""
 
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QHBoxLayout, QLabel,
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QCheckBox, QComboBox, QPushButton, QSlider, QColorDialog,
 )
-from PySide6.QtCore import Qt, Signal, QRectF, QTimer
-from PySide6.QtGui import QPainter, QPen, QColor, QFont
+from PySide6.QtCore import Qt, Signal, QRectF
+from PySide6.QtGui import QPainter, QColor, QFont, QLinearGradient
 
 from hp_helper.widgets.section_title import SectionTitle
 from hp_helper.theme import COLORS
 from hp_helper.keyboard_lighting import (
     LightingEffect, LIGHTING_EFFECTS, LightingSettings,
     read_lighting_settings, write_lighting_settings, hex_to_rgb,
-    lighting_frame, normalize_lighting_settings,
+    lighting_frame, normalize_lighting_settings, hsv_to_rgb,
 )
 
+# ── Keyboard layout ──
+# Each key is (label, width_units, gap_before_units).  The main rows all
+# total 15u; the function row is ~13.3u and centered above them.
 
-KEYBOARD_ROWS: list[list[float]] = [
-    [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
-    [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2],
-    [1.5, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1.5],
-    [1.75, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2.25],
-    [2.25, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2.75],
-    [1.25, 1.25, 1.25, 1.25, 6.25, 1.25, 1.25, 1.25],
+Key = tuple[str, float, float]  # (label, width, gap_before)
+
+_KEYBOARD: list[list[Key]] = [
+    # Function row — gaps after F4 and F8
+    [("esc", 1.0, 0.0), ("f1", 1.0, 0.25), ("f2", 1.0, 0.0), ("f3", 1.0, 0.0), ("f4", 1.0, 0.0),
+     ("f5", 1.0, 0.5), ("f6", 1.0, 0.0), ("f7", 1.0, 0.0), ("f8", 1.0, 0.0),
+     ("f9", 1.0, 0.5), ("f10", 1.0, 0.0), ("f11", 1.0, 0.0), ("f12", 1.0, 0.0)],
+    # Number row
+    [("`", 1.0, 0.0), ("1", 1.0, 0.0), ("2", 1.0, 0.0), ("3", 1.0, 0.0), ("4", 1.0, 0.0),
+     ("5", 1.0, 0.0), ("6", 1.0, 0.0), ("7", 1.0, 0.0), ("8", 1.0, 0.0), ("9", 1.0, 0.0),
+     ("0", 1.0, 0.0), ("-", 1.0, 0.0), ("=", 1.0, 0.0), ("\u232B", 2.0, 0.0)],  # ⌫
+    # QWERTY row
+    [("tab", 1.5, 0.0), ("q", 1.0, 0.0), ("w", 1.0, 0.0), ("e", 1.0, 0.0), ("r", 1.0, 0.0),
+     ("t", 1.0, 0.0), ("y", 1.0, 0.0), ("u", 1.0, 0.0), ("i", 1.0, 0.0), ("o", 1.0, 0.0),
+     ("p", 1.0, 0.0), ("[", 1.0, 0.0), ("]", 1.0, 0.0), ("\\", 1.5, 0.0)],
+    # Home row
+    [("caps", 1.75, 0.0), ("a", 1.0, 0.0), ("s", 1.0, 0.0), ("d", 1.0, 0.0), ("f", 1.0, 0.0),
+     ("g", 1.0, 0.0), ("h", 1.0, 0.0), ("j", 1.0, 0.0), ("k", 1.0, 0.0), ("l", 1.0, 0.0),
+     (";", 1.0, 0.0), ("'", 1.0, 0.0), ("\u23CE", 2.25, 0.0)],  # ⏎
+    # Shift row
+    [("\u21E7", 2.25, 0.0), ("z", 1.0, 0.0), ("x", 1.0, 0.0), ("c", 1.0, 0.0), ("v", 1.0, 0.0),
+     ("b", 1.0, 0.0), ("n", 1.0, 0.0), ("m", 1.0, 0.0), (",", 1.0, 0.0), (".", 1.0, 0.0),
+     ("/", 1.0, 0.0), ("\u21E7", 2.75, 0.0)],
+    # Bottom row
+    [("ctrl", 1.25, 0.0), ("fn", 1.25, 0.0), ("alt", 1.25, 0.0), ("", 6.25, 0.0),
+     ("alt", 1.25, 0.0), ("ctrl", 1.25, 0.0),
+     ("\u2190", 1.0, 0.5), ("\u2193", 1.0, 0.0), ("\u2191", 1.0, 0.0), ("\u2192", 1.0, 0.0)],
 ]
+
+_MAIN_ROW_WIDTH = 15.0  # units for rows 1-5
+_GAP_PX = 3.0           # gap between keys in pixels
+_KEY_RADIUS = 4.0       # rounded-corner radius
+_CHASSIS_PAD = 8.0      # padding inside keyboard chassis
 
 
 class KeyboardVisual(QWidget):
-    """Custom paint widget showing a visual keyboard with lighting effects."""
+    """Visual keyboard with per-key lighting effects.
+
+    Supports static, breathing (global opacity), color-cycle (rainbow wave
+    across keys), and strobe effects.  Each key is painted with its label
+    and a subtle glow when lit.
+    """
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self._key_color = QColor("#2a2a2a")
-        self._effect = "static"
+        self._effect: str = "static"
         self._enabled = False
         self._breathing_opacity = 1.0
         self._cycle_hue = 0.0
         self._strobe_on = True
-        self.setMinimumHeight(140)
+        self.setMinimumHeight(210)
+        self.setSizePolicy(self.sizePolicy().horizontalPolicy(),
+                           self.sizePolicy().verticalPolicy())
 
     def set_key_state(self, enabled: bool, effect: str, color: QColor):
         self._enabled = enabled
         self._effect = effect
-        if enabled and effect != "color-cycle":
-            self._key_color = color
-        else:
-            self._key_color = color if enabled else QColor("#2a2a2a")
+        self._key_color = color if enabled else QColor("#2a2a2a")
+        self.update()
 
     def set_breathing_frame(self, opacity: float):
         self._breathing_opacity = opacity
@@ -59,64 +92,116 @@ class KeyboardVisual(QWidget):
         self._strobe_on = on
         self.update()
 
+    # ── Key color computation ──
+
+    def _key_color_at(self, key_x: float, key_y: float) -> QColor:
+        """Color for a single key at flex-space position (key_x, key_y)."""
+        if not self._enabled:
+            return QColor("#2a2a2a")
+
+        if self._effect == "color-cycle":
+            # Rainbow wave: hue shifts with key position across board
+            hue = (self._cycle_hue + key_x * 0.025 + key_y * 0.06) % 1.0
+            rgb = hsv_to_rgb(hue)
+            return QColor(rgb.red, rgb.green, rgb.blue)
+        elif self._effect == "breathing":
+            op = max(0.0, min(1.0, self._breathing_opacity))
+            return QColor(
+                int(self._key_color.red() * op),
+                int(self._key_color.green() * op),
+                int(self._key_color.blue() * op),
+            )
+        elif self._effect == "strobe":
+            return self._key_color if self._strobe_on else QColor("#1a1a1a")
+        else:
+            return self._key_color
+
+    # ── Painting ──
+
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
 
         w = self.width()
         h = self.height()
-        rows = len(KEYBOARD_ROWS)
-        row_h = (h - (rows - 1) * 2) / rows
-        y = 0
-        max_cols = max(len(r) for r in KEYBOARD_ROWS)
-        unit_w = (w - (max_cols - 1) * 2) / sum(KEYBOARD_ROWS[0])  # approx
 
-        # Background
+        # ── Chassis ──
+        chassis_rect = QRectF(0, 0, w, h)
+        grad = QLinearGradient(0, 0, 0, h)
+        grad.setColorAt(0.0, QColor("#1a1a1a"))
+        grad.setColorAt(1.0, QColor("#121212"))
         painter.setPen(Qt.NoPen)
-        painter.setBrush(QColor("#121212"))
-        painter.drawRoundedRect(QRectF(0, 0, w, h), 6, 6)
+        painter.setBrush(grad)
+        painter.drawRoundedRect(chassis_rect, 8, 8)
 
-        for row in KEYBOARD_ROWS:
-            x = 0
-            total_flex = sum(row)
-            row_width = w - (len(row) - 1) * 2
-            flex_unit = row_width / total_flex if total_flex > 0 else 10
+        # Pre-compute row heights
+        n_rows = len(_KEYBOARD)
+        inner_h = h - 2 * _CHASSIS_PAD
+        row_h = (inner_h - (n_rows - 1) * _GAP_PX) / n_rows
 
-            for flex in row:
-                key_w = flex * flex_unit
-                key_rect = QRectF(x + 1, y + 1, key_w, row_h)
+        # Compute the unit width from a main row (15u), but the first row
+        # (function keys) is narrower — we'll center it.
+        main_inner_w = w - 2 * _CHASSIS_PAD
+        unit = main_inner_w / _MAIN_ROW_WIDTH
 
-                if self._enabled:
-                    if self._effect == "color-cycle":
-                        c = self._hue_color(self._cycle_hue)
-                    elif self._effect == "breathing":
-                        c = QColor(
-                            int(self._key_color.red() * self._breathing_opacity),
-                            int(self._key_color.green() * self._breathing_opacity),
-                            int(self._key_color.blue() * self._breathing_opacity),
-                        )
-                    elif self._effect == "strobe":
-                        c = self._key_color if self._strobe_on else QColor("#1a1a1a")
-                    else:
-                        c = self._key_color
-                else:
-                    c = QColor("#2a2a2a")
+        for row_idx, row in enumerate(_KEYBOARD):
+            # Total flex width for this row
+            total_flex = sum(kw for _, kw, _ in row) + sum(kg for _, _, kg in row)
+            row_w = total_flex * unit
+            if row_idx == 0:
+                # Center the function row
+                x = _CHASSIS_PAD + (main_inner_w - row_w) / 2
+            else:
+                x = _CHASSIS_PAD
+            y = _CHASSIS_PAD + row_idx * (row_h + _GAP_PX)
 
-                painter.setBrush(c)
-                painter.setPen(Qt.NoPen)
-                painter.drawRoundedRect(key_rect, 3, 3)
+            flex_x = 0.0  # running flex-space x for hue computation
+            for label, kw, gap in row:
+                x += gap * unit
+                key_w = kw * unit - _GAP_PX
+                key_rect = QRectF(x, y, key_w, row_h)
 
-                x += key_w + 2
-            y += row_h + 2
+                # Compute per-key color
+                color = self._key_color_at(flex_x + kw / 2, float(row_idx))
+
+                # Glow under lit keys (skip dark/disabled)
+                if self._enabled and color.value() > 30:
+                    glow_rect = key_rect.adjusted(-1, -1, 2, 2)
+                    glow = QColor(color)
+                    glow.setAlpha(40)
+                    painter.setBrush(glow)
+                    painter.setPen(Qt.NoPen)
+                    painter.drawRoundedRect(glow_rect, _KEY_RADIUS + 2, _KEY_RADIUS + 2)
+
+                # Key body
+                painter.setBrush(color)
+                border = QColor(max(color.red() + 20, color.red()),
+                                max(color.green() + 20, color.green()),
+                                max(color.blue() + 20, color.blue())) if self._enabled \
+                    else QColor("#3a3a3a")
+                painter.setPen(border)
+                painter.setBrush(color)
+                painter.drawRoundedRect(key_rect, _KEY_RADIUS, _KEY_RADIUS)
+
+                # Label
+                if label:
+                    is_big = len(str(label)) <= 1
+                    font_size = int(row_h * 0.32) if is_big else int(row_h * 0.22)
+                    font = QFont("DejaVu Sans", font_size)
+                    font.setBold(not is_big)
+                    painter.setFont(font)
+                    # Text color: light on dark keys, dark on bright keys
+                    brightness = (color.red() * 299 + color.green() * 587 + color.blue() * 114) / 1000
+                    text_color = QColor("#1a1a1a") if brightness > 140 else QColor("#e0e0e0")
+                    if not self._enabled:
+                        text_color = QColor("#555555")
+                    painter.setPen(text_color)
+                    painter.drawText(key_rect, Qt.AlignCenter, label)
+
+                x += kw * unit
+                flex_x += kw + gap
 
         painter.end()
-
-    @staticmethod
-    def _hue_color(hue: float) -> QColor:
-        """Convert hue 0-1 to QColor (full sat, full val)."""
-        from hp_helper.keyboard_lighting import hsv_to_rgb
-        rgb = hsv_to_rgb(hue)
-        return QColor(rgb.red, rgb.green, rgb.blue)
 
 
 class KeyboardPage(QWidget):
@@ -253,7 +338,6 @@ class KeyboardPage(QWidget):
             opacity = max_val / 255.0 if max_val > 0 else 0.0
             self._visual.set_breathing_frame(opacity)
         elif self._settings.effect == "color-cycle":
-            # Extract approximate hue
             self._visual.set_cycle_hue(self._approx_hue(r, g, b))
         elif self._settings.effect == "strobe":
             self._visual.set_strobe_on(max(r, g, b) > 128)
