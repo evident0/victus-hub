@@ -28,7 +28,7 @@ class HomePage(QWidget):
 
         self._cpu_card = UtilizationCard("CPU", "— °C", COLORS["accent_blue"])
         self._gpu_card = UtilizationCard("GPU", "— °C", COLORS["accent_green"])
-        self._ram_card = UtilizationCard("RAM", "— GB", COLORS["accent_red"])
+        self._ram_card = UtilizationCard("RAM", "— °C", COLORS["accent_red"])
 
         cards_row.addWidget(self._cpu_card)
         cards_row.addWidget(self._gpu_card)
@@ -52,7 +52,7 @@ class HomePage(QWidget):
 
     def update_sensor_data(self, snapshot):
         """Refresh utilization cards from a sensor snapshot.
-        Left: temp (CPU/GPU) or mem usage (RAM). Right: fan RPM (CPU/GPU only).
+        Left: temp (CPU/GPU or RAM if lm-sensors reports it). Right: fan RPM (CPU/GPU) or RAM usage.
         """
         # CPU: usage + temp left, fan RPM right
         cpu_pct = snapshot.cpu_usage_pct or 0.0
@@ -66,13 +66,22 @@ class HomePage(QWidget):
         gpu_fan = snapshot.gpu_fan.value
         self._gpu_card.update_data(gpu_pct, gpu_temp, COLORS["accent_green"], "GPU Utilization", gpu_fan)
 
-        # RAM: usage + mem (no right text)
+        # RAM: temp left (first Memory °C from extra_sensors), usage on right
         ram_pct = snapshot.ram_usage_pct or 0.0
+        ram_temp = "— °C"
+        for es in getattr(snapshot, "extra_sensors", []):
+            if es.group == "Memory" and getattr(es, "unit", None) == "°C":
+                val = getattr(es, "numeric_value", None)
+                if val is not None:
+                    ram_temp = f"{val:.0f}°C"
+                else:
+                    ram_temp = getattr(getattr(es, "reading", None), "value", "— °C")
+                break
         if snapshot.ram_used_gb is not None and snapshot.ram_total_gb is not None:
-            ram_sub = f"{snapshot.ram_used_gb:.1f} / {snapshot.ram_total_gb:.1f} GB"
+            ram_usage = f"{snapshot.ram_used_gb:.1f} / {snapshot.ram_total_gb:.1f} GB"
         else:
-            ram_sub = "— GB"
-        self._ram_card.update_data(ram_pct, ram_sub, COLORS["accent_red"], "RAM Utilization")
+            ram_usage = "— GB"
+        self._ram_card.update_data(ram_pct, ram_temp, COLORS["accent_red"], "RAM Utilization", ram_usage)
     def set_hardware_title(self, title: str):
         self._footer.set_hardware_title(title)
 

@@ -81,7 +81,7 @@ class UtilizationCard(QFrame):
 
     Displays a title (CPU/GPU/RAM) top-left, a circular progress ring
     with percentage and label, and a subtitle row: left text (temperature
-    or RAM usage) + right text (fan RPM for CPU/GPU cards).
+    for CPU/GPU and RAM if available) + right text (fan RPM for CPU/GPU or RAM usage).
     """
 
     def __init__(self, title: str, subtitle: str = "—",
@@ -118,7 +118,7 @@ class UtilizationCard(QFrame):
         self._circular = _CircularProgress()
         layout.addWidget(self._circular, 1)
 
-        # Subtitle row: temperature/RAM usage on left, fan RPM on right (CPU/GPU)
+        # Subtitle row: temp left; fan RPM (CPU/GPU) or RAM usage on right
         sub_row = QHBoxLayout()
         sub_row.setContentsMargins(0, 0, 0, 0)
         sub_row.setSpacing(6)
@@ -147,7 +147,7 @@ class UtilizationCard(QFrame):
     def update_data(self, percentage: float, subtitle: str,
                      accent: str | None = None, label: str = "Utilization",
                      right_subtitle: str = ""):
-        """Update card data. right_subtitle (fan RPM) goes on the right for CPU/GPU."""
+        """Update card data. right_subtitle: fan RPM (CPU/GPU) or RAM usage GB."""
         if accent is not None:
             self._circular.set_value(percentage, accent, label)
         else:
