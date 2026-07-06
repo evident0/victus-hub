@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from PySide6.QtCore import Qt, QRectF
 from PySide6.QtGui import QPainter, QPen, QFont, QColor
-from PySide6.QtWidgets import QFrame, QVBoxLayout, QLabel, QWidget, QSizePolicy
+from PySide6.QtWidgets import QFrame, QVBoxLayout, QHBoxLayout, QLabel, QWidget, QSizePolicy
 
 from hp_helper.theme import COLORS
 
@@ -80,7 +80,8 @@ class UtilizationCard(QFrame):
     """Card showing a circular utilization gauge for a hardware component.
 
     Displays a title (CPU/GPU/RAM) top-left, a circular progress ring
-    with percentage and label, and a subtitle (temperature or memory used).
+    with percentage and label, and a subtitle row: left text (temperature
+    or RAM usage) + right text (fan RPM for CPU/GPU cards).
     """
 
     def __init__(self, title: str, subtitle: str = "—",
@@ -117,23 +118,39 @@ class UtilizationCard(QFrame):
         self._circular = _CircularProgress()
         layout.addWidget(self._circular, 1)
 
-        # Subtitle label (below circle, centred)
-        self._subtitle_label = QLabel(subtitle)
-        self._subtitle_label.setStyleSheet(f"""
+        # Subtitle row: temperature/RAM usage on left, fan RPM on right (CPU/GPU)
+        sub_row = QHBoxLayout()
+        sub_row.setContentsMargins(0, 0, 0, 0)
+        sub_row.setSpacing(6)
+
+        sub_style = f"""
             QLabel {{
                 color: {COLORS['text_secondary']};
                 font-size: 14px;
                 background: transparent;
             }}
-        """)
-        self._subtitle_label.setAlignment(Qt.AlignLeft)
-        layout.addWidget(self._subtitle_label, 0)
+        """
+
+        self._subtitle_left = QLabel(subtitle)
+        self._subtitle_left.setStyleSheet(sub_style)
+        sub_row.addWidget(self._subtitle_left)
+
+        sub_row.addStretch()
+
+        self._subtitle_right = QLabel("")
+        self._subtitle_right.setStyleSheet(sub_style)
+        self._subtitle_right.setAlignment(Qt.AlignRight)
+        sub_row.addWidget(self._subtitle_right)
+
+        layout.addLayout(sub_row, 0)
 
     def update_data(self, percentage: float, subtitle: str,
-                     accent: str | None = None, label: str = "Utilization"):
-        """Update the card with new sensor data."""
+                     accent: str | None = None, label: str = "Utilization",
+                     right_subtitle: str = ""):
+        """Update card data. right_subtitle (fan RPM) goes on the right for CPU/GPU."""
         if accent is not None:
             self._circular.set_value(percentage, accent, label)
         else:
             self._circular.set_value(percentage, self._circular._accent, label)
-        self._subtitle_label.setText(subtitle)
+        self._subtitle_left.setText(subtitle)
+        self._subtitle_right.setText(right_subtitle)

@@ -51,25 +51,28 @@ class HomePage(QWidget):
         layout.addWidget(self._footer)
 
     def update_sensor_data(self, snapshot):
-        """Refresh utilization cards from a sensor snapshot."""
-        # CPU: usage % + temperature
+        """Refresh utilization cards from a sensor snapshot.
+        Left: temp (CPU/GPU) or mem usage (RAM). Right: fan RPM (CPU/GPU only).
+        """
+        # CPU: usage + temp left, fan RPM right
         cpu_pct = snapshot.cpu_usage_pct or 0.0
         cpu_temp = f"{snapshot.cpu_temp_c:.0f}°C" if snapshot.cpu_temp_c is not None else "— °C"
-        self._cpu_card.update_data(cpu_pct, cpu_temp, COLORS["accent_blue"], "CPU Utilization")
+        cpu_fan = snapshot.cpu_fan.value
+        self._cpu_card.update_data(cpu_pct, cpu_temp, COLORS["accent_blue"], "CPU Utilization", cpu_fan)
 
-        # GPU: usage % + temperature
+        # GPU: usage + temp left, fan RPM right
         gpu_pct = snapshot.gpu_usage_pct or 0.0
         gpu_temp = f"{snapshot.gpu_temp_c:.0f}°C" if snapshot.gpu_temp_c is not None else "— °C"
-        self._gpu_card.update_data(gpu_pct, gpu_temp, COLORS["accent_green"], "GPU Utilization")
+        gpu_fan = snapshot.gpu_fan.value
+        self._gpu_card.update_data(gpu_pct, gpu_temp, COLORS["accent_green"], "GPU Utilization", gpu_fan)
 
-        # RAM: usage % + used/total GB
+        # RAM: usage + mem (no right text)
         ram_pct = snapshot.ram_usage_pct or 0.0
         if snapshot.ram_used_gb is not None and snapshot.ram_total_gb is not None:
             ram_sub = f"{snapshot.ram_used_gb:.1f} / {snapshot.ram_total_gb:.1f} GB"
         else:
             ram_sub = "— GB"
         self._ram_card.update_data(ram_pct, ram_sub, COLORS["accent_red"], "RAM Utilization")
-
     def set_hardware_title(self, title: str):
         self._footer.set_hardware_title(title)
 
