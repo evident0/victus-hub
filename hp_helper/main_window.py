@@ -122,7 +122,6 @@ class MainWindow(QMainWindow):
 
         # Window tracking
         self._graph_windows: dict[str, SensorGraphWindow] = {}
-        self._hidden_graph_windows: set[str] = set()  # keys hidden by tray-close
         self._fan_curves_window: FanCurvesWindow | None = None
         self._lighting = LightingController(self)
         self._lighting.frame_changed.connect(self._keyboard_page.apply_frame)
@@ -174,9 +173,8 @@ class MainWindow(QMainWindow):
 
     # ── Tray ──
     def _on_tray_activated(self, reason):
-        if reason == QSystemTrayIcon.Trigger:
+        if reason in (QSystemTrayIcon.Trigger, QSystemTrayIcon.DoubleClick):
             self._show_all_windows()
-
     def _toggle_visible(self):
         if self.isVisible():
             self._hide_all_windows()
@@ -185,31 +183,26 @@ class MainWindow(QMainWindow):
 
 
     def _hide_all_windows(self):
-        """Hide main window + all child windows to tray."""
-        for key, win in list(self._graph_windows.items()):
-            if win.isVisible():
-                win.hide()
-                self._hidden_graph_windows.add(key)
-        if self._fan_curves_window is not None and self._fan_curves_window.isVisible():
+        """Hide main window + all currently open child windows to tray."""
+        for win in list(self._graph_windows.values()):
+            win.hide()
+        if self._fan_curves_window is not None:
             self._fan_curves_window.hide()
-            self._hidden_graph_windows.add("__fan_curves__")
         self.hide()
 
     def _show_all_windows(self):
-        """Show main window + restore hidden child windows."""
-        self.show()
+        """Show/restore main + all registered child windows.
+        Handles both tray-hidden and minimized states. Used by left-click tray.
+        """
+        for win in list(self._graph_windows.values()):
+            win.showNormal()
+            win.raise_()
+        if self._fan_curves_window is not None:
+            self._fan_curves_window.showNormal()
+            self._fan_curves_window.raise_()
+        self.showNormal()
         self.raise_()
         self.activateWindow()
-        for key in list(self._hidden_graph_windows):
-            if key == "__fan_curves__":
-                if self._fan_curves_window is not None:
-                    self._fan_curves_window.show()
-            else:
-                win = self._graph_windows.get(key)
-                if win is not None:
-                    win.show()
-        self._hidden_graph_windows.clear()
-
     def _quit_app(self):
         """Restore fan hardware to auto, then quit.  The user's last mode
         choice survives in config so the segmented control restores it
@@ -352,25 +345,19 @@ class MainWindow(QMainWindow):
         """Open or focus a sensor graph window for the given sensor key."""
         existing = self._graph_windows.get(key)
         if existing is not None:
-            # If previously hidden-by-tray, just show it
             if not existing.isVisible():
                 existing.show()
             existing.raise_()
             existing.activateWindow()
-            self._hidden_graph_windows.discard(key)
             return
         win = SensorGraphWindow(key)
         win.setAttribute(Qt.WA_DeleteOnClose)
-        # Clean up from both tracking dicts when the window is closed by the user
+        # Clean up tracking when the window is closed by the user
         def _on_destroyed(obj=None, k=key):
             self._graph_windows.pop(k, None)
-            self._hidden_graph_windows.discard(k)
         win.destroyed.connect(_on_destroyed)
         self._graph_windows[key] = win
         win.show()
-
-
-    # ── Fan curves pop-out ──
 
     def _open_fan_curves_window(self):
         """Open or focus the standalone fan curves window."""
