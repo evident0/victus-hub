@@ -5,7 +5,7 @@ from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QPushButton, QSlider, QColorDialog,
 )
 from PySide6.QtCore import Qt, Signal, QRectF
-from PySide6.QtGui import QPainter, QColor, QFont, QLinearGradient
+from PySide6.QtGui import QPainter, QColor, QFont
 
 from hp_helper.widgets.section_title import SectionTitle
 from hp_helper.theme import COLORS
@@ -130,11 +130,8 @@ class KeyboardVisual(QWidget):
             _CHASSIS_MARGIN, _CHASSIS_MARGIN,
             w - 2 * _CHASSIS_MARGIN, h - 2 * _CHASSIS_MARGIN,
         )
-        grad = QLinearGradient(0, 0, 0, h)
-        grad.setColorAt(0.0, QColor("#1a1a1a"))
-        grad.setColorAt(1.0, QColor("#121212"))
         painter.setPen(Qt.NoPen)
-        painter.setBrush(grad)
+        painter.setBrush(QColor(COLORS["surface"]))
         painter.drawRoundedRect(chassis_rect, 8, 8)
 
         # Pre-compute row heights from the chassis interior
