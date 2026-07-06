@@ -60,14 +60,14 @@ def next_stats(snapshot, previous: dict) -> dict:
 
 
 def missing_stats(reading) -> dict:
+    val = getattr(reading, "value", str(reading) if reading is not None else "—")
+    src = getattr(reading, "source", "")
     return {
-        "current": {"value": "—", "source": ""},
+        "current": {"value": val, "source": src},
         "minimum": "—",
         "maximum": "—",
         "average": "—",
     }
-
-
 def build_rows(snapshot, stats_by_key: dict) -> list:
     """Build sensor table rows from snapshot + accumulated stats."""
     defs: list[SensorDefinition] = list(SENSOR_DEFINITIONS)

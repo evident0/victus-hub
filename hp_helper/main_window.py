@@ -35,9 +35,10 @@ class MainWindow(QMainWindow):
         self.resize(960, 640)
         self.setMinimumSize(930, 680)
 
-        # App icon — white Vletter on opaque black bg to hide GNOME titlebar arrow
+        # App icon using logoV.png (native colors, no tint applied) + dark square bg
+        # (the bg helps with GNOME titlebar visuals).
         from hp_helper.icon_utils import load_pixmap
-        _v = load_pixmap("Vletter.png", "#ff8c00", 48)
+        _v = load_pixmap("logoV.png", color=None, size=48)
         _bg = QPixmap(48, 48)
         _bg.fill(QColor("#1a1a1a"))
         _p = QPainter(_bg)
