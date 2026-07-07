@@ -3,7 +3,7 @@
 import logging
 
 from PySide6.QtCore import Qt, QSettings, QTimer
-from PySide6.QtGui import QAction, QCloseEvent, QColor, QIcon, QPainter, QPixmap
+from PySide6.QtGui import QAction, QCloseEvent, QIcon
 from PySide6.QtWidgets import (
     QApplication, QHBoxLayout, QMainWindow, QMenu, QStackedWidget,
     QSystemTrayIcon, QWidget,
@@ -35,16 +35,9 @@ class MainWindow(QMainWindow):
         self.resize(960, 640)
         self.setMinimumSize(930, 680)
 
-        # App icon using logoV.png (native colors, no tint applied) + dark square bg
-        # (the bg helps with GNOME titlebar visuals).
-        from hp_helper.icon_utils import load_pixmap
-        _v = load_pixmap("logoV.png", color=None, size=48)
-        _bg = QPixmap(48, 48)
-        _bg.fill(QColor("#1a1a1a"))
-        _p = QPainter(_bg)
-        _p.drawPixmap(0, 0, _v)
-        _p.end()
-        self._app_icon = QIcon(_bg)
+        # App icon — logoV.png with native colors (no tint, no solid background)
+        from hp_helper.icon_utils import load_icon
+        self._app_icon = load_icon("logoV.png", color=None, size=48)
         self.setWindowIcon(self._app_icon)
 
         # Central widget
