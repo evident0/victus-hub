@@ -27,6 +27,7 @@ class LightingController(QObject):
         self._settings = read_lighting_settings()
         self._last_send = 0.0
         self._last_sent_color: tuple[int, int, int] | None = None
+        self._backlight_on: bool | None = None  # None = unknown hardware state
         self._last_idle_poll = 0.0
         self._dimmed = False
         self._timer = QTimer(self)
@@ -35,7 +36,13 @@ class LightingController(QObject):
         self._timer.start()
 
     def shutdown(self):
+        """Stop the timer and turn the backlight off (called on app quit)."""
         self._timer.stop()
+        try:
+            api.set_keyboard_brightness(0)
+            self._backlight_on = False
+        except Exception:
+            pass
 
     # ── Settings mutators (called from KeyboardPage signal handlers) ──
 
@@ -76,46 +83,54 @@ class LightingController(QObject):
                     if self._dimmed:
                         self._dimmed = False
                         self._last_sent_color = None
+                        self._backlight_on = None
                 elif idle_elapsed >= settings.idle_timeout and not self._dimmed:
                     self._dimmed = True
-                    try:
-                        api.set_keyboard_color(0, 0, 0)
-                    except Exception:
-                        pass
-                    self._last_sent_color = (0, 0, 0)
+                    self._last_sent_color = None  # force re-evaluation below
                 elif idle_elapsed < settings.idle_timeout and self._dimmed:
                     # User typed — restore backlight on next frame
                     self._dimmed = False
                     self._last_sent_color = None
+                    self._backlight_on = None
             elif self._dimmed:
                 self._dimmed = False
                 self._last_sent_color = None
+                self._backlight_on = None
 
-        # If dimmed by idle timeout, emit black frame and skip normal output
-        if self._dimmed:
-            if self._last_sent_color == (0, 0, 0):
-                self.frame_changed.emit(RgbColor(0, 0, 0))
+        # Determine the desired hardware state for this frame.
+        # "Off" is achieved via brightness=0 (the proper LED off path);
+        # "On" is achieved by sending the color (which forces on at full).
+        want_off = (not settings.enabled) or self._dimmed
+
+        if want_off:
+            if self._backlight_on is not False:
+                if now - self._last_send >= 0.200:
+                    try:
+                        api.set_keyboard_brightness(0)
+                        self._backlight_on = False
+                        self._last_send = now
+                        self._last_sent_color = None
+                    except Exception:
+                        self._last_send = now
+            self.frame_changed.emit(RgbColor(0, 0, 0))
             return
 
-        # Static color only (effects removed)
-        if not settings.enabled:
-            frame = RgbColor(0, 0, 0)
-        else:
-            frame = hex_to_rgb(settings.color)
-
-        # Throttle daemon call: only send every 200 ms and only on color change
+        # Enabled and not dimmed — ensure backlight is on with the chosen color.
+        frame = hex_to_rgb(settings.color)
         color = (frame.red, frame.green, frame.blue)
-        if now - self._last_send >= 0.200 and color != self._last_sent_color:
+
+        need_color_write = (self._backlight_on is not True) or (color != self._last_sent_color)
+        if now - self._last_send >= 0.200 and need_color_write:
             try:
                 api.set_keyboard_color(*color)
                 self._last_send = now
                 self._last_sent_color = color
+                self._backlight_on = True
             except Exception:
-                # Remember the attempted (failing) color so we only log the
-                # "→ daemon: keyboard-color ..." + ERR once per distinct color.
-                # (The dim path for black already does this unconditionally.)
+                # Remember the attempted color so we only log once per distinct color.
                 self._last_send = now
                 self._last_sent_color = color
+                self._backlight_on = True
 
         # Always update visual keyboard (responsive UI)
         self.frame_changed.emit(frame)

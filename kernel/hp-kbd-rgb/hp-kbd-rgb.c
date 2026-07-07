@@ -273,25 +273,43 @@ static int hp_kbd_set_brightness(struct led_classdev *led_cdev,
 {
 	struct hp_kbd_led_priv *priv = hp_led_get_priv(led_cdev);
 	struct led_classdev_mc *mc_cdev = lcdev_to_mccdev(led_cdev);
+	struct led_classdev_mc *other;
+	unsigned int i;
 	int ret;
 
-	if (brightness == LED_OFF) {
-		priv->last_brightness = led_cdev->brightness;
-		led_cdev->brightness = LED_OFF;
-		return hp_kbd_backlight_set_on(false);
+	/*
+	 * If the backlight is currently off, turning it on via WMI lights up
+	 * all zones at once.  Restore the other zones' cached colors so only
+	 * the zone being addressed actually changes.  This mirrors upstream
+	 * hp-wmi multicolor behavior.
+	 */
+	if (!hp_kbd_backlight_is_on()) {
+		ret = hp_kbd_backlight_set_on(true);
+		if (ret)
+			return ret;
+
+		for (i = 0; i < hp_kbd_rgb.zone_count; i++) {
+			if (i == priv->zone)
+				continue;
+			other = &hp_kbd_rgb.leds[i];
+			if (!other->led_cdev.name)
+				continue;
+			ret = hp_kbd_backlight_set_rgb_color(i,
+				other->subled_info[0].intensity,
+				other->subled_info[1].intensity,
+				other->subled_info[2].intensity);
+			if (ret)
+				return ret;
+		}
 	}
 
 	led_cdev->brightness = brightness;
 	led_mc_calc_color_components(mc_cdev, brightness);
 
-	ret = hp_kbd_backlight_set_rgb_color(priv->zone,
-				mc_cdev->subled_info[0].brightness,
-				mc_cdev->subled_info[1].brightness,
-				mc_cdev->subled_info[2].brightness);
-	if (ret)
-		return ret;
-
-	return hp_kbd_backlight_set_on(true);
+	return hp_kbd_backlight_set_rgb_color(priv->zone,
+			mc_cdev->subled_info[0].brightness,
+			mc_cdev->subled_info[1].brightness,
+			mc_cdev->subled_info[2].brightness);
 }
 
 static ssize_t keyboard_type_show(struct device *dev,
@@ -335,6 +353,7 @@ static ssize_t color_store(struct device *dev, struct device_attribute *attr,
 			   const char *buf, size_t count)
 {
 	unsigned int red, green, blue;
+	unsigned int zone;
 	int ret;
 
 	if (sscanf(buf, "%u %u %u", &red, &green, &blue) != 3)
@@ -342,13 +361,32 @@ static ssize_t color_store(struct device *dev, struct device_attribute *attr,
 	if (red > 255 || green > 255 || blue > 255)
 		return -EINVAL;
 
-	ret = hp_kbd_backlight_set_rgb_color(0, red, green, blue);
+	/*
+	 * The global color attribute is a convenience that sets the color
+	 * table directly.  Keep the per-zone mc_subled intensity fields in
+	 * sync so that subsequent writes to the LED brightness file scale the
+	 * correct color instead of a stale snapshot from module load.
+	 *
+	 * On single-zone keyboards there is only zone 0 and set_rgb_color
+	 * fills all 8 color-table slots, so we only need to update zone 0.
+	 * On 4-zone keyboards the global knob is zone-0 only (documented
+	 * limitation), so we update zone 0 as well.
+	 */
+	zone = 0;
+	hp_kbd_rgb.subleds[zone][0].intensity = red;
+	hp_kbd_rgb.subleds[zone][1].intensity = green;
+	hp_kbd_rgb.subleds[zone][2].intensity = blue;
+
+	ret = hp_kbd_backlight_set_rgb_color(zone, red, green, blue);
 	if (ret)
 		return ret;
 
 	ret = hp_kbd_backlight_set_on(true);
 	if (ret)
 		return ret;
+
+	/* Reflect the forced-on state in the LED class device. */
+	hp_kbd_rgb.leds[zone].led_cdev.brightness = LED_FULL;
 
 	return count;
 }

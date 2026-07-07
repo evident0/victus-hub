@@ -195,6 +195,15 @@ def _make_dispatch(sampler: RaplPowerSampler, sampler_lock: threading.Lock | Non
         result = sysfs.write_keyboard_color(r, g, b)
         return protocol.format_status_response((True, result))
 
+    def _keyboard_brightness(body: str) -> str:
+        level = _parse_int(body, "brightness")
+        logger.info("[keyboard-rgb] daemon request: brightness %d/255", level)
+        try:
+            result = sysfs.write_keyboard_brightness(level)
+            return protocol.format_status_response((True, result))
+        except RuntimeError as e:
+            return protocol.format_status_response((False, str(e)))
+
     def _power_limits(body: str) -> str:
         s, f, sl = _parse_rgb(body)  # same shape: three tab-separated ints
         logger.info("[power-limits] daemon request: STAPM=%d fast=%d slow=%d", s, f, sl)
@@ -213,6 +222,7 @@ def _make_dispatch(sampler: RaplPowerSampler, sampler_lock: threading.Lock | Non
         ("fan-manual", _fan_manual),
         ("keyboard-color\t", _keyboard_color),
         ("power-limits\t", _power_limits),
+        ("keyboard-brightness\t", _keyboard_brightness),
         ("keyboard-last-input", _keyboard_last_input),
     ]
 

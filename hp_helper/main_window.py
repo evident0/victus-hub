@@ -196,14 +196,15 @@ class MainWindow(QMainWindow):
         self.raise_()
         self.activateWindow()
     def _quit_app(self):
-        """Restore fan hardware to auto, then quit.  The user's last mode
-        choice survives in config so the segmented control restores it
-        on the next start.
+        """Restore fan hardware to auto and turn off the keyboard backlight,
+        then quit.  The user's last mode choice survives in config so the
+        segmented control restores it on the next start.
         """
         try:
             api.set_fan_auto()
         except Exception:
             logger.exception("set fan auto during quit failed")
+        self._lighting.shutdown()
         self._tray.hide()
         self._quitting = True
         QApplication.instance().quit()

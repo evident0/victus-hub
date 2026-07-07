@@ -126,6 +126,9 @@ def set_fan_pwm(pwm: int) -> str:
 def set_keyboard_color(red: int, green: int, blue: int) -> str:
     return daemon_client.request_keyboard_color(red, green, blue)
 
+def set_keyboard_brightness(level: int) -> str:
+    return daemon_client.request_keyboard_brightness(level)
+
 def get_keyboard_idle_elapsed() -> float:
     """Return seconds since the last physical keypress on the laptop keyboard."""
     try:
