@@ -22,6 +22,7 @@ from hp_helper import api
 from hp_helper.fan_control import start_fan_control
 from hp_helper.lighting_controller import LightingController
 from hp_helper.power_controller import PowerLimitController
+from hp_helper.shortcut_controller import ShortcutController
 from hp_helper.sensor_stats import next_stats, build_rows
 
 logger = logging.getLogger(__name__)
@@ -124,6 +125,12 @@ class MainWindow(QMainWindow):
         self._keyboard_page.idle_timeout_changed.connect(self._lighting.set_idle_timeout)
 
         self._power = PowerLimitController(self)
+
+
+        # Program shortcut (global hotkey to unhide/restore the window)
+        self._shortcut = ShortcutController(self)
+        self._shortcut.triggered.connect(self._show_all_windows)
+        self._settings_page.set_shortcut_controller(self._shortcut)
 
         # ── Timers ──
 

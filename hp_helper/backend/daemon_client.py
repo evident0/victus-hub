@@ -80,6 +80,25 @@ def request_keyboard_last_input() -> float:
     return float(protocol.parse_status_response(response))
 
 
+def request_keyboard_last_event() -> tuple[list[int], int, int]:
+    """Return the last non-modifier keypress: (mods, key, seq).
+
+    The daemon emits ``OK\\t{mods_csv}\\t{key}\\t{seq}\\n`` (see
+    hp_helperd/daemon.py).  ``mods_csv`` is a comma-separated list of
+    modifier keycodes held at press time, ``key`` is the non-modifier
+    keycode (0 if none), and ``seq`` is a monotonic counter that bumps on
+    every recorded press so callers can detect a fresh event.
+    """
+    response = _request_daemon("keyboard-last-event\n", quiet=True)
+    line = response.strip()
+    parts = line.split("\t")
+    if len(parts) < 4 or parts[0] != "OK":
+        raise RuntimeError(f"unexpected keyboard-last-event response: {line}")
+    mods_csv = parts[1]
+    mods = [int(x) for x in mods_csv.split(",") if x]
+    return mods, int(parts[2]), int(parts[3])
+
+
 def request_power_limits(stapm_limit: int, fast_limit: int, slow_limit: int) -> str:
     logger.info("\u2192 daemon: power-limits STAPM=%d fast=%d slow=%d", stapm_limit, fast_limit, slow_limit)
     response = _request_daemon(f"power-limits\t{stapm_limit}\t{fast_limit}\t{slow_limit}\n")

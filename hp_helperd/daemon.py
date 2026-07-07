@@ -25,65 +25,123 @@ _EVENT_FORMAT = "llHHI"
 _EVENT_SIZE = struct.calcsize(_EVENT_FORMAT)
 _EV_KEY = 1
 
+# Keycodes treated as modifiers (linux/input-event-codes.h).
+_MODIFIER_CODES = frozenset({
+    29,   # KEY_LEFTCTRL
+    42,   # KEY_LEFTSHIFT
+    54,   # KEY_RIGHTSHIFT
+    56,   # KEY_LEFTALT
+    97,   # KEY_RIGHTCTRL
+    100,  # KEY_RIGHTALT
+    125,  # KEY_LEFTMETA
+    126,  # KEY_RIGHTMETA
+})
+
 _kbd_last_input: float = 0.0
 _kbd_watcher_running: bool = False
 _kbd_lock = threading.Lock()
 _kbd_stop = threading.Event()
 _kbd_thread: threading.Thread | None = None
 
+# Last non-modifier keypress state (for the program-shortcut feature).
+_held_mods: set[int] = set()
+_last_press_mods: tuple[int, ...] = ()
+_last_press_key: int = 0
+_last_press_seq: int = 0
+
 
 def _kbd_watcher_loop() -> None:
-    """Read laptop keyboard events and record last keypress time.
+    """Read keyboard events from the built-in keyboard + WMI hotkeys device.
 
-    Retries device discovery and opening so the thread never exits
-    permanently — a transient udev/permission issue at startup should
-    not kill the watcher for the daemon's entire lifetime.
+    Tracks the idle time (for keyboard-backlight dimming) and, for the
+    program-shortcut feature, the set of currently-held modifiers plus the
+    last non-modifier keypress (with the modifiers held at that moment).
+
+    Watches both the i8042 AT keyboard (ordinary keys + combos) and the
+    "HP WMI hotkeys" device (where the OMEN key surfaces).  Retries device
+    discovery/opening so a transient udev/permission issue never kills the
+    watcher for the daemon's entire lifetime.
     """
     global _kbd_last_input, _kbd_watcher_running
+    global _held_mods, _last_press_mods, _last_press_key, _last_press_seq
     while not _kbd_stop.is_set():
-        dev_path = sysfs.find_laptop_keyboard_device()
-        if dev_path is None:
+        dev_paths = _discover_keyboard_devices()
+        if not dev_paths:
             with _kbd_lock:
                 _kbd_watcher_running = False
-            logger.warning("kbd-watch: no laptop keyboard device found, retrying in 5s")
+            logger.warning("kbd-watch: no keyboard devices found, retrying in 5s")
             _kbd_stop.wait(5.0)
             continue
-        try:
-            fd = os.open(dev_path, os.O_RDONLY)
-        except OSError as e:
+        fds = []
+        opened = []
+        for p in dev_paths:
+            try:
+                fds.append(os.open(p, os.O_RDONLY))
+                opened.append(p)
+            except OSError as e:
+                logger.warning("kbd-watch: cannot open %s: %s", p, e)
+        if not fds:
             with _kbd_lock:
                 _kbd_watcher_running = False
-            logger.warning("kbd-watch: cannot open %s: %s, retrying in 5s", dev_path, e)
             _kbd_stop.wait(5.0)
             continue
         with _kbd_lock:
             _kbd_watcher_running = True
-        logger.info("kbd-watch: monitoring %s", dev_path)
+        logger.info("kbd-watch: monitoring %s", ", ".join(opened))
         try:
             while not _kbd_stop.is_set():
-                r, _, _ = select.select([fd], [], [], 1.0)
+                r, _, _ = select.select(fds, [], [], 1.0)
                 if not r:
                     continue
-                try:
-                    data = os.read(fd, _EVENT_SIZE)
-                except OSError:
-                    logger.warning("kbd-watch: read error, will reopen device")
-                    break
-                if len(data) < _EVENT_SIZE:
-                    continue
-                _, _, ev_type, _code, ev_value = struct.unpack(_EVENT_FORMAT, data)
-                if ev_type == _EV_KEY and ev_value == 1:
+                reopen = False
+                for fd in r:
+                    try:
+                        data = os.read(fd, _EVENT_SIZE)
+                    except OSError:
+                        logger.warning("kbd-watch: read error, will reopen devices")
+                        reopen = True
+                        break
+                    if len(data) < _EVENT_SIZE:
+                        continue
+                    _, _, ev_type, code, ev_value = struct.unpack(_EVENT_FORMAT, data)
+                    if ev_type != _EV_KEY:
+                        continue
                     with _kbd_lock:
-                        _kbd_last_input = time.monotonic()
+                        if code in _MODIFIER_CODES:
+                            if ev_value == 1:
+                                _held_mods.add(code)
+                            elif ev_value == 0:
+                                _held_mods.discard(code)
+                        elif ev_value == 1:  # non-modifier keypress
+                            _last_press_mods = tuple(sorted(_held_mods))
+                            _last_press_key = code
+                            _last_press_seq += 1
+                            _kbd_last_input = time.monotonic()
+                if reopen:
+                    break
         finally:
             with _kbd_lock:
                 _kbd_watcher_running = False
-            try:
-                os.close(fd)
-            except OSError:
-                pass
+                _held_mods.clear()
+            for fd in fds:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
         if not _kbd_stop.is_set():
             _kbd_stop.wait(2.0)
+
+
+def _discover_keyboard_devices() -> list[str]:
+    """Collect the built-in keyboard + WMI hotkeys device paths (deduped)."""
+    paths: list[str] = []
+    p = sysfs.find_laptop_keyboard_device()
+    if p:
+        paths.append(p)
+    w = sysfs.find_wmi_hotkeys_device()
+    if w and w not in paths:
+        paths.append(w)
+    return paths
 
 
 def start_keyboard_watcher() -> None:
@@ -109,6 +167,19 @@ def kbd_elapsed_since_last_input() -> float:
         if not _kbd_watcher_running:
             return -1.0
         return time.monotonic() - _kbd_last_input
+
+
+def kbd_last_event() -> tuple[tuple[int, ...], int, int]:
+    """Return the last non-modifier keypress for the program-shortcut feature.
+
+    Returns ``(mods, key, seq)`` where ``mods`` is the sorted tuple of
+    modifier keycodes held at the moment of the press, ``key`` is the
+    non-modifier keycode (0 if none recorded yet), and ``seq`` is a
+    monotonic counter that bumps on every recorded press so callers can
+    detect a fresh event.
+    """
+    with _kbd_lock:
+        return _last_press_mods, _last_press_key, _last_press_seq
 
 
 def _recv_line(stream: socket.socket) -> bytes | None:
@@ -204,6 +275,12 @@ def _make_dispatch(sampler: RaplPowerSampler, sampler_lock: threading.Lock | Non
         except RuntimeError as e:
             return protocol.format_status_response((False, str(e)))
 
+    def _keyboard_last_event(_body: str) -> str:
+        logger.info("[keyboard] daemon request: keyboard-last-event")
+        mods, key, seq = kbd_last_event()
+        mods_csv = ",".join(str(m) for m in mods)
+        return f"OK\t{mods_csv}\t{key}\t{seq}\n"
+
     def _power_limits(body: str) -> str:
         s, f, sl = _parse_rgb(body)  # same shape: three tab-separated ints
         logger.info("[power-limits] daemon request: STAPM=%d fast=%d slow=%d", s, f, sl)
@@ -224,6 +301,7 @@ def _make_dispatch(sampler: RaplPowerSampler, sampler_lock: threading.Lock | Non
         ("power-limits\t", _power_limits),
         ("keyboard-brightness\t", _keyboard_brightness),
         ("keyboard-last-input", _keyboard_last_input),
+        ("keyboard-last-event", _keyboard_last_event),
     ]
 
 

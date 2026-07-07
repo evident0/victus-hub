@@ -134,3 +134,33 @@ def find_laptop_keyboard_device() -> str | None:
         if "i8042" in name and name.endswith("-event-kbd"):
             return str(child)
     return None
+
+
+def find_wmi_hotkeys_device() -> str | None:
+    """Return the /dev/input/eventX path for the "HP WMI hotkeys" device.
+
+    The OMEN key on HP laptops surfaces here (as a normal keycode such as
+    KEY_PROG1), not on the i8042 AT keyboard device, so the daemon must
+    watch this device too to detect it.
+    """
+    base = Path("/sys/class/input")
+    try:
+        entries = list(base.iterdir())
+    except OSError:
+        return None
+    for entry in entries:
+        if not entry.name.startswith("input"):
+            continue
+        try:
+            name = (entry / "name").read_text().strip()
+        except OSError:
+            continue
+        if name != "HP WMI hotkeys":
+            continue
+        for child in entry.iterdir():
+            if not child.name.startswith("event"):
+                continue
+            dev = Path("/dev/input") / child.name
+            if dev.exists():
+                return str(dev)
+    return None

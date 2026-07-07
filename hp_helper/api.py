@@ -19,6 +19,7 @@ from hp_helper.backend.types import (
     FanProfileConfig,
     FanConfig,
 )
+from hp_helper.keyboard_shortcut import KeyEvent
 
 # Re-export dataclasses for backward compatibility
 __all__ = [
@@ -34,8 +35,9 @@ __all__ = [
     "set_system_profile",
     "set_fan_auto",
     "set_fan_pwm",
-    "set_keyboard_color",
     "get_keyboard_idle_elapsed",
+    "get_keyboard_last_event",
+    "KeyEvent",
     "save_fan_profile",
     "set_custom_fan_enabled",
     "set_manual_preset",
@@ -135,6 +137,16 @@ def get_keyboard_idle_elapsed() -> float:
         return daemon_client.request_keyboard_last_input()
     except Exception:
         return 0.0
+
+
+def get_keyboard_last_event() -> KeyEvent:
+    """Return the last non-modifier keypress seen by the daemon.
+
+    Used by the program-shortcut feature to capture a keybind and to detect
+    when the configured shortcut is pressed (so the GUI can unhide/restore).
+    """
+    mods, key, seq = daemon_client.request_keyboard_last_event()
+    return KeyEvent(mods=tuple(sorted(mods)), key=key, seq=seq)
 
 
 def apply_power_limits(stapm: int, fast: int, slow: int) -> str:
