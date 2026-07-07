@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SERVICE_NAME=hp-helperd.service
+SERVICE_DST="/etc/systemd/system/$SERVICE_NAME"
+SOCKET_RUNTIME_DIR=/run/hp-helperd
+
+printf '\033[1;34m── Uninstalling HP Helper daemon ──\033[0m\n'
+
+if [ "$(id -u)" -eq 0 ]; then
+    SUDO=()
+else
+    SUDO=(sudo)
+fi
+
+if command -v systemctl >/dev/null 2>&1; then
+    if systemctl is-active --quiet "$SERVICE_NAME" 2>/dev/null; then
+        printf 'Stopping %s...\n' "$SERVICE_NAME"
+        "${SUDO[@]}" systemctl stop "$SERVICE_NAME" || true
+    fi
+
+    if systemctl is-enabled --quiet "$SERVICE_NAME" 2>/dev/null; then
+        printf 'Disabling %s...\n' "$SERVICE_NAME"
+        "${SUDO[@]}" systemctl disable "$SERVICE_NAME" || true
+    fi
+
+    if [ -f "$SERVICE_DST" ]; then
+        printf 'Removing service file: %s\n' "$SERVICE_DST"
+        "${SUDO[@]}" rm -f "$SERVICE_DST"
+        printf 'Reloading systemd...\n'
+        "${SUDO[@]}" systemctl daemon-reload
+        "${SUDO[@]}" systemctl reset-failed "$SERVICE_NAME" 2>/dev/null || true
+    fi
+else
+    printf 'systemctl not found — skipping systemd steps.\n'
+fi
+
+# Best-effort cleanup of runtime artifacts
+if [ -d "$SOCKET_RUNTIME_DIR" ]; then
+    printf 'Removing runtime directory %s\n' "$SOCKET_RUNTIME_DIR"
+    "${SUDO[@]}" rm -rf "$SOCKET_RUNTIME_DIR" || true
+fi
+
+# Best-effort Python package removal (editable or otherwise)
+if python3 -c 'import hp_helperd' >/dev/null 2>&1; then
+    printf 'Uninstalling hp-helper Python package (best effort)...\n'
+    python3 -m pip uninstall -y hp-helper 2>/dev/null || true
+fi
+
+printf '\033[32mDaemon uninstall complete (if it was installed).\033[0m\n'
