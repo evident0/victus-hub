@@ -38,6 +38,10 @@ class SensorGraphWindow(QMainWindow):
         self.setWindowTitle(f"{self._definition.name} Graph")
         self.resize(820, 260)
         self.setMinimumSize(500, 200)
+        # App icon (logoV) — same as main window
+        from hp_helper.icon_utils import load_icon
+        self.setWindowIcon(load_icon("logoV.png", color=None, size=48))
+
         self.setStyleSheet(f"background-color: {COLORS['bg']};")
 
         # Accent color

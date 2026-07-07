@@ -19,6 +19,11 @@ def main():
     app = QApplication(sys.argv)
     app.setApplicationName("hp-helper")
     app.setOrganizationName("hp-helper")
+    # App-wide window icon (logoV) so every top-level window (main, sensor graphs, fan curves, etc.) gets it
+    from hp_helper.icon_utils import load_icon
+    app_icon = load_icon("logoV.png", color=None, size=48)
+    app.setWindowIcon(app_icon)
+
 
     # Load global QSS stylesheet
     resources_dir = Path(__file__).parent / "resources"

@@ -26,6 +26,10 @@ class FanCurvesWindow(QMainWindow):
         self.setWindowTitle("Fan Curves")
         self.resize(860, 620)
         self.setMinimumSize(600, 300)
+        # App icon (logoV) — same as main window
+        from hp_helper.icon_utils import load_icon
+        self.setWindowIcon(load_icon("logoV.png", color=None, size=48))
+
         self.setStyleSheet(f"background-color: {COLORS['bg']};")
 
         # ── State ──
