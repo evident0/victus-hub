@@ -1,17 +1,41 @@
 #!/usr/bin/env bash
+# Uninstall all HP Helper components:
+#   1. .desktop entry + icon
+#   2. hp-helperd daemon           (stop, disable, remove service, pip uninstall)
+#   3. hp-helper program           (pip uninstall — same distribution)
+#   4. hp-kbd-rgb kernel module    (unload, remove, drop autoload config)
+# ~/.config/hp-helper is left in place (user settings preserved).
 set -euo pipefail
 
+ROOT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 SERVICE_NAME=hp-helperd.service
 SERVICE_DST="/etc/systemd/system/$SERVICE_NAME"
-SOCKET_RUNTIME_DIR=/run/hp-helperd
-
-printf '\033[1;34m── Uninstalling HP Helper daemon ──\033[0m\n'
+SOCKET_RUNTIME_DIR="/run/hp-helperd"
+ICON_DST="/usr/share/icons/hicolor/1024x1024/apps/hp-helper.png"
+DESKTOP_DST="/usr/share/applications/hp-helper.desktop"
+KMOD_UNINSTALL="$ROOT_DIR/kernel/hp-kbd-rgb/scripts/uninstall"
 
 if [ "$(id -u)" -eq 0 ]; then
     SUDO=()
 else
     SUDO=(sudo)
 fi
+
+# ── 1. Desktop entry + icon ──
+printf '\033[1;34m── Removing desktop entry + icon ──\033[0m\n'
+if [ -f "$DESKTOP_DST" ]; then
+    printf 'Removing %s\n' "$DESKTOP_DST"
+    "${SUDO[@]}" rm -f "$DESKTOP_DST"
+    "${SUDO[@]}" update-desktop-database /usr/share/applications 2>/dev/null || true
+fi
+if [ -f "$ICON_DST" ]; then
+    printf 'Removing icon %s\n' "$ICON_DST"
+    "${SUDO[@]}" rm -f "$ICON_DST"
+    "${SUDO[@]}" gtk-update-icon-cache -f /usr/share/icons/hicolor 2>/dev/null || true
+fi
+
+# ── 2. Daemon ──
+printf '\033[1;34m── Uninstalling hp-helperd daemon ──\033[0m\n'
 
 if command -v systemctl >/dev/null 2>&1; then
     if systemctl is-active --quiet "$SERVICE_NAME" 2>/dev/null; then
@@ -41,10 +65,18 @@ if [ -d "$SOCKET_RUNTIME_DIR" ]; then
     "${SUDO[@]}" rm -rf "$SOCKET_RUNTIME_DIR" || true
 fi
 
-# Best-effort Python package removal (editable or otherwise)
-if python3 -c 'import hp_helperd' >/dev/null 2>&1; then
-    printf 'Uninstalling hp-helper Python package (best effort)...\n'
-    python3 -m pip uninstall -y hp-helper 2>/dev/null || true
+# ── 3. Program + daemon Python packages ──
+# A single pip distribution (hp-helper) ships both hp_helper* and hp_helperd*.
+printf '\033[1;34m── Uninstalling hp-helper Python packages ──\033[0m\n'
+python3 -m pip uninstall -y hp-helper 2>/dev/null || true
+
+# ── 4. Kernel module ──
+printf '\033[1;34m── Uninstalling hp-kbd-rgb kernel module ──\033[0m\n'
+if [ ! -x "$KMOD_UNINSTALL" ]; then
+    printf 'Kernel module uninstall script not found or not executable: %s\n' "$KMOD_UNINSTALL" >&2
+else
+    bash "$KMOD_UNINSTALL"
 fi
 
-printf '\033[32mDaemon uninstall complete (if it was installed).\033[0m\n'
+printf '\033[32m── Uninstall complete ──\033[0m\n'
+printf '  ~/.config/hp-helper was left in place (user settings preserved).\n'
