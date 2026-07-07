@@ -28,3 +28,12 @@ Thumbs.db
 moc_*.cpp
 ui_*.h
 kernel/hp-kbd-rgb/upstream-hp-wmi-rgb-v10.html
+
+# Kernel module build artifacts (hp-kbd-rgb)
+kernel/hp-kbd-rgb/*.o
+kernel/hp-kbd-rgb/*.ko
+kernel/hp-kbd-rgb/*.mod*
+kernel/hp-kbd-rgb/*.cmd
+kernel/hp-kbd-rgb/Module.symvers
+kernel/hp-kbd-rgb/modules.order
+kernel/hp-kbd-rgb/.*
