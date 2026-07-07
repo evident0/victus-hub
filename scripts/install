@@ -64,8 +64,22 @@ done
 # ── 3. Desktop entry + icon ──
 printf '\033[1;34m── Installing desktop entry ──\033[0m\n'
 if [ -f "$ICON_SRC" ]; then
-    printf 'Installing icon to %s\n' "$ICON_DST"
-    "${SUDO[@]}" install -Dm644 "$ICON_SRC" "$ICON_DST"
+    # Install the program's own icon (logoV) at standard hicolor sizes so the
+    # .desktop Icon=hp-helper resolves crisply at every DPI/menu size.
+    if command -v convert >/dev/null 2>&1; then
+        for size in 16 22 24 32 48 64 128 256 512 1024; do
+            dst="/usr/share/icons/hicolor/${size}x${size}/apps/hp-helper.png"
+            printf 'Installing %sx%s icon to %s\n' "$size" "$size" "$dst"
+            "${SUDO[@]}" install -d "/usr/share/icons/hicolor/${size}x${size}/apps"
+            convert "$ICON_SRC" -resize "${size}x${size}" "png32:${TMPDIR:-/tmp}/hp-helper-${size}.png" 2>/dev/null
+            "${SUDO[@]}" install -Dm644 "${TMPDIR:-/tmp}/hp-helper-${size}.png" "$dst"
+            rm -f "${TMPDIR:-/tmp}/hp-helper-${size}.png"
+        done
+    else
+        # No ImageMagick — fall back to the single source size.
+        printf 'Installing icon to %s\n' "$ICON_DST"
+        "${SUDO[@]}" install -Dm644 "$ICON_SRC" "$ICON_DST"
+    fi
     "${SUDO[@]}" gtk-update-icon-cache -f /usr/share/icons/hicolor 2>/dev/null || true
 fi
 
