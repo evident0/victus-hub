@@ -12,12 +12,13 @@ from hp_helper.backend.types import FanConfig
 
 
 def make_spin(label: str, suffix: str, value: int,
-              vmin: int, vmax: int) -> QHBoxLayout:
+              vmin: int, vmax: int, compact: bool = False) -> QHBoxLayout:
     row = QHBoxLayout()
     lbl = QLabel(f"{label} ({suffix})")
     lbl.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 12px;")
     row.addWidget(lbl)
-    row.addStretch()
+    if not compact:
+        row.addStretch()
     spin = QSpinBox()
     spin.setRange(vmin, vmax)
     spin.setValue(value)
@@ -26,14 +27,14 @@ def make_spin(label: str, suffix: str, value: int,
     row.addWidget(spin)
     return row
 
-
 def make_double_spin(label: str, suffix: str, value: float,
-                     vmin: float, vmax: float, step: float) -> QHBoxLayout:
+                     vmin: float, vmax: float, step: float, compact: bool = False) -> QHBoxLayout:
     row = QHBoxLayout()
     lbl = QLabel(f"{label} ({suffix})")
     lbl.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 12px;")
     row.addWidget(lbl)
-    row.addStretch()
+    if not compact:
+        row.addStretch()
     spin = QDoubleSpinBox()
     spin.setRange(vmin, vmax)
     spin.setSingleStep(step)
@@ -65,7 +66,6 @@ class SettingsPage(QWidget):
             int(cfg.ramp_down_delay), 0, 120,
         )
         layout.addLayout(self._ramp_delay)
-
         self._temp_window = self._make_spin(
             "Temperature window", "samples",
             cfg.temp_window, 5, 60,
@@ -117,14 +117,13 @@ class SettingsPage(QWidget):
         self._apply_btn.clicked.connect(self._on_apply)
         apply_row.addWidget(self._apply_btn)
         layout.addLayout(apply_row)
-
     def _make_spin(self, label: str, suffix: str, value: int,
-                   vmin: int, vmax: int) -> QHBoxLayout:
-        return make_spin(label, suffix, value, vmin, vmax)
+                   vmin: int, vmax: int, compact: bool = False) -> QHBoxLayout:
+        return make_spin(label, suffix, value, vmin, vmax, compact=compact)
 
     def _make_double_spin(self, label: str, suffix: str, value: float,
-                          vmin: float, vmax: float, step: float) -> QHBoxLayout:
-        return make_double_spin(label, suffix, value, vmin, vmax, step)
+                          vmin: float, vmax: float, step: float, compact: bool = False) -> QHBoxLayout:
+        return make_double_spin(label, suffix, value, vmin, vmax, step, compact=compact)
 
     def _on_apply(self):
         cfg = api.get_fan_config()

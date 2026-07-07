@@ -1,7 +1,6 @@
-"""Owns the keyboard-lighting animation timer and idle-dim state.
+"""Owns the keyboard lighting timer (static color + idle dim).
 
-Extracted from MainWindow. Knows nothing about KeyboardPage; emits `frame_changed`
-(RgbColor) signal that the window connects to the page.
+Emits `frame_changed` (RgbColor) for the preview visual.
 """
 
 import time
@@ -12,7 +11,7 @@ from hp_helper import api
 from hp_helper.keyboard_lighting import (
     LightingSettings,
     RgbColor,
-    lighting_frame,
+    hex_to_rgb,
     normalize_lighting_settings,
     read_lighting_settings,
     write_lighting_settings,
@@ -26,12 +25,10 @@ class LightingController(QObject):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._settings = read_lighting_settings()
-        self._started_at_ms = int(time.time() * 1000)
         self._last_send = 0.0
         self._last_sent_color: tuple[int, int, int] | None = None
         self._last_idle_poll = 0.0
         self._dimmed = False
-
         self._timer = QTimer(self)
         self._timer.setInterval(50)
         self._timer.timeout.connect(self._tick)
@@ -45,14 +42,8 @@ class LightingController(QObject):
     def set_enabled(self, enabled: bool) -> None:
         self._update(enabled=enabled)
 
-    def set_effect(self, effect: str) -> None:
-        self._update(effect=effect)
-
     def set_color(self, color: str) -> None:
         self._update(color=color)
-
-    def set_speed(self, speed: int) -> None:
-        self._update(speed=speed)
 
     def set_idle_timeout(self, timeout: int) -> None:
         self._update(idle_timeout=max(0, timeout))
@@ -106,8 +97,11 @@ class LightingController(QObject):
                 self.frame_changed.emit(RgbColor(0, 0, 0))
             return
 
-        elapsed = int(time.time() * 1000 - self._started_at_ms)
-        frame = lighting_frame(settings, elapsed)
+        # Static color only (effects removed)
+        if not settings.enabled:
+            frame = RgbColor(0, 0, 0)
+        else:
+            frame = hex_to_rgb(settings.color)
 
         # Throttle daemon call: only send every 200 ms and only on color change
         color = (frame.red, frame.green, frame.blue)
@@ -117,7 +111,11 @@ class LightingController(QObject):
                 self._last_send = now
                 self._last_sent_color = color
             except Exception:
-                pass
+                # Remember the attempted (failing) color so we only log the
+                # "→ daemon: keyboard-color ..." + ERR once per distinct color.
+                # (The dim path for black already does this unconditionally.)
+                self._last_send = now
+                self._last_sent_color = color
 
         # Always update visual keyboard (responsive UI)
         self.frame_changed.emit(frame)
