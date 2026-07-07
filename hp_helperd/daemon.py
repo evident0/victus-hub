@@ -106,17 +106,21 @@ def _kbd_watcher_loop() -> None:
                     _, _, ev_type, code, ev_value = struct.unpack(_EVENT_FORMAT, data)
                     if ev_type != _EV_KEY:
                         continue
-                    with _kbd_lock:
-                        if code in _MODIFIER_CODES:
-                            if ev_value == 1:
-                                _held_mods.add(code)
-                            elif ev_value == 0:
-                                _held_mods.discard(code)
-                        elif ev_value == 1:  # non-modifier keypress
-                            _last_press_mods = tuple(sorted(_held_mods))
-                            _last_press_key = code
-                            _last_press_seq += 1
+                    if ev_value == 1:
+                        with _kbd_lock:
+                            # Any key — including bare modifiers (Ctrl, Win,
+                            # Shift, Alt) — counts as activity for the idle /
+                            # backlight-dim timer.
                             _kbd_last_input = time.monotonic()
+                            if code in _MODIFIER_CODES:
+                                _held_mods.add(code)
+                            else:
+                                _last_press_mods = tuple(sorted(_held_mods))
+                                _last_press_key = code
+                                _last_press_seq += 1
+                    elif ev_value == 0 and code in _MODIFIER_CODES:
+                        with _kbd_lock:
+                            _held_mods.discard(code)
                 if reopen:
                     break
         finally:
