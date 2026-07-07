@@ -20,11 +20,8 @@ def _get_graph_icon() -> QIcon:
     """Return the graph button icon, building it on first call."""
     global _graph_icon
     if _graph_icon is None:
-        normal = load_pixmap("line_graph_icon-white.png", "#c0c0c0", 18)
-        disabled = load_pixmap("line_graph_icon-white.png", "#2a2a2a", 18)
-        _graph_icon = QIcon()
-        _graph_icon.addPixmap(normal, QIcon.Mode.Normal, QIcon.State.Off)
-        _graph_icon.addPixmap(disabled, QIcon.Mode.Disabled, QIcon.State.Off)
+        pm = load_pixmap("sensor_graph_button.png", None, 18)
+        _graph_icon = QIcon(pm)
     return _graph_icon
 
 
