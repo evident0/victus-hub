@@ -97,33 +97,6 @@ class SettingsPage(QWidget):
         )
         layout.addLayout(self._ramp_down)
 
-
-        # ── Apply button ──
-        apply_row = QHBoxLayout()
-        apply_row.addStretch()
-        self._apply_btn = QPushButton("Apply")
-        self._apply_btn.setFixedWidth(120)
-        self._apply_btn.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {COLORS['accent_blue']};
-                color: #ffffff;
-                border: none;
-                border-radius: 6px;
-                padding: 8px 16px;
-                font-weight: bold;
-                font-size: 13px;
-            }}
-            QPushButton:hover {{
-                background-color: #4db8f2;
-            }}
-            QPushButton:pressed {{
-                background-color: #2a9edf;
-            }}
-        """)
-        self._apply_btn.clicked.connect(self._on_apply)
-        apply_row.addWidget(self._apply_btn)
-        layout.addLayout(apply_row)
-
         # ── Program Shortcut ──
         self._shortcut_ctrl = None  # set by MainWindow via set_shortcut_controller
         self._kb = read_keybind_settings()
@@ -180,6 +153,69 @@ class SettingsPage(QWidget):
         self._kb_enable.toggled.connect(self._on_shortcut_enabled)
         layout.addWidget(self._kb_enable)
 
+        # ── GPU P0 min RPM floor ──
+        layout.addSpacing(16)
+        sep2 = QFrame()
+        sep2.setFrameShape(QFrame.HLine)
+        sep2.setStyleSheet(f"color: {COLORS['border']};")
+        layout.addWidget(sep2)
+        layout.addSpacing(12)
+
+        p0_label = QLabel("GPU P0 fan floor")
+        p0_label.setStyleSheet(
+            f"color: {COLORS['text']}; font-size: 13px; font-weight: bold;"
+        )
+        layout.addWidget(p0_label)
+
+        p0_hint = QLabel(
+            "Engages after ~6s continuous P0; holds ~25s after P0 ends. "
+            "Custom fan mode only. Uses closed-loop PWM so measured RPM "
+            "stays at or above the floor."
+        )
+        p0_hint.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 11px;")
+        p0_hint.setWordWrap(True)
+        layout.addWidget(p0_hint)
+
+        self._p0_enable = QCheckBox(
+            "Override fan curve minimums when gpu perf is P0"
+        )
+        self._p0_enable.setChecked(cfg.p0_min_rpm_enabled)
+        layout.addWidget(self._p0_enable)
+
+        self._p0_min_rpm = make_spin(
+            "Minimum fan speed", "RPM",
+            cfg.p0_min_rpm, 1000, 6000,
+        )
+        # Wider than default 90px so 4-digit RPM (e.g. 4400) is fully visible.
+        self._p0_min_rpm._spin.setFixedWidth(120)
+        layout.addLayout(self._p0_min_rpm)
+
+        # ── Apply (fan constants + P0 floor) ──
+        apply_row = QHBoxLayout()
+        apply_row.addStretch()
+        self._apply_btn = QPushButton("Apply")
+        self._apply_btn.setFixedWidth(120)
+        self._apply_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {COLORS['accent_blue']};
+                color: #ffffff;
+                border: none;
+                border-radius: 6px;
+                padding: 8px 16px;
+                font-weight: bold;
+                font-size: 13px;
+            }}
+            QPushButton:hover {{
+                background-color: #4db8f2;
+            }}
+            QPushButton:pressed {{
+                background-color: #2a9edf;
+            }}
+        """)
+        self._apply_btn.clicked.connect(self._on_apply)
+        apply_row.addWidget(self._apply_btn)
+        layout.addLayout(apply_row)
+
         layout.addStretch()
 
     def _make_spin(self, label: str, suffix: str, value: int,
@@ -197,6 +233,8 @@ class SettingsPage(QWidget):
         cfg.write_min_delta_pct = self._write_delta._spin.value()
         cfg.ramp_up_pct = self._ramp_up._spin.value()
         cfg.ramp_down_pct = self._ramp_down._spin.value()
+        cfg.p0_min_rpm_enabled = self._p0_enable.isChecked()
+        cfg.p0_min_rpm = self._p0_min_rpm._spin.value()
 
         from hp_helper.backend import fan_config
         fan_config.save_all(cfg)

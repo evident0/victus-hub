@@ -7,7 +7,6 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, Signal, QRectF
 from PySide6.QtGui import QPainter, QColor, QFont
 
-from hp_helper.widgets.section_title import SectionTitle
 from hp_helper.theme import COLORS
 from hp_helper.pages.settings_page import make_spin
 from hp_helper.keyboard_lighting import (
@@ -194,8 +193,9 @@ class KeyboardPage(QWidget):
         layout.setContentsMargins(16, 12, 16, 12)
         layout.setSpacing(8)
 
-        # Title
-        title = SectionTitle("\u25A4", "Keyboard Lighting")
+        # Title (same style as Power on Fans & Power page)
+        title = QLabel("Keyboard Lighting")
+        title.setStyleSheet("font-size: 18px; font-weight: 800; color: #ffffff;")
         layout.addWidget(title)
 
         # Visual keyboard

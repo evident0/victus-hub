@@ -34,6 +34,7 @@ class SensorSnapshot:
     gpu_temp_c: float | None = None
     gpu_usage: SensorReading = field(default_factory=lambda: SensorReading("0 %"))
     gpu_usage_pct: float | None = None
+    gpu_pstate: str | None = None  # e.g. "P0" from nvidia-smi; None if unavailable
     cpu_power: SensorReading = field(default_factory=lambda: SensorReading("0 W"))
     gpu_power: SensorReading = field(default_factory=lambda: SensorReading("0 W"))
     pwm_mode: SensorReading = field(default_factory=lambda: SensorReading("Automatic"))
@@ -74,6 +75,10 @@ class FanConfig:
     write_min_delta_pct: float = 5.0
     ramp_up_pct: float = 30.0
     ramp_down_pct: float = 15.0
+    # When GPU reports P0 long enough, clamp fan PWM so measured RPM
+    # cannot fall below p0_min_rpm (closed-loop floor in fan_control).
+    p0_min_rpm_enabled: bool = False
+    p0_min_rpm: int = 4400
 
 # Re-export list for api.py convenience
 __all__ = [

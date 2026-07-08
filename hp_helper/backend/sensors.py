@@ -97,6 +97,7 @@ class _NvidiaSmi:
     temperature: str
     power: float
     utilization: float | None
+    pstate: str | None = None
 
 
 # ── SensorReader ──
@@ -158,7 +159,7 @@ class SensorReader:
             result = subprocess.run(
                 [
                     "nvidia-smi",
-                    "--query-gpu=temperature.gpu,power.draw,utilization.gpu",
+                    "--query-gpu=temperature.gpu,power.draw,utilization.gpu,pstate",
                     "--format=csv,noheader,nounits",
                 ],
                 capture_output=True, text=True, timeout=5,
@@ -182,12 +183,26 @@ class SensorReader:
         except ValueError:
             return None
         utilization = None
-        if len(parts) > 2:
+        if len(parts) > 2 and parts[2] not in ("", "N/A", "[N/A]"):
             try:
                 utilization = float(parts[2])
             except ValueError:
                 pass
-        return _NvidiaSmi(temperature=temperature, power=power, utilization=utilization)
+        pstate = None
+        if len(parts) > 3:
+            raw_ps = parts[3].strip().upper()
+            if raw_ps and raw_ps not in ("N/A", "[N/A]"):
+                # nvidia-smi may return "P0" or "0"
+                if raw_ps.startswith("P") and raw_ps[1:].isdigit():
+                    pstate = raw_ps
+                elif raw_ps.isdigit():
+                    pstate = f"P{raw_ps}"
+        return _NvidiaSmi(
+            temperature=temperature,
+            power=power,
+            utilization=utilization,
+            pstate=pstate,
+        )
 
     # ── CPU temp (temperature.rs) ──
 
@@ -455,6 +470,7 @@ class SensorReader:
             if gpu_usage_pct is not None
             else reading("N/A", "nvidia-smi (dGPU off?)")
         )
+        gpu_pstate = nvidia.pstate if nvidia else None
 
         ram_usage, ram_usage_pct, ram_used_gb, ram_total_gb = self._read_ram()
 
@@ -470,6 +486,7 @@ class SensorReader:
             gpu_temp_c=gpu_temp_c,
             gpu_usage=gpu_usage,
             gpu_usage_pct=gpu_usage_pct,
+            gpu_pstate=gpu_pstate,
             cpu_power=self._read_cpu_power(),
             gpu_power=self._read_gpu_power(nvidia),
             pwm_mode=pwm_mode,
