@@ -140,7 +140,7 @@ def find_wmi_hotkeys_device() -> str | None:
     """Return the /dev/input/eventX path for the "HP WMI hotkeys" device.
 
     The OMEN key on HP laptops surfaces here (as a normal keycode such as
-    KEY_PROG1), not on the i8042 AT keyboard device, so the daemon must
+    KEY_PROG2), not on the i8042 AT keyboard device, so the daemon must
     watch this device too to detect it.
     """
     base = Path("/sys/class/input")

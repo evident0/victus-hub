@@ -3,7 +3,7 @@
 A keybind is a set of modifier keycodes plus one non-modifier key, expressed
 in Linux input-event-codes (``linux/input-event-codes.h``).  The OMEN key on
 HP laptops surfaces as a normal keycode on the "HP WMI hotkeys" input device
-(e.g. KEY_PROG1 = 148), so it is represented as a single-key bind with no
+(e.g. KEY_PROG2 = 149), so it is represented as a single-key bind with no
 modifiers.
 """
 
@@ -59,7 +59,7 @@ _SPECIAL_KEY_NAMES: dict[int, str] = {
     106: "Right", 107: "End", 108: "Down", 109: "Page Down",
     110: "Insert", 111: "Delete",
     # HP WMI hotkey candidates (OMEN key etc.)
-    138: "Help", 148: "Omen Key", 149: "Prog2", 171: "Config",
+    138: "Help", 148: "Prog1", 149: "Omen Key", 171: "Config",
     172: "Home Key", 202: "Prog3", 203: "Prog4", 226: "Media",
 }
 
