@@ -107,11 +107,13 @@ class LightingController(QObject):
                 if now - self._last_send >= 0.200:
                     try:
                         api.set_keyboard_brightness(0)
-                        self._backlight_on = False
-                        self._last_send = now
-                        self._last_sent_color = None
                     except Exception:
-                        self._last_send = now
+                        pass
+                    # Mark off even on failure so a missing RGB module
+                    # only logs once instead of spamming every tick.
+                    self._backlight_on = False
+                    self._last_send = now
+                    self._last_sent_color = None
             self.frame_changed.emit(RgbColor(0, 0, 0))
             return
 
