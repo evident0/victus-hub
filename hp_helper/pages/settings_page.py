@@ -169,8 +169,8 @@ class SettingsPage(QWidget):
 
         p0_hint = QLabel(
             "Engages after ~6s continuous P0; holds ~25s after P0 ends. "
-            "Custom fan mode only. Uses closed-loop PWM so measured RPM "
-            "stays at or above the floor."
+            "Custom fan mode only. The override ramps the fan up to the "
+            "minimum % and blocks the curve below it until ~25s of non-P0."
         )
         p0_hint.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 11px;")
         p0_hint.setWordWrap(True)
@@ -179,16 +179,15 @@ class SettingsPage(QWidget):
         self._p0_enable = QCheckBox(
             "Override fan curve minimums when gpu perf is P0"
         )
-        self._p0_enable.setChecked(cfg.p0_min_rpm_enabled)
+        self._p0_enable.setChecked(cfg.p0_min_pct_enabled)
         layout.addWidget(self._p0_enable)
 
-        self._p0_min_rpm = make_spin(
-            "Minimum fan speed", "RPM",
-            cfg.p0_min_rpm, 1000, 6000,
+        self._p0_min_pct = make_spin(
+            "Minimum fan speed", "%",
+            cfg.p0_min_pct, 0, 100,
         )
-        # Wider than default 90px so 4-digit RPM (e.g. 4400) is fully visible.
-        self._p0_min_rpm._spin.setFixedWidth(120)
-        layout.addLayout(self._p0_min_rpm)
+        self._p0_min_pct._spin.setFixedWidth(90)
+        layout.addLayout(self._p0_min_pct)
 
         # ── Apply (fan constants + P0 floor) ──
         apply_row = QHBoxLayout()
@@ -233,8 +232,8 @@ class SettingsPage(QWidget):
         cfg.write_min_delta_pct = self._write_delta._spin.value()
         cfg.ramp_up_pct = self._ramp_up._spin.value()
         cfg.ramp_down_pct = self._ramp_down._spin.value()
-        cfg.p0_min_rpm_enabled = self._p0_enable.isChecked()
-        cfg.p0_min_rpm = self._p0_min_rpm._spin.value()
+        cfg.p0_min_pct_enabled = self._p0_enable.isChecked()
+        cfg.p0_min_pct = self._p0_min_pct._spin.value()
 
         from hp_helper.backend import fan_config
         fan_config.save_all(cfg)

@@ -75,10 +75,11 @@ class FanConfig:
     write_min_delta_pct: float = 5.0
     ramp_up_pct: float = 30.0
     ramp_down_pct: float = 15.0
-    # When GPU reports P0 long enough, clamp fan PWM so measured RPM
-    # cannot fall below p0_min_rpm (closed-loop floor in fan_control).
-    p0_min_rpm_enabled: bool = False
-    p0_min_rpm: int = 4400
+    # When the GPU holds P0 long enough, the override ramps the fan toward
+    # p0_min_pct and blocks the curve from dropping below it until the
+    # debounce releases the floor after ~25s of non-P0 (fan_control).
+    p0_min_pct_enabled: bool = False
+    p0_min_pct: int = 80
 
 # Re-export list for api.py convenience
 __all__ = [

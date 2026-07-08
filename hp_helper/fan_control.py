@@ -3,7 +3,7 @@
 Ported from hp_tauri src-tauri/src/lib.rs:85-224 (start_fan_control +
 next_fan_percent).
 
-P0 min-RPM floor logic is factored into pure helpers (``P0FloorState``,
+P0 fan-floor override logic is factored into pure helpers (``P0FloorState``,
 ``update_p0_debounce``, ``apply_p0_floor``) so it can be unit-tested
 without the background thread.
 """
@@ -13,7 +13,6 @@ from __future__ import annotations
 import collections
 import logging
 import math
-import re
 import threading
 from dataclasses import dataclass, replace
 
@@ -25,15 +24,11 @@ from hp_helper.backend.sysfs_read import read_hp_pwm_pct
 POLL_INTERVAL = 1.0
 CONTROL_INTERVAL = 3.0
 
-# P0 min-RPM floor debounce (custom mode only).
+# P0 fan-floor override debounce (custom mode only).
 P0_ENGAGE_S = 6.0
 P0_RELEASE_S = 25.0
-# Closed-loop PWM steps while floor is active (not full curve ramp_up).
-P0_RAISE_STEP_PCT = 5.0
-P0_SETTLE_STEP_PCT = 5.0
 
 _fan_logger = logging.getLogger("fan-control")
-_RPM_RE = re.compile(r"(\d+)")
 
 
 def next_fan_percent(
@@ -67,27 +62,6 @@ def next_fan_percent(
     return (target, None)
 
 
-def parse_rpm(reading_value: str) -> int | None:
-    """Extract an integer RPM from a sensor reading string."""
-    m = _RPM_RE.search(reading_value or "")
-    if not m:
-        return None
-    try:
-        return int(m.group(1))
-    except ValueError:
-        return None
-
-
-def max_fan_rpm(cpu_fan_value: str, gpu_fan_value: str) -> int | None:
-    """Return max of the two fan RPM readings, or None if neither parses."""
-    rpms = []
-    for val in (cpu_fan_value, gpu_fan_value):
-        rpm = parse_rpm(val)
-        if rpm is not None:
-            rpms.append(rpm)
-    return max(rpms) if rpms else None
-
-
 def is_gpu_p0(pstate: str | None) -> bool:
     """True when nvidia-smi reports performance state P0."""
     if pstate is None:
@@ -97,7 +71,7 @@ def is_gpu_p0(pstate: str | None) -> bool:
 
 @dataclass(frozen=True)
 class P0FloorState:
-    """Debounce + closed-loop floor state for the GPU P0 min-RPM feature."""
+    """Debounce + override floor state for the GPU P0 fan-floor feature."""
 
     p0_since: float | None = None
     non_p0_since: float | None = None
@@ -189,66 +163,47 @@ def apply_p0_floor(
     state: P0FloorState,
     *,
     enabled: bool,
-    is_p0: bool,
     curve_pct: float,
     last_written_pct: float | None,
-    measured_rpm: int | None,
-    min_rpm: int,
-    raise_step_pct: float = P0_RAISE_STEP_PCT,
-    settle_step_pct: float = P0_SETTLE_STEP_PCT,
+    min_pct: float,
+    ramp_up_pct: float = 30.0,
 ) -> tuple[float, P0FloorState, str | None]:
-    """Clamp curve output to the P0 closed-loop floor.
+    """P0 fan-floor override applied over the fan-curve command.
 
-    While the floor is active:
-    - If measured RPM is below ``min_rpm``, raise ``floor_pwm_min`` by a
-      small step (default 5%), never by the full curve ramp-up rate.
-    - If currently P0 and measured RPM is at/above ``min_rpm``, soft-settle
-      the floor toward the curve (unstick overshoot). Settle is **disabled**
-      during the post-P0 hold window so the 25s release is real.
-    - During non-P0 hold: freeze floor (raise only if RPM drops below min).
-    - Final command is ``max(curve_pct, floor_pwm_min)``.
+    While the floor is active it ramps from the last written PWM toward
+    ``min_pct`` in steps of ``ramp_up_pct`` per control tick
+    (``floor = min(floor + ramp_up, min_pct)``) and never decreases. The
+    output is ``max(curve_pct, floor)``: the curve may command a *higher*
+    speed, but any curve command below the floor — including below
+    ``min_pct`` once it is reached — is blocked until the debounce releases
+    the floor after ``P0_RELEASE_S`` of continuous non-P0.
 
-    Returns ``(next_pct, new_state, event)`` with event ``\"raise\"``,
-    ``\"settle\"``, or None.
+    Example (min_pct=80, ramp_up=30, fans at 40% on engage):
+    tick 1 → 40+30 = 70%, tick 2 → min(70+30, 80) = 80% (minimum reached).
+    Once at 80% the curve may raise higher; commands below 80% are held
+    at 80% until ~25s of non-P0 elapse.
+
+    Returns ``(next_pct, new_state, event)`` where event is ``"raise"`` on a
+    tick that advanced the floor, or ``None`` (floor holding at ``min_pct``).
     """
     if not enabled or not state.floor_active:
         return curve_pct, state, None
 
+    ramp_up = max(float(ramp_up_pct), 0.0)
     floor = state.floor_pwm_min
-    event = None
-    base = last_written_pct if last_written_pct is not None else curve_pct
-    raise_step = max(float(raise_step_pct), 1.0)
-    settle_step = max(float(settle_step_pct), 1.0)
+    if floor is None:
+        floor = last_written_pct if last_written_pct is not None else curve_pct
 
-    if measured_rpm is not None and measured_rpm < min_rpm:
-        # Raise from the current floor/command only — small steps.
-        origin = floor if floor is not None else base
-        raised = min(100.0, origin + raise_step)
-        # Also never sit below the curve while hunting upward.
-        raised = max(raised, curve_pct)
-        if floor is None or raised > floor + 1e-9:
-            floor = raised
-            event = "raise"
-        else:
-            floor = raised
-    elif measured_rpm is not None and measured_rpm >= min_rpm:
-        if floor is None:
-            floor = base
-        if is_p0:
-            # Soft-settle only while still in P0 (unstick 100% overshoot).
-            settled = max(curve_pct, floor - settle_step)
-            if settled < floor - 1e-9:
-                event = "settle"
-            floor = settled
-        # else: non-P0 hold window — freeze floor, do not settle down
-    else:
-        # No RPM reading — hold last floor (or seed from base).
-        if floor is None:
-            floor = base
+    if ramp_up > 0 and floor < min_pct:
+        floor = min(floor + ramp_up, float(min_pct))
+    elif floor < min_pct:
+        floor = float(min_pct)
 
+    floor = float(int(round(floor)))
+    advanced = state.floor_pwm_min is None or floor > state.floor_pwm_min
     next_pct = max(curve_pct, floor)
     new_state = replace(state, floor_pwm_min=floor)
-    return next_pct, new_state, event
+    return next_pct, new_state, "raise" if advanced else None
 
 
 def start_fan_control() -> None:
@@ -325,15 +280,15 @@ def start_fan_control() -> None:
             # ── P0 debounce (every poll) ──
             p0_state, p0_event = update_p0_debounce(
                 p0_state,
-                enabled=cfg.p0_min_rpm_enabled,
+                enabled=cfg.p0_min_pct_enabled,
                 is_p0=is_gpu_p0(snap.gpu_pstate),
                 now=now,
                 last_written_pct=last_written_pct,
             )
             if p0_event == "engage":
                 _fan_logger.info(
-                    "P0 floor: engage (min %d RPM) after %.0fs P0",
-                    cfg.p0_min_rpm, P0_ENGAGE_S,
+                    "P0 floor: engage (min %.0f%%) after %.0fs P0",
+                    cfg.p0_min_pct, P0_ENGAGE_S,
                 )
             elif p0_event == "release":
                 _fan_logger.info(
@@ -383,29 +338,19 @@ def start_fan_control() -> None:
                     )
                     curve_pct = next_pct
 
-                    measured = max_fan_rpm(snap.cpu_fan.value, snap.gpu_fan.value)
                     next_pct, p0_state, floor_event = apply_p0_floor(
                         p0_state,
-                        enabled=cfg.p0_min_rpm_enabled,
-                        is_p0=is_gpu_p0(snap.gpu_pstate),
+                        enabled=cfg.p0_min_pct_enabled,
                         curve_pct=curve_pct,
                         last_written_pct=last_written_pct,
-                        measured_rpm=measured,
-                        min_rpm=cfg.p0_min_rpm,
+                        min_pct=cfg.p0_min_pct,
+                        ramp_up_pct=cfg.ramp_up_pct,
                     )
                     if floor_event == "raise":
                         _fan_logger.info(
-                            "P0 floor: rpm=%s < %d → raise floor to %.0f%%",
-                            measured if measured is not None else "N/A",
-                            cfg.p0_min_rpm,
+                            "P0 floor: raise floor to %.0f%% (min %.0f%%)",
                             p0_state.floor_pwm_min if p0_state.floor_pwm_min is not None else 0.0,
-                        )
-                    elif floor_event == "settle":
-                        _fan_logger.info(
-                            "P0 floor: rpm=%s ≥ %d → settle floor to %.0f%%",
-                            measured if measured is not None else "N/A",
-                            cfg.p0_min_rpm,
-                            p0_state.floor_pwm_min if p0_state.floor_pwm_min is not None else 0.0,
+                            cfg.p0_min_pct,
                         )
 
                     floor_holds = (
@@ -432,12 +377,11 @@ def start_fan_control() -> None:
                     else:
                         if floor_holds:
                             _fan_logger.info(
-                                "cpu=%.0f°C gpu=%s pstate=%s target=%.0f%% cur=%.0f%% → next=%.0f%% (P0 floor hold, rpm=%s)",
+                                "cpu=%.0f°C gpu=%s pstate=%s target=%.0f%% cur=%.0f%% → next=%.0f%% (P0 floor hold)",
                                 cpu_avg if cpu_avg is not None else 0.0,
                                 f"{gpu_avg:.0f}°C" if gpu_avg is not None else "N/A",
                                 snap.gpu_pstate or "N/A",
                                 target, current, next_pct,
-                                measured if measured is not None else "N/A",
                             )
                         elif target < current and next_pct == current:
                             _fan_logger.info(
