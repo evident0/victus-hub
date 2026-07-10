@@ -14,19 +14,20 @@ from hp_helper.theme import COLORS
 class SensorLineGraph(QWidget):
     """Custom widget drawing a live line chart with fill, grid, and hover tooltip."""
 
-    def __init__(self, sample_capacity: int = 500, parent=None):
+    def __init__(self, sample_capacity: int = 500, parent=None, *, compact: bool = False):
         super().__init__(parent)
         self._samples: deque[float | None] = deque([None] * sample_capacity, maxlen=sample_capacity)
         self._value_min = 0.0
         self._value_max = 100.0
         self._value_unit = "\u00B0C"
         self._accent = QColor("#f04b4b")
+        self._compact = compact
         self._hovered = False
         self._hover_index = -1
         self._hover_value = 0.0
 
         self.setMouseTracking(True)
-        self.setMinimumHeight(160)
+        self.setMinimumHeight(80 if compact else 160)
 
     # ── Properties ──
 
@@ -76,9 +77,9 @@ class SensorLineGraph(QWidget):
         painter.setPen(Qt.NoPen)
         painter.drawRoundedRect(QRectF(0, 0, w, h), 4, 4)
 
-        # Grid lines (0, 0.2, 0.4, 0.6, 0.8, 1.0 of height)
-        grid_pen = QPen(QColor("#3a3a3a"), 1)
-        for frac in (0.0, 0.2, 0.4, 0.6, 0.8, 1.0):
+        # Grid lines — fewer divisions in compact mode
+        fracs = (0.0, 0.5, 1.0) if self._compact else (0.0, 0.2, 0.4, 0.6, 0.8, 1.0)
+        for frac in fracs:
             y = frac * h
             is_edge = (frac == 0.0 or frac == 1.0)
             painter.setPen(QPen(QColor("#444444") if is_edge else QColor("#3a3a3a"), 1))
@@ -120,7 +121,7 @@ class SensorLineGraph(QWidget):
             fill_path.closeSubpath()
 
             fill_color = QColor(self._accent)
-            fill_color.setAlpha(128)
+            fill_color.setAlpha(96 if self._compact else 128)
             painter.setBrush(fill_color)
             painter.setPen(Qt.NoPen)
             painter.drawPath(fill_path)
@@ -132,7 +133,7 @@ class SensorLineGraph(QWidget):
                 line_path.lineTo(x_for(seg["rightIndex"]), y_for(seg["leftValue"]))
                 line_path.lineTo(x_for(seg["rightIndex"]), y_for(seg["rightValue"]))
 
-            painter.setPen(QPen(self._accent, 2))
+            painter.setPen(QPen(self._accent, 1.5 if self._compact else 2))
             painter.setBrush(Qt.NoBrush)
             painter.drawPath(line_path)
 

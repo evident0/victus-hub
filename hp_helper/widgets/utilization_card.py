@@ -88,8 +88,8 @@ class UtilizationCard(QFrame):
                  accent: str = COLORS["accent_blue"], parent=None):
         super().__init__(parent)
         self.setObjectName("utilCard")
-        self.setMinimumSize(140, 240)
-        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.setMinimumSize(140, 220)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         self.setStyleSheet(f"""
             #utilCard {{
                 background-color: {COLORS['surface']};

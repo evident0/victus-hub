@@ -49,7 +49,6 @@ class ProfileSection(QWidget):
             self._profile_buttons.append(btn)
         profile_row.addStretch()
         root.addLayout(profile_row)
-        root.addStretch()
 
         # ── Fan mode segmented control (centered) ──
         fan_row = QHBoxLayout()
