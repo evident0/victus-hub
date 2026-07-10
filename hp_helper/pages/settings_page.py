@@ -97,6 +97,32 @@ class SettingsPage(QWidget):
         )
         layout.addLayout(self._ramp_down)
 
+        # Apply (fan control constants only)
+        apply_row = QHBoxLayout()
+        self._apply_btn = QPushButton("Apply")
+        self._apply_btn.setFixedWidth(120)
+        self._apply_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {COLORS['accent_blue']};
+                color: #ffffff;
+                border: none;
+                border-radius: 6px;
+                padding: 8px 16px;
+                font-weight: bold;
+                font-size: 13px;
+            }}
+            QPushButton:hover {{
+                background-color: #4db8f2;
+            }}
+            QPushButton:pressed {{
+                background-color: #2a9edf;
+            }}
+        """)
+        self._apply_btn.clicked.connect(self._on_apply)
+        apply_row.addWidget(self._apply_btn)
+        apply_row.addStretch()
+        layout.addLayout(apply_row)
+
         # ── Program Shortcut ──
         self._shortcut_ctrl = None  # set by MainWindow via set_shortcut_controller
         self._kb = read_keybind_settings()
@@ -180,6 +206,7 @@ class SettingsPage(QWidget):
             "Override fan curve minimums when gpu perf is P0"
         )
         self._p0_enable.setChecked(cfg.p0_min_pct_enabled)
+        self._p0_enable.toggled.connect(self._on_p0_changed)
         layout.addWidget(self._p0_enable)
 
         self._p0_min_pct = make_spin(
@@ -187,33 +214,8 @@ class SettingsPage(QWidget):
             cfg.p0_min_pct, 0, 100,
         )
         self._p0_min_pct._spin.setFixedWidth(90)
+        self._p0_min_pct._spin.valueChanged.connect(self._on_p0_changed)
         layout.addLayout(self._p0_min_pct)
-
-        # ── Apply (fan constants + P0 floor) ──
-        apply_row = QHBoxLayout()
-        apply_row.addStretch()
-        self._apply_btn = QPushButton("Apply")
-        self._apply_btn.setFixedWidth(120)
-        self._apply_btn.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {COLORS['accent_blue']};
-                color: #ffffff;
-                border: none;
-                border-radius: 6px;
-                padding: 8px 16px;
-                font-weight: bold;
-                font-size: 13px;
-            }}
-            QPushButton:hover {{
-                background-color: #4db8f2;
-            }}
-            QPushButton:pressed {{
-                background-color: #2a9edf;
-            }}
-        """)
-        self._apply_btn.clicked.connect(self._on_apply)
-        apply_row.addWidget(self._apply_btn)
-        layout.addLayout(apply_row)
 
         layout.addStretch()
 
@@ -226,12 +228,20 @@ class SettingsPage(QWidget):
         return make_double_spin(label, suffix, value, vmin, vmax, step, compact=compact)
 
     def _on_apply(self):
+        """Persist fan control constants only."""
         cfg = api.get_fan_config()
         cfg.ramp_down_delay = float(self._ramp_delay._spin.value())
         cfg.temp_window = self._temp_window._spin.value()
         cfg.write_min_delta_pct = self._write_delta._spin.value()
         cfg.ramp_up_pct = self._ramp_up._spin.value()
         cfg.ramp_down_pct = self._ramp_down._spin.value()
+
+        from hp_helper.backend import fan_config
+        fan_config.save_all(cfg)
+
+    def _on_p0_changed(self, *_args):
+        """Persist P0 floor settings immediately (not gated by Apply)."""
+        cfg = api.get_fan_config()
         cfg.p0_min_pct_enabled = self._p0_enable.isChecked()
         cfg.p0_min_pct = self._p0_min_pct._spin.value()
 

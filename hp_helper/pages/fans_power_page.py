@@ -4,7 +4,7 @@ import threading
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QSlider,
-    QPushButton,
+    QPushButton, QCheckBox,
 )
 from PySide6.QtCore import Qt, Signal, QTimer
 from PySide6.QtGui import QColor
@@ -41,6 +41,10 @@ class FansPowerPage(QWidget):
         self._slow_limit = pwr.slow_limit
         self._reapply_seconds = pwr.reapply_seconds
         self._power_enabled = read_power_enabled()
+        # Last values sent via Apply (used to detect dirty sliders)
+        self._applied_stapm = pwr.stapm_limit
+        self._applied_fast = pwr.fast_limit
+        self._applied_slow = pwr.slow_limit
 
         self._edit_profile = 1
         self._profiles: list[FanProfileConfig] = []
@@ -104,7 +108,7 @@ class FansPowerPage(QWidget):
         power_layout.addWidget(reapply_help)
 
 
-        # Apply button + status
+        # Apply button + enable checkbox + status
         self._apply_btn = QPushButton("Apply")
         self._apply_btn.setCursor(Qt.PointingHandCursor)
         self._apply_btn.setStyleSheet(f"""
@@ -123,13 +127,23 @@ class FansPowerPage(QWidget):
             QPushButton:pressed {{
                 background-color: #2a9edf;
             }}
+            QPushButton:disabled {{
+                background-color: {COLORS['surface_raised']};
+                color: {COLORS['text_secondary']};
+            }}
         """)
         self._apply_btn.clicked.connect(self._on_apply_power)
         power_layout.addWidget(self._apply_btn)
 
+        self._power_check = QCheckBox("Enable power limits")
+        self._power_check.setChecked(self._power_enabled)
+        self._power_check.toggled.connect(self._on_power_enabled_changed)
+        power_layout.addWidget(self._power_check)
+
         self._power_status = QLabel()
         self._power_status.setWordWrap(True)
         self._update_power_status()
+        self._update_apply_enabled()
         power_layout.addWidget(self._power_status)
 
         power_layout.addStretch()
@@ -273,12 +287,15 @@ class FansPowerPage(QWidget):
     def _on_stapm_changed(self, value: int):
         # Local only — daemon command updates only on Apply
         self._stapm_limit = clamp_power_limit(value)
+        self._update_apply_enabled()
 
     def _on_fast_changed(self, value: int):
         self._fast_limit = clamp_power_limit(value)
+        self._update_apply_enabled()
 
     def _on_slow_changed(self, value: int):
         self._slow_limit = clamp_power_limit(value)
+        self._update_apply_enabled()
 
     def _on_reapply_changed(self, value: int):
         # Persist interval only; keep last-applied limit values until Apply
@@ -291,12 +308,34 @@ class FansPowerPage(QWidget):
             reapply_seconds=self._reapply_seconds,
         ))
 
+    def _on_power_enabled_changed(self, checked: bool):
+        self._power_enabled = checked
+        write_power_enabled(checked)
+        self._update_power_status()
+        self._update_apply_enabled()
+
+    def _sliders_dirty(self) -> bool:
+        return (
+            self._stapm_limit != self._applied_stapm
+            or self._fast_limit != self._applied_fast
+            or self._slow_limit != self._applied_slow
+        )
+
+    def _update_apply_enabled(self):
+        # Clickable when inactive, or when active but sliders differ from last Apply
+        can_apply = (not self._power_enabled) or self._sliders_dirty()
+        self._apply_btn.setEnabled(can_apply)
+        self._apply_btn.setCursor(
+            Qt.PointingHandCursor if can_apply else Qt.ArrowCursor
+        )
+
     def _on_apply_power(self):
         settings = self._make_power_settings()
         write_power_limit_settings(settings)
-        self._power_enabled = True
-        write_power_enabled(True)
-        self._update_power_status()
+        self._applied_stapm = settings.stapm_limit
+        self._applied_fast = settings.fast_limit
+        self._applied_slow = settings.slow_limit
+        self._update_apply_enabled()
 
         # Apply immediately so limits take effect without waiting for reapply tick
         def _apply():
@@ -503,8 +542,15 @@ class FansPowerPage(QWidget):
         self._fast_wrapper._slider.setValue(pwr.fast_limit)
         self._slow_wrapper._slider.setValue(pwr.slow_limit)
         self._reapply_spin._spin.setValue(pwr.reapply_seconds)
+        self._applied_stapm = pwr.stapm_limit
+        self._applied_fast = pwr.fast_limit
+        self._applied_slow = pwr.slow_limit
         self._power_enabled = read_power_enabled()
+        self._power_check.blockSignals(True)
+        self._power_check.setChecked(self._power_enabled)
+        self._power_check.blockSignals(False)
         self._update_power_status()
+        self._update_apply_enabled()
 
     def refresh_fan_curves(self):
         """Reload fan config from disk and update the inline charts.
