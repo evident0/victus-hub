@@ -4,8 +4,8 @@ from dataclasses import dataclass
 
 from PySide6.QtCore import QSettings
 
-POWER_MIN_MW = 5_000
-POWER_MAX_MW = 60_000
+POWER_MIN_MW = 15_000
+POWER_MAX_MW = 55_000
 POWER_STEP_MW = 1_000
 DEFAULT_POWER_LIMIT_MW = 25_000
 DEFAULT_REAPPLY_SECONDS = 5

@@ -1,7 +1,9 @@
 """Fans & Power page — fan curve editor + power limit sliders."""
 
+import threading
+
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QSlider, QCheckBox,
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QSlider,
     QPushButton,
 )
 from PySide6.QtCore import Qt, Signal, QTimer
@@ -17,7 +19,7 @@ from hp_helper.power_limits import (
     read_power_limit_settings, write_power_limit_settings,
 )
 from hp_helper.api import (
-    get_fan_config, save_fan_profile,
+    get_fan_config, save_fan_profile, apply_power_limits,
     FanPoint, FanProfileConfig,
 )
 from hp_helper.backend import fan_config
@@ -102,15 +104,32 @@ class FansPowerPage(QWidget):
         power_layout.addWidget(reapply_help)
 
 
-        # Enable checkbox
-        self._power_check = QCheckBox("Enable power limits")
-        self._power_check.setChecked(self._power_enabled)
-        self._power_check.toggled.connect(self._on_power_enabled_changed)
-        power_layout.addWidget(self._power_check)
+        # Apply button + status
+        self._apply_btn = QPushButton("Apply")
+        self._apply_btn.setCursor(Qt.PointingHandCursor)
+        self._apply_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {COLORS['accent_blue']};
+                color: #ffffff;
+                border: none;
+                border-radius: 6px;
+                padding: 8px 16px;
+                font-weight: bold;
+                font-size: 13px;
+            }}
+            QPushButton:hover {{
+                background-color: #4db8f2;
+            }}
+            QPushButton:pressed {{
+                background-color: #2a9edf;
+            }}
+        """)
+        self._apply_btn.clicked.connect(self._on_apply_power)
+        power_layout.addWidget(self._apply_btn)
 
-        self._power_status = QLabel("Settings are applied by the main window while enabled.")
-        self._power_status.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 11px;")
+        self._power_status = QLabel()
         self._power_status.setWordWrap(True)
+        self._update_power_status()
         power_layout.addWidget(self._power_status)
 
         power_layout.addStretch()
@@ -252,29 +271,57 @@ class FansPowerPage(QWidget):
     # ── Power callbacks ──
 
     def _on_stapm_changed(self, value: int):
+        # Local only — daemon command updates only on Apply
         self._stapm_limit = clamp_power_limit(value)
-        write_power_limit_settings(self._make_power_settings())
 
     def _on_fast_changed(self, value: int):
         self._fast_limit = clamp_power_limit(value)
-        write_power_limit_settings(self._make_power_settings())
 
     def _on_slow_changed(self, value: int):
         self._slow_limit = clamp_power_limit(value)
-        write_power_limit_settings(self._make_power_settings())
 
     def _on_reapply_changed(self, value: int):
+        # Persist interval only; keep last-applied limit values until Apply
         self._reapply_seconds = max(0, value)
-        write_power_limit_settings(self._make_power_settings())
+        applied = read_power_limit_settings()
+        write_power_limit_settings(PowerLimitSettings(
+            stapm_limit=applied.stapm_limit,
+            fast_limit=applied.fast_limit,
+            slow_limit=applied.slow_limit,
+            reapply_seconds=self._reapply_seconds,
+        ))
 
+    def _on_apply_power(self):
+        settings = self._make_power_settings()
+        write_power_limit_settings(settings)
+        self._power_enabled = True
+        write_power_enabled(True)
+        self._update_power_status()
 
-    def _on_power_enabled_changed(self, checked: bool):
-        self._power_enabled = checked
-        write_power_enabled(checked)
-        self._power_status.setText(
-            "Power limits enabled; main window will apply them." if checked
-            else "Power limits disabled."
-        )
+        # Apply immediately so limits take effect without waiting for reapply tick
+        def _apply():
+            try:
+                apply_power_limits(
+                    settings.stapm_limit,
+                    settings.fast_limit,
+                    settings.slow_limit,
+                )
+            except Exception:
+                pass
+
+        threading.Thread(target=_apply, daemon=True, name="power-apply").start()
+
+    def _update_power_status(self):
+        if self._power_enabled:
+            self._power_status.setText("Power limits active")
+            self._power_status.setStyleSheet(
+                f"color: {COLORS['accent_green']}; font-size: 11px;"
+            )
+        else:
+            self._power_status.setText("Power limits not active")
+            self._power_status.setStyleSheet(
+                f"color: {COLORS['text_secondary']}; font-size: 11px;"
+            )
 
     def _make_power_settings(self):
         return PowerLimitSettings(
@@ -456,7 +503,8 @@ class FansPowerPage(QWidget):
         self._fast_wrapper._slider.setValue(pwr.fast_limit)
         self._slow_wrapper._slider.setValue(pwr.slow_limit)
         self._reapply_spin._spin.setValue(pwr.reapply_seconds)
-        self._power_check.setChecked(read_power_enabled())
+        self._power_enabled = read_power_enabled()
+        self._update_power_status()
 
     def refresh_fan_curves(self):
         """Reload fan config from disk and update the inline charts.
