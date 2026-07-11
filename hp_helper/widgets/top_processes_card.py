@@ -8,24 +8,17 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from PySide6.QtCore import Qt, Signal, QSize
+from PySide6.QtCore import Qt, QSize, QTimer
 from PySide6.QtGui import QIcon, QPixmap
 from PySide6.QtWidgets import (
-    QFrame, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QSizePolicy, QWidget, QScrollArea,
+    QAbstractItemView, QFrame, QHeaderView, QVBoxLayout, QPushButton,
+    QSizePolicy, QTreeWidget, QTreeWidgetItem,
 )
 
 from hp_helper.theme import COLORS
 
 _TOP_GROUPS = 10
 _ICON_PX = 20
-# Fixed column widths so header and every row share the same grid
-_COL_GAP = 8
-_COL_EXPAND = 18
-_COL_ICON = 20
-_COL_CPU = 52
-_COL_RAM = 64
-_COL_STOP = 56
 
 _CPU_HZ = os.sysconf(os.sysconf_names["SC_CLK_TCK"]) if hasattr(os, "sysconf") else 100
 try:
@@ -449,38 +442,9 @@ def stop_processes(pids: list[int]) -> None:
         stop_process(pid)
 
 
-# ── Shared styles / column helpers ──────────────────────────────────────────
+# ── UI (QTreeWidget columns, same approach as Sensors page) ─────────────────
 
-_HDR_STYLE = f"""
-    QLabel {{
-        color: {COLORS['text_secondary']};
-        font-size: 11px;
-        background: transparent;
-    }}
-"""
-_NAME_STYLE = f"""
-    QLabel {{
-        color: {COLORS['text']};
-        font-size: 12px;
-        font-weight: 600;
-        background: transparent;
-    }}
-"""
-_DETAIL_STYLE = f"""
-    QLabel {{
-        color: {COLORS['text_secondary']};
-        font-size: 11px;
-        background: transparent;
-    }}
-"""
-_METRIC_STYLE = f"""
-    QLabel {{
-        color: {COLORS['text_secondary']};
-        font-size: 12px;
-        background: transparent;
-    }}
-"""
-_STOP_STYLE = f"""
+_STOP_BTN_STYLE = f"""
     QPushButton {{
         background-color: {COLORS['surface_raised']};
         color: {COLORS['text']};
@@ -488,7 +452,7 @@ _STOP_STYLE = f"""
         border-radius: 4px;
         font-size: 11px;
         font-weight: 600;
-        padding: 0 4px;
+        padding: 0 6px;
     }}
     QPushButton:hover {{
         background-color: {COLORS['accent_red']};
@@ -503,349 +467,270 @@ _STOP_STYLE = f"""
         background-color: {COLORS['surface']};
     }}
 """
-_EXPAND_STYLE = f"""
-    QPushButton {{
-        background: transparent;
-        color: {COLORS['text_secondary']};
-        border: none;
-        font-size: 11px;
-        font-weight: bold;
-        padding: 0;
-    }}
-    QPushButton:hover {{
-        color: {COLORS['text']};
-    }}
-    QPushButton:disabled {{
-        color: transparent;
-    }}
-"""
+
+# Columns: Process | CPU | RAM | Stop
+_COL_PROCESS = 0
+_COL_CPU = 1
+_COL_RAM = 2
+_COL_STOP = 3
 
 
-def _make_metric_label(width: int) -> QLabel:
-    lbl = QLabel("—")
-    lbl.setStyleSheet(_METRIC_STYLE)
-    lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-    lbl.setFixedWidth(width)
-    return lbl
-
-
-def _make_stop_button() -> QPushButton:
+def _make_stop_button(enabled: bool = True) -> QPushButton:
     btn = QPushButton("Stop")
     btn.setCursor(Qt.PointingHandCursor)
-    btn.setFixedHeight(24)
-    btn.setFixedWidth(_COL_STOP)
-    btn.setStyleSheet(_STOP_STYLE)
+    btn.setFixedSize(52, 24)
+    btn.setStyleSheet(_STOP_BTN_STYLE)
+    btn.setEnabled(enabled)
     return btn
 
 
-def _add_grid_columns(layout: QHBoxLayout, expand_w: QWidget, icon_w: QWidget,
-                      name_w: QWidget, cpu_w: QWidget, ram_w: QWidget, stop_w: QWidget):
-    """Add widgets in the shared column order with matching stretch/fixed widths."""
-    layout.setSpacing(_COL_GAP)
-    layout.addWidget(expand_w, 0)
-    layout.addWidget(icon_w, 0)
-    layout.addWidget(name_w, 1)
-    layout.addWidget(cpu_w, 0)
-    layout.addWidget(ram_w, 0)
-    layout.addWidget(stop_w, 0)
-
-
-class _InstanceRow(QWidget):
-    """Child row under an expanded process group."""
-
-    stop_clicked = Signal(int)
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self._pid = 0
-        self.setStyleSheet("background: transparent;")
-        row = QHBoxLayout(self)
-        row.setContentsMargins(0, 1, 0, 1)
-
-        expand_ph = QLabel("")
-        expand_ph.setFixedWidth(_COL_EXPAND)
-        expand_ph.setStyleSheet("background: transparent;")
-
-        icon_ph = QLabel("")
-        icon_ph.setFixedWidth(_COL_ICON)
-        icon_ph.setStyleSheet("background: transparent;")
-
-        self._name = QLabel("—")
-        self._name.setStyleSheet(_DETAIL_STYLE)
-        self._name.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
-
-        self._cpu = _make_metric_label(_COL_CPU)
-        self._ram = _make_metric_label(_COL_RAM)
-        self._stop = _make_stop_button()
-        self._stop.clicked.connect(lambda: self.stop_clicked.emit(self._pid))
-
-        _add_grid_columns(row, expand_ph, icon_ph, self._name, self._cpu, self._ram, self._stop)
-
-    def set_process(self, proc: ProcessInfo):
-        self._pid = proc.pid
-        self._name.setText(f"  {proc.detail}")
-        self._name.setToolTip(f"{proc.name}  (PID {proc.pid})")
-        self._cpu.setText(proc.cpu_display)
-        self._ram.setText(proc.ram_display)
-        self._stop.setEnabled(proc.pid > 1)
-
-
-class _GroupRow(QWidget):
-    """Parent row: icon · name · CPU · RAM · Stop, with optional instance dropdown."""
-
-    stop_group = Signal(str)          # group key — stop all instances
-    stop_pid = Signal(int)
-    expand_toggled = Signal(str, bool)  # key, expanded
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self._key = ""
-        self._pids: list[int] = []
-        self._expanded = False
-        self.setStyleSheet("background: transparent;")
-
-        root = QVBoxLayout(self)
-        root.setContentsMargins(0, 0, 0, 0)
-        root.setSpacing(0)
-
-        # Main (group) row
-        main = QWidget()
-        main.setStyleSheet("background: transparent;")
-        row = QHBoxLayout(main)
-        row.setContentsMargins(0, 2, 0, 2)
-
-        self._expand = QPushButton("▸")
-        self._expand.setFixedSize(_COL_EXPAND, 22)
-        self._expand.setCursor(Qt.PointingHandCursor)
-        self._expand.setStyleSheet(_EXPAND_STYLE)
-        self._expand.clicked.connect(self._toggle)
-
-        self._icon = QLabel()
-        self._icon.setFixedSize(_COL_ICON, _COL_ICON)
-        self._icon.setAlignment(Qt.AlignCenter)
-        self._icon.setStyleSheet("background: transparent;")
-
-        self._name = QLabel("—")
-        self._name.setStyleSheet(_NAME_STYLE)
-        self._name.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
-
-        self._cpu = _make_metric_label(_COL_CPU)
-        self._ram = _make_metric_label(_COL_RAM)
-        self._stop = _make_stop_button()
-        self._stop.clicked.connect(lambda: self.stop_group.emit(self._key))
-
-        _add_grid_columns(row, self._expand, self._icon, self._name, self._cpu, self._ram, self._stop)
-        root.addWidget(main)
-
-        # Dropdown container for instances
-        self._children_host = QWidget()
-        self._children_host.setStyleSheet(f"""
-            background-color: {COLORS['surface_raised']};
-            border-radius: 4px;
-        """)
-        self._children_layout = QVBoxLayout(self._children_host)
-        self._children_layout.setContentsMargins(4, 4, 4, 4)
-        self._children_layout.setSpacing(1)
-        self._children_host.hide()
-        root.addWidget(self._children_host)
-
-        self._instance_rows: list[_InstanceRow] = []
-
-    def set_group(self, group: ProcessGroup, expanded: bool):
-        self._key = group.key
-        self._pids = [p.pid for p in group.instances]
-        self._expanded = expanded and group.count > 1
-
-        if group.count > 1:
-            self._name.setText(f"{group.name}  ({group.count})")
-            self._expand.setEnabled(True)
-            self._expand.setText("▾" if self._expanded else "▸")
-        else:
-            self._name.setText(group.name)
-            self._expand.setEnabled(False)
-            self._expand.setText(" ")
-            self._expanded = False
-
-        self._name.setToolTip(group.name)
-        self._cpu.setText(group.cpu_display)
-        self._ram.setText(group.ram_display)
-        self._stop.setEnabled(any(pid > 1 for pid in self._pids))
-
-        if not group.icon.isNull():
-            self._icon.setPixmap(group.icon.pixmap(QSize(_ICON_PX, _ICON_PX)))
-        else:
-            self._icon.clear()
-
-        # Instance rows
-        if self._expanded:
-            self._sync_instances(group.instances)
-            self._children_host.show()
-        else:
-            self._children_host.hide()
-
-    def _sync_instances(self, instances: list[ProcessInfo]):
-        while len(self._instance_rows) < len(instances):
-            row = _InstanceRow()
-            row.stop_clicked.connect(self.stop_pid.emit)
-            self._children_layout.addWidget(row)
-            self._instance_rows.append(row)
-        while len(self._instance_rows) > len(instances):
-            row = self._instance_rows.pop()
-            self._children_layout.removeWidget(row)
-            row.deleteLater()
-        for row, proc in zip(self._instance_rows, instances):
-            row.set_process(proc)
-            row.show()
-
-    def _toggle(self):
-        if not self._expand.isEnabled():
-            return
-        self._expanded = not self._expanded
-        self.expand_toggled.emit(self._key, self._expanded)
-
-
 class TopProcessesCard(QFrame):
-    """Double-width card: grouped processes with instance dropdown."""
+    """Double-width card: grouped processes in an aligned tree table."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("topProcessesCard")
         self.setMinimumHeight(110)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        surface = COLORS["surface"]
         self.setStyleSheet(f"""
             #topProcessesCard {{
-                background-color: {COLORS['surface']};
+                background-color: {surface};
                 border: 1px solid {COLORS['border']};
                 border-radius: 10px;
             }}
         """)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(10, 8, 10, 10)
-        layout.setSpacing(6)
+        layout.setContentsMargins(6, 6, 6, 6)
+        layout.setSpacing(0)
 
-        # Header — same column grid as rows
-        header = QWidget()
-        header.setStyleSheet("background: transparent;")
-        header_row = QHBoxLayout(header)
-        header_row.setContentsMargins(0, 0, 0, 0)
-
-        expand_ph = QLabel("")
-        expand_ph.setFixedWidth(_COL_EXPAND)
-        expand_ph.setStyleSheet("background: transparent;")
-
-        icon_ph = QLabel("")
-        icon_ph.setFixedWidth(_COL_ICON)
-        icon_ph.setStyleSheet("background: transparent;")
-
-        title = QLabel("Process")
-        title.setStyleSheet(f"""
-            QLabel {{
+        self._tree = QTreeWidget()
+        self._tree.setObjectName("topProcessesTree")
+        self._tree.setColumnCount(4)
+        self._tree.setHeaderLabels(["Process", "CPU", "RAM", "Stop"])
+        self._tree.setRootIsDecorated(True)
+        self._tree.setIndentation(16)
+        self._tree.setAnimated(True)
+        self._tree.setUniformRowHeights(True)
+        self._tree.setAlternatingRowColors(False)
+        self._tree.setSelectionMode(QAbstractItemView.NoSelection)
+        self._tree.setFocusPolicy(Qt.NoFocus)
+        self._tree.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self._tree.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
+        # Flat fill matching the card (overrides global QTreeWidget / header colors)
+        self._tree.setStyleSheet(f"""
+            QTreeWidget#topProcessesTree {{
+                background-color: {surface};
+                border: none;
+                border-radius: 0;
+                outline: none;
                 color: {COLORS['text']};
-                font-size: 12px;
-                font-weight: bold;
-                background: transparent;
             }}
-        """)
-        title.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
-
-        col_cpu = QLabel("CPU")
-        col_cpu.setStyleSheet(_HDR_STYLE)
-        col_cpu.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        col_cpu.setFixedWidth(_COL_CPU)
-
-        col_ram = QLabel("RAM")
-        col_ram.setStyleSheet(_HDR_STYLE)
-        col_ram.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        col_ram.setFixedWidth(_COL_RAM)
-
-        col_stop = QLabel("Stop")
-        col_stop.setStyleSheet(_HDR_STYLE)
-        col_stop.setAlignment(Qt.AlignHCenter | Qt.AlignVCenter)
-        col_stop.setFixedWidth(_COL_STOP)
-
-        _add_grid_columns(header_row, expand_ph, icon_ph, title, col_cpu, col_ram, col_stop)
-        layout.addWidget(header)
-
-        self._scroll = QScrollArea()
-        self._scroll.setWidgetResizable(True)
-        self._scroll.setFrameShape(QFrame.NoFrame)
-        self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self._scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
-        self._scroll.viewport().setStyleSheet("background: transparent;")
-
-        self._list_host = QWidget()
-        self._list_host.setStyleSheet("background: transparent;")
-        self._list_layout = QVBoxLayout(self._list_host)
-        self._list_layout.setContentsMargins(0, 0, 0, 0)
-        self._list_layout.setSpacing(4)
-        self._list_layout.addStretch(1)
-
-        self._scroll.setWidget(self._list_host)
-        layout.addWidget(self._scroll, 1)
-
-        self._empty = QLabel("No processes found")
-        self._empty.setStyleSheet(f"""
-            QLabel {{
+            QTreeWidget#topProcessesTree::item {{
+                padding: 3px 6px;
+                background-color: {surface};
+            }}
+            QTreeWidget#topProcessesTree::item:hover,
+            QTreeWidget#topProcessesTree::item:selected {{
+                background-color: {surface};
+                color: {COLORS['text']};
+            }}
+            QHeaderView::section {{
+                background-color: {surface};
                 color: {COLORS['text_secondary']};
-                font-size: 12px;
-                background: transparent;
+                border: none;
+                border-bottom: 1px solid {COLORS['border']};
+                padding: 4px 8px;
+                font-weight: bold;
+                font-size: 11px;
+            }}
+            QHeaderView {{
+                background-color: {surface};
             }}
         """)
-        self._empty.setAlignment(Qt.AlignCenter)
-        layout.addWidget(self._empty, 1)
-        self._empty.hide()
 
-        self._rows: list[_GroupRow] = []
-        self._expanded_keys: set[str] = set()
+        # Right-align metric columns (header + cells)
+        header = self._tree.header()
+        header.setDefaultAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        header.setStretchLastSection(False)
+        header.setSectionResizeMode(_COL_PROCESS, QHeaderView.Stretch)
+        header.setSectionResizeMode(_COL_CPU, QHeaderView.Fixed)
+        header.setSectionResizeMode(_COL_RAM, QHeaderView.Fixed)
+        header.setSectionResizeMode(_COL_STOP, QHeaderView.Fixed)
+        self._tree.setColumnWidth(_COL_CPU, 64)
+        self._tree.setColumnWidth(_COL_RAM, 72)
+        self._tree.setColumnWidth(_COL_STOP, 64)
+
+        # Center the Stop header label over the button column
+        self._tree.headerItem().setTextAlignment(_COL_CPU, int(Qt.AlignRight | Qt.AlignVCenter))
+        self._tree.headerItem().setTextAlignment(_COL_RAM, int(Qt.AlignRight | Qt.AlignVCenter))
+        self._tree.headerItem().setTextAlignment(_COL_STOP, int(Qt.AlignHCenter | Qt.AlignVCenter))
+
+        self._tree.itemClicked.connect(self._on_item_clicked)
+        layout.addWidget(self._tree)
+
+        self._group_items: dict[str, QTreeWidgetItem] = {}
         self._groups_by_key: dict[str, ProcessGroup] = {}
+        # pid → item for instance rows
+        self._instance_items: dict[int, QTreeWidgetItem] = {}
 
     def refresh(self):
         self.update_groups(read_process_groups())
 
     def update_groups(self, groups: list[ProcessGroup]):
         self._groups_by_key = {g.key: g for g in groups}
-        # Drop expanded state for groups that disappeared
-        self._expanded_keys &= set(self._groups_by_key.keys())
+        new_keys = [g.key for g in groups]
+        old_keys = set(self._group_items.keys())
+
+        # Preserve expansion + scroll when structure is similar
+        scroll = self._tree.verticalScrollBar().value()
+        expanded = {
+            key for key, item in self._group_items.items() if item.isExpanded()
+        }
+
+        structure_changed = new_keys != list(self._group_items.keys())
+
+        if not structure_changed and self._group_items:
+            self._update_in_place(groups)
+            return
+
+        self._tree.clear()
+        self._group_items.clear()
+        self._instance_items.clear()
 
         if not groups:
-            for row in self._rows:
-                row.hide()
-            self._scroll.hide()
-            self._empty.show()
             return
 
-        self._empty.hide()
-        self._scroll.show()
+        for gi, group in enumerate(groups):
+            gitem = QTreeWidgetItem(self._tree)
+            self._fill_group_item(gitem, group)
+            gitem.setExpanded(group.key in expanded)
+            # Only show expand affordance when there are multiple instances
+            gitem.setChildIndicatorPolicy(
+                QTreeWidgetItem.ShowIndicator if group.count > 1
+                else QTreeWidgetItem.DontShowIndicator
+            )
+            font = gitem.font(_COL_PROCESS)
+            font.setBold(True)
+            gitem.setFont(_COL_PROCESS, font)
+            self._group_items[group.key] = gitem
 
-        while len(self._rows) < len(groups):
-            row = _GroupRow()
-            row.stop_group.connect(self._on_stop_group)
-            row.stop_pid.connect(self._on_stop_pid)
-            row.expand_toggled.connect(self._on_expand)
-            self._list_layout.insertWidget(self._list_layout.count() - 1, row)
-            self._rows.append(row)
-        while len(self._rows) > len(groups):
-            row = self._rows.pop()
-            self._list_layout.removeWidget(row)
-            row.deleteLater()
+            if group.count > 1:
+                for proc in group.instances:
+                    child = QTreeWidgetItem(gitem)
+                    self._fill_instance_item(child, proc)
+                    self._instance_items[proc.pid] = child
 
-        for row, group in zip(self._rows, groups):
-            row.set_group(group, group.key in self._expanded_keys)
-            row.show()
+        QTimer.singleShot(0, lambda: self._tree.verticalScrollBar().setValue(scroll))
 
-    def _on_expand(self, key: str, expanded: bool):
-        if expanded:
-            self._expanded_keys.add(key)
-        else:
-            self._expanded_keys.discard(key)
-        group = self._groups_by_key.get(key)
-        if group is None:
-            return
-        for row in self._rows:
-            if row._key == key:
-                row.set_group(group, expanded)
-                break
+    def _update_in_place(self, groups: list[ProcessGroup]):
+        """Refresh values without rebuilding (keeps expand state)."""
+        live_pids: set[int] = set()
+        for group in groups:
+            gitem = self._group_items.get(group.key)
+            if gitem is None:
+                continue
+            self._fill_group_item(gitem, group, reuse_button=True)
+
+            if group.count <= 1:
+                # Remove any leftover children
+                while gitem.childCount():
+                    gitem.removeChild(gitem.child(0))
+                gitem.setChildIndicatorPolicy(QTreeWidgetItem.DontShowIndicator)
+                continue
+
+            gitem.setChildIndicatorPolicy(QTreeWidgetItem.ShowIndicator)
+            # Map existing children by pid stored in UserRole
+            existing: dict[int, QTreeWidgetItem] = {}
+            for i in range(gitem.childCount()):
+                ch = gitem.child(i)
+                pid = ch.data(0, Qt.UserRole)
+                if isinstance(pid, int):
+                    existing[pid] = ch
+
+            wanted_pids = [p.pid for p in group.instances]
+            # Remove stale
+            for pid, ch in list(existing.items()):
+                if pid not in wanted_pids:
+                    gitem.removeChild(ch)
+                    self._instance_items.pop(pid, None)
+                    existing.pop(pid, None)
+
+            for ii, proc in enumerate(group.instances):
+                live_pids.add(proc.pid)
+                ch = existing.get(proc.pid)
+                if ch is None:
+                    ch = QTreeWidgetItem()
+                    gitem.insertChild(ii, ch)
+                    self._fill_instance_item(ch, proc)
+                    self._instance_items[proc.pid] = ch
+                else:
+                    # Reorder if needed
+                    cur_index = gitem.indexOfChild(ch)
+                    if cur_index != ii:
+                        gitem.takeChild(cur_index)
+                        gitem.insertChild(ii, ch)
+                    self._fill_instance_item(ch, proc, reuse_button=True)
+
+        # Drop instance map entries that are gone
+        for pid in list(self._instance_items.keys()):
+            if pid not in live_pids and pid not in {
+                p.pid for g in groups for p in g.instances
+            }:
+                self._instance_items.pop(pid, None)
+
+    def _fill_group_item(self, item: QTreeWidgetItem, group: ProcessGroup,
+                         reuse_button: bool = False):
+        label = f"{group.name}  ({group.count})" if group.count > 1 else group.name
+        item.setText(_COL_PROCESS, label)
+        item.setData(0, Qt.UserRole + 1, group.key)  # group key
+        item.setData(0, Qt.UserRole + 2, "group")
+        if not group.icon.isNull():
+            item.setIcon(_COL_PROCESS, group.icon)
+        item.setText(_COL_CPU, group.cpu_display)
+        item.setText(_COL_RAM, group.ram_display)
+        item.setTextAlignment(_COL_CPU, int(Qt.AlignRight | Qt.AlignVCenter))
+        item.setTextAlignment(_COL_RAM, int(Qt.AlignRight | Qt.AlignVCenter))
+        item.setToolTip(_COL_PROCESS, group.name)
+
+        if reuse_button:
+            btn = self._tree.itemWidget(item, _COL_STOP)
+            if isinstance(btn, QPushButton):
+                btn.setEnabled(any(p.pid > 1 for p in group.instances))
+                return
+        btn = _make_stop_button(enabled=any(p.pid > 1 for p in group.instances))
+        key = group.key
+        btn.clicked.connect(lambda checked=False, k=key: self._on_stop_group(k))
+        self._tree.setItemWidget(item, _COL_STOP, btn)
+
+    def _fill_instance_item(self, item: QTreeWidgetItem, proc: ProcessInfo,
+                            reuse_button: bool = False):
+        item.setText(_COL_PROCESS, proc.detail)
+        item.setData(0, Qt.UserRole, proc.pid)
+        item.setData(0, Qt.UserRole + 2, "instance")
+        item.setText(_COL_CPU, proc.cpu_display)
+        item.setText(_COL_RAM, proc.ram_display)
+        item.setTextAlignment(_COL_CPU, int(Qt.AlignRight | Qt.AlignVCenter))
+        item.setTextAlignment(_COL_RAM, int(Qt.AlignRight | Qt.AlignVCenter))
+        item.setToolTip(_COL_PROCESS, f"{proc.name}  (PID {proc.pid})")
+        # No icon on children — indentation shows hierarchy
+        item.setIcon(_COL_PROCESS, QIcon())
+
+        if reuse_button:
+            btn = self._tree.itemWidget(item, _COL_STOP)
+            if isinstance(btn, QPushButton):
+                btn.setEnabled(proc.pid > 1)
+                return
+        btn = _make_stop_button(enabled=proc.pid > 1)
+        pid = proc.pid
+        btn.clicked.connect(lambda checked=False, p=pid: self._on_stop_pid(p))
+        self._tree.setItemWidget(item, _COL_STOP, btn)
+
+    def _on_item_clicked(self, item: QTreeWidgetItem, _col: int):
+        """Toggle expand on group rows (same as Sensors page)."""
+        if item.data(0, Qt.UserRole + 2) == "group" and item.childCount() > 0:
+            item.setExpanded(not item.isExpanded())
 
     def _on_stop_group(self, key: str):
         group = self._groups_by_key.get(key)
