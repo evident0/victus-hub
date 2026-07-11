@@ -17,7 +17,8 @@ from PySide6.QtWidgets import (
 
 from hp_helper.theme import COLORS
 
-_TOP_GROUPS = 10
+# Scrollable list — enough slots for mid-size apps, not only browsers.
+_TOP_GROUPS = 30
 _ICON_PX = 20
 
 _CPU_HZ = os.sysconf(os.sysconf_names["SC_CLK_TCK"]) if hasattr(os, "sysconf") else 100
@@ -25,6 +26,32 @@ try:
     _NCPU = max(1, os.cpu_count() or 1)
 except Exception:
     _NCPU = 1
+
+
+def _is_runtime_binary(name: str) -> bool:
+    """True when *name* is an interpreter/sandbox, not the app itself.
+
+    Flatpak/Python apps often show /usr/bin/python as /proc/pid/exe while
+    the real identity is the script on the command line.
+    """
+    n = (name or "").lower()
+    if not n:
+        return False
+    if n in (
+        "python", "python2", "python3", "node", "nodejs", "ruby", "perl",
+        "lua", "luajit", "php", "php-fpm", "java", "bash", "sh", "dash",
+        "zsh", "fish", "mono", "dotnet", "wish", "tclsh", "bwrap",
+        "flatpak-spawn", "electron", "busybox",
+    ):
+        return True
+    for prefix in ("python", "ruby", "perl", "php", "node"):
+        if not n.startswith(prefix):
+            continue
+        rest = n[len(prefix):]
+        if not rest or rest[0] in ".-" or rest.replace(".", "").isdigit():
+            return True
+    return False
+
 
 _ICON_ALIASES: dict[str, list[str]] = {
     "firefox": ["firefox", "org.mozilla.firefox", "firefox-esr"],
@@ -60,15 +87,11 @@ class ProcessInfo:
     rss_kb: int
     cpu_pct: float = 0.0
     exe: str = ""
+    # Stable group identity (script path, module, or binary path)
+    group_key: str = ""
     # Short label for a child instance (comm / role)
     detail: str = ""
     icon: QIcon = field(default_factory=QIcon)
-
-    @property
-    def group_key(self) -> str:
-        if self.exe:
-            return self.exe
-        return self.name.lower()
 
     @property
     def ram_display(self) -> str:
@@ -135,8 +158,127 @@ def _read_proc_cpu_jiffies(pid: int) -> int | None:
         return None
 
 
-def _read_proc_meta(pid: int) -> tuple[str, str, int, str] | None:
-    """Return (group_name, detail, rss_kb, exe) or None."""
+def _read_cmdline(pid: int) -> list[str]:
+    try:
+        with open(f"/proc/{pid}/cmdline", "rb") as f:
+            raw = f.read()
+    except OSError:
+        return []
+    if not raw:
+        return []
+    return [a.decode("utf-8", errors="replace") for a in raw.split(b"\x00") if a]
+
+
+def _app_identity_from_cmdline(args: list[str], runtime: str) -> str | None:
+    """For interpreter/runtime processes, find the script/module that identifies the app.
+
+    Examples:
+      python /app/bin/protonvpn-app  → /app/bin/protonvpn-app
+      python -m http.server          → http.server
+      node /usr/bin/some-cli         → /usr/bin/some-cli
+      bwrap … -- easyeffects …       → easyeffects
+      java -jar /opt/app.jar         → /opt/app.jar
+    """
+    if not args:
+        return None
+    rt = (runtime or Path(args[0]).name).lower()
+
+    # bubblewrap / flatpak helpers: payload after a bare "--"
+    if rt in ("bwrap", "flatpak-spawn") or "bwrap" in rt:
+        if "--" in args:
+            i = args.index("--") + 1
+            while i < len(args):
+                a = args[i]
+                if a.startswith("-"):
+                    i += 1
+                    continue
+                return a
+                # unreachable
+            return None
+
+    i = 1  # skip argv0
+    is_python = rt.startswith("python")
+    is_node = rt == "nodejs" or rt.startswith("node")
+    is_java = rt == "java" or rt.endswith("java")
+    is_ruby = rt.startswith("ruby")
+    is_perl = rt.startswith("perl")
+    is_php = rt.startswith("php")
+    is_shell = rt in ("bash", "sh", "dash", "zsh", "fish", "busybox")
+
+    while i < len(args):
+        a = args[i]
+        if not a:
+            i += 1
+            continue
+
+        # Options that take a separate argument
+        if is_python and a in ("-m", "-W", "-X", "-Q", "-c"):
+            if a == "-m" and i + 1 < len(args):
+                return args[i + 1]
+            if a == "-c":
+                return None  # anonymous -c snippet
+            i += 2
+            continue
+        if is_node and a in ("-e", "--eval", "-p", "-r", "--require"):
+            if a in ("-e", "--eval", "-p"):
+                return None
+            i += 2
+            continue
+        if is_java:
+            if a == "-jar" and i + 1 < len(args):
+                return args[i + 1]
+            if a.startswith("-"):
+                # -cp / -classpath take a value
+                if a in ("-cp", "-classpath", "--class-path", "-D") or a.startswith("-D"):
+                    if a in ("-cp", "-classpath", "--class-path") and i + 1 < len(args):
+                        i += 2
+                        continue
+                i += 1
+                continue
+            # First non-option is main class
+            return a
+        if is_ruby and a in ("-e", "-I", "-r", "-c"):
+            if a == "-e":
+                return None
+            i += 2 if a in ("-I", "-r") else 1
+            continue
+        if is_perl and a in ("-e", "-E", "-I"):
+            if a in ("-e", "-E"):
+                return None
+            i += 2
+            continue
+        if is_php and a in ("-f", "-r"):
+            if a == "-r":
+                return None
+            if a == "-f" and i + 1 < len(args):
+                return args[i + 1]
+            i += 1
+            continue
+        if is_shell and a in ("-c", "-lc", "-ic"):
+            return None
+
+        if a.startswith("-"):
+            i += 1
+            continue
+
+        # First non-option argument: script / entrypoint
+        return a
+
+    return None
+
+
+def _display_name_from_identity(identity: str) -> str:
+    """Human label from a script path, module name, or bare command."""
+    if not identity:
+        return identity
+    # module names like http.server stay as-is
+    if "/" not in identity and not identity.startswith("."):
+        return identity
+    return Path(identity).name
+
+
+def _read_proc_meta(pid: int) -> tuple[str, str, int, str, str] | None:
+    """Return (group_name, detail, rss_kb, exe, group_key) or None."""
     name = None
     rss_kb = None
     try:
@@ -163,43 +305,63 @@ def _read_proc_meta(pid: int) -> tuple[str, str, int, str] | None:
     except OSError:
         pass
 
+    args = _read_cmdline(pid)
+    exe_base = Path(exe).name if exe else (Path(args[0]).name if args else "")
     detail = name
     group_name = name
-    exe_base = Path(exe).name if exe else ""
+    group_key = exe or name.lower()
 
     # Browser content helpers → group under browser binary
     content_names = (
         "MainThread", "Web Content", "Isolated Web Co", "RDD Process",
         "Privileged Cont", "Socket Process", "Utility Process",
     )
-    if name in content_names or name.startswith("WebExtensions") or name.startswith("Isolated "):
+    is_content = (
+        name in content_names
+        or name.startswith("WebExtensions")
+        or name.startswith("Isolated ")
+    )
+
+    if is_content and exe:
         group_name = exe_base or name
-    elif exe_base:
-        # Prefer executable basename as the group label when it matches well
-        group_name = exe_base
-        # Keep original short name as instance detail when different
-        if name.lower() != exe_base.lower():
-            detail = name
+        group_key = exe
+        detail = name
+    elif _is_runtime_binary(exe_base) or _is_runtime_binary(name):
+        # Interpreter / sandbox: identify the real app from cmdline
+        runtime = exe_base or name
+        identity = _app_identity_from_cmdline(args, runtime)
+        if identity:
+            group_name = _display_name_from_identity(identity)
+            # Key by app label so Flatpak bwrap helpers merge with the
+            # real process (e.g. bwrap … -- protonvpn-app + python script).
+            group_key = group_name.lower()
+            detail = name if name.lower() != group_name.lower() else f"PID {pid}"
+        elif exe:
+            # Fall back to exe (e.g. bare `python3` REPL)
+            group_name = exe_base
+            group_key = exe
+            detail = name if name.lower() != exe_base.lower() else f"PID {pid}"
         else:
+            group_name = name
+            group_key = name.lower()
             detail = f"PID {pid}"
+    elif exe:
+        group_name = exe_base
+        group_key = exe
+        detail = name if name.lower() != exe_base.lower() else f"PID {pid}"
     else:
-        try:
-            with open(f"/proc/{pid}/cmdline", "rb") as f:
-                raw = f.read()
-            if raw:
-                args = [a.decode("utf-8", errors="replace") for a in raw.split(b"\x00") if a]
-                if args:
-                    base = Path(args[0]).name
-                    if base:
-                        group_name = base
-        except OSError:
-            pass
+        # No exe (permission / kernel edge): try cmdline argv0
+        if args:
+            base = Path(args[0]).name
+            if base:
+                group_name = base
+                group_key = args[0] if args[0].startswith("/") else base.lower()
         detail = f"PID {pid}" if detail == group_name else detail
 
     if not detail or detail == group_name:
         detail = f"PID {pid}"
 
-    return group_name, detail, rss_kb, exe
+    return group_name, detail, rss_kb, exe, group_key
 
 
 def _ensure_desktop_cache() -> dict[str, str]:
@@ -378,7 +540,7 @@ _cpu_tracker = _CpuTracker()
 
 
 def read_process_groups(limit: int = _TOP_GROUPS) -> list[ProcessGroup]:
-    """Scan /proc, group by executable/name, return top groups by RAM."""
+    """Scan /proc, group by app identity, return top groups by RAM."""
     procs: list[ProcessInfo] = []
     try:
         entries = os.listdir("/proc")
@@ -392,16 +554,20 @@ def read_process_groups(limit: int = _TOP_GROUPS) -> list[ProcessGroup]:
         meta = _read_proc_meta(pid)
         if meta is None:
             continue
-        group_name, detail, rss_kb, exe = meta
+        group_name, detail, rss_kb, exe, group_key = meta
         jiffies = _read_proc_cpu_jiffies(pid)
         cpu_pct = _cpu_tracker.cpu_pct(pid, jiffies)
-        icon = resolve_process_icon(group_name, exe)
+        # Prefer app name for icons (protonvpn-app), fall back to exe basename
+        icon = resolve_process_icon(group_name, exe if not _is_runtime_binary(Path(exe).name if exe else "") else "")
+        if icon.isNull():
+            icon = resolve_process_icon(group_name, exe)
         procs.append(ProcessInfo(
             pid=pid,
             name=group_name,
             rss_kb=rss_kb,
             cpu_pct=cpu_pct,
             exe=exe,
+            group_key=group_key,
             detail=detail,
             icon=icon,
         ))
@@ -410,15 +576,17 @@ def read_process_groups(limit: int = _TOP_GROUPS) -> list[ProcessGroup]:
 
     groups: dict[str, ProcessGroup] = {}
     for p in procs:
-        key = p.group_key
+        key = p.group_key or p.name.lower()
         g = groups.get(key)
         if g is None:
             groups[key] = ProcessGroup(key=key, name=p.name, icon=p.icon, instances=[p])
         else:
             g.instances.append(p)
-            # Prefer non-null icon
             if g.icon.isNull() and not p.icon.isNull():
                 g.icon = p.icon
+            # Prefer a more specific display name over a bare runtime name
+            if _is_runtime_binary(g.name) and not _is_runtime_binary(p.name):
+                g.name = p.name
 
     for g in groups.values():
         g.instances.sort(key=lambda p: p.rss_kb, reverse=True)
