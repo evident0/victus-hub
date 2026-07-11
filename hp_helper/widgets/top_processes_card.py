@@ -1,4 +1,4 @@
-"""Top processes card — icon, name, CPU, RAM, and kill control."""
+"""Top processes card — grouped instances, icon, CPU, RAM, and Stop."""
 
 from __future__ import annotations
 
@@ -17,15 +17,22 @@ from PySide6.QtWidgets import (
 
 from hp_helper.theme import COLORS
 
-_TOP_N = 12
+_TOP_GROUPS = 10
 _ICON_PX = 20
+# Fixed column widths so header and every row share the same grid
+_COL_GAP = 8
+_COL_EXPAND = 18
+_COL_ICON = 20
+_COL_CPU = 52
+_COL_RAM = 64
+_COL_STOP = 56
+
 _CPU_HZ = os.sysconf(os.sysconf_names["SC_CLK_TCK"]) if hasattr(os, "sysconf") else 100
 try:
     _NCPU = max(1, os.cpu_count() or 1)
 except Exception:
     _NCPU = 1
 
-# Common process → icon theme / desktop name aliases
 _ICON_ALIASES: dict[str, list[str]] = {
     "firefox": ["firefox", "org.mozilla.firefox", "firefox-esr"],
     "chrome": ["google-chrome", "google-chrome-stable", "chromium", "chromium-browser"],
@@ -49,9 +56,7 @@ _ICON_ALIASES: dict[str, list[str]] = {
     "vlc": ["vlc", "org.videolan.VLC"],
 }
 
-# Cached desktop Icon= lookups: exe basename / app id → icon name
 _desktop_icon_cache: dict[str, str] | None = None
-# Cached QIcons by theme/name key
 _icon_cache: dict[str, QIcon] = {}
 
 
@@ -62,45 +67,83 @@ class ProcessInfo:
     rss_kb: int
     cpu_pct: float = 0.0
     exe: str = ""
+    # Short label for a child instance (comm / role)
+    detail: str = ""
     icon: QIcon = field(default_factory=QIcon)
 
     @property
+    def group_key(self) -> str:
+        if self.exe:
+            return self.exe
+        return self.name.lower()
+
+    @property
     def ram_display(self) -> str:
-        mb = self.rss_kb / 1024.0
-        if mb >= 1024.0:
-            return f"{mb / 1024.0:.1f} GB"
-        return f"{mb:.0f} MB"
+        return _fmt_ram(self.rss_kb)
 
     @property
     def cpu_display(self) -> str:
-        if self.cpu_pct < 0.05:
-            return "0%"
-        if self.cpu_pct < 10:
-            return f"{self.cpu_pct:.1f}%"
-        return f"{self.cpu_pct:.0f}%"
+        return _fmt_cpu(self.cpu_pct)
+
+
+@dataclass
+class ProcessGroup:
+    key: str
+    name: str
+    icon: QIcon
+    instances: list[ProcessInfo] = field(default_factory=list)
+
+    @property
+    def rss_kb(self) -> int:
+        return sum(p.rss_kb for p in self.instances)
+
+    @property
+    def cpu_pct(self) -> float:
+        return sum(p.cpu_pct for p in self.instances)
+
+    @property
+    def ram_display(self) -> str:
+        return _fmt_ram(self.rss_kb)
+
+    @property
+    def cpu_display(self) -> str:
+        return _fmt_cpu(self.cpu_pct)
+
+    @property
+    def count(self) -> int:
+        return len(self.instances)
+
+
+def _fmt_ram(rss_kb: int) -> str:
+    mb = rss_kb / 1024.0
+    if mb >= 1024.0:
+        return f"{mb / 1024.0:.1f} GB"
+    return f"{mb:.0f} MB"
+
+
+def _fmt_cpu(cpu_pct: float) -> str:
+    if cpu_pct < 0.05:
+        return "0%"
+    if cpu_pct < 10:
+        return f"{cpu_pct:.1f}%"
+    return f"{cpu_pct:.0f}%"
 
 
 def _read_proc_cpu_jiffies(pid: int) -> int | None:
-    """Return utime+stime jiffies for *pid*, or None."""
     try:
         with open(f"/proc/{pid}/stat", encoding="utf-8", errors="replace") as f:
             data = f.read()
-        # comm may contain spaces/parens — split after last ')'
         rparen = data.rfind(")")
         if rparen < 0:
             return None
         fields = data[rparen + 2 :].split()
-        # utime=12, stime=13 in fields after (comm) — 0-indexed from field 3 overall
-        # After rparen+2, fields[0] is state, [11]=utime, [12]=stime
-        utime = int(fields[11])
-        stime = int(fields[12])
-        return utime + stime
+        return int(fields[11]) + int(fields[12])
     except (OSError, ValueError, IndexError):
         return None
 
 
-def _read_proc_meta(pid: int) -> tuple[str, int, str] | None:
-    """Return (display_name, rss_kb, exe) or None."""
+def _read_proc_meta(pid: int) -> tuple[str, str, int, str] | None:
+    """Return (group_name, detail, rss_kb, exe) or None."""
     name = None
     rss_kb = None
     try:
@@ -122,44 +165,51 @@ def _read_proc_meta(pid: int) -> tuple[str, int, str] | None:
     exe = ""
     try:
         exe = os.readlink(f"/proc/{pid}/exe")
-        # Kernel may append " (deleted)"
         if exe.endswith(" (deleted)"):
             exe = exe[: -len(" (deleted)")]
     except OSError:
         pass
 
-    # Prefer a cleaner display name from cmdline / exe for known apps
-    display = name
-    try:
-        with open(f"/proc/{pid}/cmdline", "rb") as f:
-            raw = f.read()
-        if raw:
-            args = [a.decode("utf-8", errors="replace") for a in raw.split(b"\x00") if a]
-            if args:
-                base = Path(args[0]).name
-                if base and base not in (name,):
-                    # Keep short content-process names (e.g. Isolated Web Co) as-is
-                    # but use exe basename when status Name is a truncated binary
-                    if len(name) >= 15 or name.endswith("…"):
-                        display = base
-    except OSError:
-        pass
+    detail = name
+    group_name = name
+    exe_base = Path(exe).name if exe else ""
 
-    if exe:
-        exe_base = Path(exe).name
-        # For generic kernel-style names, prefer exe basename
-        if name in ("MainThread", "Web Content", "Isolated Web Co", "RDD Process",
-                    "Privileged Cont", "Socket Process") or name.startswith("WebExtensions"):
-            display = exe_base or name
-        elif not display or display == name:
-            # e.g. "firefox" stays firefox
+    # Browser content helpers → group under browser binary
+    content_names = (
+        "MainThread", "Web Content", "Isolated Web Co", "RDD Process",
+        "Privileged Cont", "Socket Process", "Utility Process",
+    )
+    if name in content_names or name.startswith("WebExtensions") or name.startswith("Isolated "):
+        group_name = exe_base or name
+    elif exe_base:
+        # Prefer executable basename as the group label when it matches well
+        group_name = exe_base
+        # Keep original short name as instance detail when different
+        if name.lower() != exe_base.lower():
+            detail = name
+        else:
+            detail = f"PID {pid}"
+    else:
+        try:
+            with open(f"/proc/{pid}/cmdline", "rb") as f:
+                raw = f.read()
+            if raw:
+                args = [a.decode("utf-8", errors="replace") for a in raw.split(b"\x00") if a]
+                if args:
+                    base = Path(args[0]).name
+                    if base:
+                        group_name = base
+        except OSError:
             pass
+        detail = f"PID {pid}" if detail == group_name else detail
 
-    return display, rss_kb, exe
+    if not detail or detail == group_name:
+        detail = f"PID {pid}"
+
+    return group_name, detail, rss_kb, exe
 
 
 def _ensure_desktop_cache() -> dict[str, str]:
-    """Map lowercased app keys → Icon= name from .desktop files."""
     global _desktop_icon_cache
     if _desktop_icon_cache is not None:
         return _desktop_icon_cache
@@ -196,15 +246,13 @@ def _ensure_desktop_cache() -> dict[str, str]:
                     name = line.split("=", 1)[1].strip()
             if not icon:
                 continue
-            # Key by desktop stem, Exec binary, and Name
-            stem = desk.stem.lower()
-            cache[stem] = icon
+            cache[desk.stem.lower()] = icon
             if name:
                 cache[name.lower()] = icon
             if exec_line:
-                # strip field codes and args
                 bin_part = exec_line.split()[0]
-                bin_part = bin_part.replace("%u", "").replace("%U", "").replace("%f", "").replace("%F", "")
+                for code in ("%u", "%U", "%f", "%F", "%i", "%c", "%k"):
+                    bin_part = bin_part.replace(code, "")
                 base = Path(bin_part).name.lower()
                 if base:
                     cache.setdefault(base, icon)
@@ -213,10 +261,8 @@ def _ensure_desktop_cache() -> dict[str, str]:
 
 
 def _icon_from_filesystem(name: str) -> QIcon:
-    """Load *name* from standard icon theme directories on disk."""
     if not name or name.startswith("/"):
         return QIcon()
-    # Prefer larger sizes then scale down in the UI
     sizes = ("48x48", "32x32", "64x64", "24x24", "22x22", "16x16", "scalable", "256x256")
     themes = ("hicolor", "breeze", "breeze-dark", "Adwaita", "Papirus", "Papirus-Dark")
     exts = ("png", "svg", "svgz", "xpm")
@@ -226,7 +272,6 @@ def _icon_from_filesystem(name: str) -> QIcon:
         Path.home() / ".local/share/icons",
         Path("/usr/share/pixmaps"),
     ]
-    # pixmaps often stores bare name.png
     for root in (Path("/usr/share/pixmaps"), Path.home() / ".local/share/pixmaps"):
         for ext in exts:
             path = root / f"{name}.{ext}"
@@ -234,7 +279,6 @@ def _icon_from_filesystem(name: str) -> QIcon:
                 icon = QIcon(str(path))
                 if not icon.isNull():
                     return icon
-
     for root in roots:
         if not root.is_dir():
             continue
@@ -254,9 +298,7 @@ def _icon_from_filesystem(name: str) -> QIcon:
 
 
 def resolve_process_icon(name: str, exe: str = "") -> QIcon:
-    """Best-effort process icon from the icon theme / .desktop files / filesystem."""
     if not QIcon.themeName():
-        # Offscreen / minimal sessions may not set a theme
         for candidate in ("breeze", "Adwaita", "hicolor"):
             QIcon.setThemeName(candidate)
             if QIcon.themeName() == candidate:
@@ -270,7 +312,6 @@ def resolve_process_icon(name: str, exe: str = "") -> QIcon:
         low = raw.lower()
         keys.append(low)
         keys.extend(_ICON_ALIASES.get(low, []))
-        # strip common suffixes
         for suf in (".bin", "-bin", ".py", ".sh"):
             if low.endswith(suf):
                 keys.append(low[: -len(suf)])
@@ -280,7 +321,6 @@ def resolve_process_icon(name: str, exe: str = "") -> QIcon:
         if k in desk:
             keys.append(desk[k])
 
-    # de-dupe preserving order
     seen: set[str] = set()
     ordered: list[str] = []
     for k in keys:
@@ -294,7 +334,6 @@ def resolve_process_icon(name: str, exe: str = "") -> QIcon:
             if not icon.isNull():
                 return icon
             continue
-        # Absolute path icons from desktop files
         if key.startswith("/"):
             pm = QPixmap(key)
             icon = QIcon(pm) if not pm.isNull() else QIcon()
@@ -315,10 +354,8 @@ def resolve_process_icon(name: str, exe: str = "") -> QIcon:
 
 
 class _CpuTracker:
-    """Tracks per-pid CPU jiffies across refreshes to compute % usage."""
-
     def __init__(self):
-        self._prev: dict[int, tuple[int, float]] = {}  # pid → (jiffies, monotonic_ts)
+        self._prev: dict[int, tuple[int, float]] = {}
 
     def cpu_pct(self, pid: int, jiffies: int | None) -> float:
         now = time.monotonic()
@@ -336,21 +373,19 @@ class _CpuTracker:
         dj = jiffies - prev_j
         if dj < 0:
             return 0.0
-        # percent of one core; can exceed 100 on multi-threaded procs
         pct = (dj / _CPU_HZ) / dt * 100.0
         return max(0.0, min(pct, 100.0 * _NCPU))
 
     def prune(self, live_pids: set[int]):
-        dead = [p for p in self._prev if p not in live_pids]
-        for p in dead:
+        for p in [p for p in self._prev if p not in live_pids]:
             del self._prev[p]
 
 
 _cpu_tracker = _CpuTracker()
 
 
-def read_top_processes(limit: int = _TOP_N) -> list[ProcessInfo]:
-    """Return top processes by RAM, with CPU% and icons."""
+def read_process_groups(limit: int = _TOP_GROUPS) -> list[ProcessGroup]:
+    """Scan /proc, group by executable/name, return top groups by RAM."""
     procs: list[ProcessInfo] = []
     try:
         entries = os.listdir("/proc")
@@ -364,26 +399,42 @@ def read_top_processes(limit: int = _TOP_N) -> list[ProcessInfo]:
         meta = _read_proc_meta(pid)
         if meta is None:
             continue
-        name, rss_kb, exe = meta
+        group_name, detail, rss_kb, exe = meta
         jiffies = _read_proc_cpu_jiffies(pid)
         cpu_pct = _cpu_tracker.cpu_pct(pid, jiffies)
-        icon = resolve_process_icon(name, exe)
+        icon = resolve_process_icon(group_name, exe)
         procs.append(ProcessInfo(
             pid=pid,
-            name=name,
+            name=group_name,
             rss_kb=rss_kb,
             cpu_pct=cpu_pct,
             exe=exe,
+            detail=detail,
             icon=icon,
         ))
 
     _cpu_tracker.prune({p.pid for p in procs})
-    procs.sort(key=lambda p: p.rss_kb, reverse=True)
-    return procs[:limit]
+
+    groups: dict[str, ProcessGroup] = {}
+    for p in procs:
+        key = p.group_key
+        g = groups.get(key)
+        if g is None:
+            groups[key] = ProcessGroup(key=key, name=p.name, icon=p.icon, instances=[p])
+        else:
+            g.instances.append(p)
+            # Prefer non-null icon
+            if g.icon.isNull() and not p.icon.isNull():
+                g.icon = p.icon
+
+    for g in groups.values():
+        g.instances.sort(key=lambda p: p.rss_kb, reverse=True)
+
+    ordered = sorted(groups.values(), key=lambda g: g.rss_kb, reverse=True)
+    return ordered[:limit]
 
 
-def kill_process(pid: int) -> bool:
-    """Send SIGTERM to *pid*. Returns True if the signal was delivered."""
+def stop_process(pid: int) -> bool:
     if pid <= 1:
         return False
     try:
@@ -393,10 +444,17 @@ def kill_process(pid: int) -> bool:
         return False
 
 
-_LABEL_STYLE = f"""
+def stop_processes(pids: list[int]) -> None:
+    for pid in pids:
+        stop_process(pid)
+
+
+# ── Shared styles / column helpers ──────────────────────────────────────────
+
+_HDR_STYLE = f"""
     QLabel {{
         color: {COLORS['text_secondary']};
-        font-size: 12px;
+        font-size: 11px;
         background: transparent;
     }}
 """
@@ -408,96 +466,246 @@ _NAME_STYLE = f"""
         background: transparent;
     }}
 """
+_DETAIL_STYLE = f"""
+    QLabel {{
+        color: {COLORS['text_secondary']};
+        font-size: 11px;
+        background: transparent;
+    }}
+"""
+_METRIC_STYLE = f"""
+    QLabel {{
+        color: {COLORS['text_secondary']};
+        font-size: 12px;
+        background: transparent;
+    }}
+"""
+_STOP_STYLE = f"""
+    QPushButton {{
+        background-color: {COLORS['surface_raised']};
+        color: {COLORS['text']};
+        border: 1px solid {COLORS['border']};
+        border-radius: 4px;
+        font-size: 11px;
+        font-weight: 600;
+        padding: 0 4px;
+    }}
+    QPushButton:hover {{
+        background-color: {COLORS['accent_red']};
+        border-color: {COLORS['accent_red']};
+        color: #ffffff;
+    }}
+    QPushButton:pressed {{
+        background-color: #cc1a1a;
+    }}
+    QPushButton:disabled {{
+        color: {COLORS['text_secondary']};
+        background-color: {COLORS['surface']};
+    }}
+"""
+_EXPAND_STYLE = f"""
+    QPushButton {{
+        background: transparent;
+        color: {COLORS['text_secondary']};
+        border: none;
+        font-size: 11px;
+        font-weight: bold;
+        padding: 0;
+    }}
+    QPushButton:hover {{
+        color: {COLORS['text']};
+    }}
+    QPushButton:disabled {{
+        color: transparent;
+    }}
+"""
 
 
-class _ProcessRow(QWidget):
-    kill_clicked = Signal(int)
+def _make_metric_label(width: int) -> QLabel:
+    lbl = QLabel("—")
+    lbl.setStyleSheet(_METRIC_STYLE)
+    lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+    lbl.setFixedWidth(width)
+    return lbl
+
+
+def _make_stop_button() -> QPushButton:
+    btn = QPushButton("Stop")
+    btn.setCursor(Qt.PointingHandCursor)
+    btn.setFixedHeight(24)
+    btn.setFixedWidth(_COL_STOP)
+    btn.setStyleSheet(_STOP_STYLE)
+    return btn
+
+
+def _add_grid_columns(layout: QHBoxLayout, expand_w: QWidget, icon_w: QWidget,
+                      name_w: QWidget, cpu_w: QWidget, ram_w: QWidget, stop_w: QWidget):
+    """Add widgets in the shared column order with matching stretch/fixed widths."""
+    layout.setSpacing(_COL_GAP)
+    layout.addWidget(expand_w, 0)
+    layout.addWidget(icon_w, 0)
+    layout.addWidget(name_w, 1)
+    layout.addWidget(cpu_w, 0)
+    layout.addWidget(ram_w, 0)
+    layout.addWidget(stop_w, 0)
+
+
+class _InstanceRow(QWidget):
+    """Child row under an expanded process group."""
+
+    stop_clicked = Signal(int)
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self._pid = 0
         self.setStyleSheet("background: transparent;")
         row = QHBoxLayout(self)
-        row.setContentsMargins(0, 2, 0, 2)
-        row.setSpacing(8)
+        row.setContentsMargins(0, 1, 0, 1)
 
-        # Icon
-        self._icon = QLabel()
-        self._icon.setFixedSize(_ICON_PX, _ICON_PX)
-        self._icon.setAlignment(Qt.AlignCenter)
-        self._icon.setStyleSheet("background: transparent;")
-        row.addWidget(self._icon, 0)
+        expand_ph = QLabel("")
+        expand_ph.setFixedWidth(_COL_EXPAND)
+        expand_ph.setStyleSheet("background: transparent;")
 
-        # Name
+        icon_ph = QLabel("")
+        icon_ph.setFixedWidth(_COL_ICON)
+        icon_ph.setStyleSheet("background: transparent;")
+
         self._name = QLabel("—")
-        self._name.setStyleSheet(_NAME_STYLE)
+        self._name.setStyleSheet(_DETAIL_STYLE)
         self._name.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
-        self._name.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        row.addWidget(self._name, 1)
 
-        # CPU
-        self._cpu = QLabel("—")
-        self._cpu.setStyleSheet(_LABEL_STYLE)
-        self._cpu.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        self._cpu.setMinimumWidth(48)
-        self._cpu.setFixedWidth(52)
-        row.addWidget(self._cpu, 0)
+        self._cpu = _make_metric_label(_COL_CPU)
+        self._ram = _make_metric_label(_COL_RAM)
+        self._stop = _make_stop_button()
+        self._stop.clicked.connect(lambda: self.stop_clicked.emit(self._pid))
 
-        # RAM
-        self._ram = QLabel("—")
-        self._ram.setStyleSheet(_LABEL_STYLE)
-        self._ram.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        self._ram.setMinimumWidth(56)
-        self._ram.setFixedWidth(64)
-        row.addWidget(self._ram, 0)
-
-        # Kill
-        self._kill = QPushButton("Kill")
-        self._kill.setCursor(Qt.PointingHandCursor)
-        self._kill.setFixedHeight(24)
-        self._kill.setFixedWidth(52)
-        self._kill.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {COLORS['surface_raised']};
-                color: {COLORS['text']};
-                border: 1px solid {COLORS['border']};
-                border-radius: 4px;
-                font-size: 11px;
-                font-weight: 600;
-                padding: 0 6px;
-            }}
-            QPushButton:hover {{
-                background-color: {COLORS['accent_red']};
-                border-color: {COLORS['accent_red']};
-                color: #ffffff;
-            }}
-            QPushButton:pressed {{
-                background-color: #cc1a1a;
-            }}
-            QPushButton:disabled {{
-                color: {COLORS['text_secondary']};
-                background-color: {COLORS['surface']};
-            }}
-        """)
-        self._kill.clicked.connect(lambda: self.kill_clicked.emit(self._pid))
-        row.addWidget(self._kill, 0)
+        _add_grid_columns(row, expand_ph, icon_ph, self._name, self._cpu, self._ram, self._stop)
 
     def set_process(self, proc: ProcessInfo):
         self._pid = proc.pid
-        self._name.setText(proc.name)
+        self._name.setText(f"  {proc.detail}")
         self._name.setToolTip(f"{proc.name}  (PID {proc.pid})")
         self._cpu.setText(proc.cpu_display)
         self._ram.setText(proc.ram_display)
-        self._kill.setEnabled(proc.pid > 1)
+        self._stop.setEnabled(proc.pid > 1)
 
-        if not proc.icon.isNull():
-            self._icon.setPixmap(proc.icon.pixmap(QSize(_ICON_PX, _ICON_PX)))
+
+class _GroupRow(QWidget):
+    """Parent row: icon · name · CPU · RAM · Stop, with optional instance dropdown."""
+
+    stop_group = Signal(str)          # group key — stop all instances
+    stop_pid = Signal(int)
+    expand_toggled = Signal(str, bool)  # key, expanded
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._key = ""
+        self._pids: list[int] = []
+        self._expanded = False
+        self.setStyleSheet("background: transparent;")
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+
+        # Main (group) row
+        main = QWidget()
+        main.setStyleSheet("background: transparent;")
+        row = QHBoxLayout(main)
+        row.setContentsMargins(0, 2, 0, 2)
+
+        self._expand = QPushButton("▸")
+        self._expand.setFixedSize(_COL_EXPAND, 22)
+        self._expand.setCursor(Qt.PointingHandCursor)
+        self._expand.setStyleSheet(_EXPAND_STYLE)
+        self._expand.clicked.connect(self._toggle)
+
+        self._icon = QLabel()
+        self._icon.setFixedSize(_COL_ICON, _COL_ICON)
+        self._icon.setAlignment(Qt.AlignCenter)
+        self._icon.setStyleSheet("background: transparent;")
+
+        self._name = QLabel("—")
+        self._name.setStyleSheet(_NAME_STYLE)
+        self._name.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+
+        self._cpu = _make_metric_label(_COL_CPU)
+        self._ram = _make_metric_label(_COL_RAM)
+        self._stop = _make_stop_button()
+        self._stop.clicked.connect(lambda: self.stop_group.emit(self._key))
+
+        _add_grid_columns(row, self._expand, self._icon, self._name, self._cpu, self._ram, self._stop)
+        root.addWidget(main)
+
+        # Dropdown container for instances
+        self._children_host = QWidget()
+        self._children_host.setStyleSheet(f"""
+            background-color: {COLORS['surface_raised']};
+            border-radius: 4px;
+        """)
+        self._children_layout = QVBoxLayout(self._children_host)
+        self._children_layout.setContentsMargins(4, 4, 4, 4)
+        self._children_layout.setSpacing(1)
+        self._children_host.hide()
+        root.addWidget(self._children_host)
+
+        self._instance_rows: list[_InstanceRow] = []
+
+    def set_group(self, group: ProcessGroup, expanded: bool):
+        self._key = group.key
+        self._pids = [p.pid for p in group.instances]
+        self._expanded = expanded and group.count > 1
+
+        if group.count > 1:
+            self._name.setText(f"{group.name}  ({group.count})")
+            self._expand.setEnabled(True)
+            self._expand.setText("▾" if self._expanded else "▸")
+        else:
+            self._name.setText(group.name)
+            self._expand.setEnabled(False)
+            self._expand.setText(" ")
+            self._expanded = False
+
+        self._name.setToolTip(group.name)
+        self._cpu.setText(group.cpu_display)
+        self._ram.setText(group.ram_display)
+        self._stop.setEnabled(any(pid > 1 for pid in self._pids))
+
+        if not group.icon.isNull():
+            self._icon.setPixmap(group.icon.pixmap(QSize(_ICON_PX, _ICON_PX)))
         else:
             self._icon.clear()
 
+        # Instance rows
+        if self._expanded:
+            self._sync_instances(group.instances)
+            self._children_host.show()
+        else:
+            self._children_host.hide()
+
+    def _sync_instances(self, instances: list[ProcessInfo]):
+        while len(self._instance_rows) < len(instances):
+            row = _InstanceRow()
+            row.stop_clicked.connect(self.stop_pid.emit)
+            self._children_layout.addWidget(row)
+            self._instance_rows.append(row)
+        while len(self._instance_rows) > len(instances):
+            row = self._instance_rows.pop()
+            self._children_layout.removeWidget(row)
+            row.deleteLater()
+        for row, proc in zip(self._instance_rows, instances):
+            row.set_process(proc)
+            row.show()
+
+    def _toggle(self):
+        if not self._expand.isEnabled():
+            return
+        self._expanded = not self._expanded
+        self.expand_toggled.emit(self._key, self._expanded)
+
 
 class TopProcessesCard(QFrame):
-    """Double-width card: icon · name · CPU · RAM · kill."""
+    """Double-width card: grouped processes with instance dropdown."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -514,13 +722,23 @@ class TopProcessesCard(QFrame):
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(10, 8, 10, 10)
-        layout.setSpacing(8)
+        layout.setSpacing(6)
 
-        header = QHBoxLayout()
-        header.setContentsMargins(0, 0, 0, 0)
-        header.setSpacing(8)
+        # Header — same column grid as rows
+        header = QWidget()
+        header.setStyleSheet("background: transparent;")
+        header_row = QHBoxLayout(header)
+        header_row.setContentsMargins(0, 0, 0, 0)
 
-        title = QLabel("Top Processes")
+        expand_ph = QLabel("")
+        expand_ph.setFixedWidth(_COL_EXPAND)
+        expand_ph.setStyleSheet("background: transparent;")
+
+        icon_ph = QLabel("")
+        icon_ph.setFixedWidth(_COL_ICON)
+        icon_ph.setStyleSheet("background: transparent;")
+
+        title = QLabel("Process")
         title.setStyleSheet(f"""
             QLabel {{
                 color: {COLORS['text']};
@@ -529,32 +747,25 @@ class TopProcessesCard(QFrame):
                 background: transparent;
             }}
         """)
-        header.addWidget(title, 1)
+        title.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
 
-        hdr_style = f"""
-            QLabel {{
-                color: {COLORS['text_secondary']};
-                font-size: 11px;
-                background: transparent;
-            }}
-        """
         col_cpu = QLabel("CPU")
-        col_cpu.setStyleSheet(hdr_style)
+        col_cpu.setStyleSheet(_HDR_STYLE)
         col_cpu.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        col_cpu.setFixedWidth(52)
-        header.addWidget(col_cpu)
+        col_cpu.setFixedWidth(_COL_CPU)
 
         col_ram = QLabel("RAM")
-        col_ram.setStyleSheet(hdr_style)
+        col_ram.setStyleSheet(_HDR_STYLE)
         col_ram.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        col_ram.setFixedWidth(64)
-        header.addWidget(col_ram)
+        col_ram.setFixedWidth(_COL_RAM)
 
-        # Spacer matching kill button width
-        spacer = QLabel("")
-        spacer.setFixedWidth(52)
-        header.addWidget(spacer)
-        layout.addLayout(header)
+        col_stop = QLabel("Stop")
+        col_stop.setStyleSheet(_HDR_STYLE)
+        col_stop.setAlignment(Qt.AlignHCenter | Qt.AlignVCenter)
+        col_stop.setFixedWidth(_COL_STOP)
+
+        _add_grid_columns(header_row, expand_ph, icon_ph, title, col_cpu, col_ram, col_stop)
+        layout.addWidget(header)
 
         self._scroll = QScrollArea()
         self._scroll.setWidgetResizable(True)
@@ -567,7 +778,7 @@ class TopProcessesCard(QFrame):
         self._list_host.setStyleSheet("background: transparent;")
         self._list_layout = QVBoxLayout(self._list_host)
         self._list_layout.setContentsMargins(0, 0, 0, 0)
-        self._list_layout.setSpacing(2)
+        self._list_layout.setSpacing(4)
         self._list_layout.addStretch(1)
 
         self._scroll.setWidget(self._list_host)
@@ -585,14 +796,19 @@ class TopProcessesCard(QFrame):
         layout.addWidget(self._empty, 1)
         self._empty.hide()
 
-        self._rows: list[_ProcessRow] = []
+        self._rows: list[_GroupRow] = []
+        self._expanded_keys: set[str] = set()
+        self._groups_by_key: dict[str, ProcessGroup] = {}
 
     def refresh(self):
-        """Re-scan /proc and update the list."""
-        self.update_processes(read_top_processes())
+        self.update_groups(read_process_groups())
 
-    def update_processes(self, processes: list[ProcessInfo]):
-        if not processes:
+    def update_groups(self, groups: list[ProcessGroup]):
+        self._groups_by_key = {g.key: g for g in groups}
+        # Drop expanded state for groups that disappeared
+        self._expanded_keys &= set(self._groups_by_key.keys())
+
+        if not groups:
             for row in self._rows:
                 row.hide()
             self._scroll.hide()
@@ -602,20 +818,42 @@ class TopProcessesCard(QFrame):
         self._empty.hide()
         self._scroll.show()
 
-        while len(self._rows) < len(processes):
-            row = _ProcessRow()
-            row.kill_clicked.connect(self._on_kill)
+        while len(self._rows) < len(groups):
+            row = _GroupRow()
+            row.stop_group.connect(self._on_stop_group)
+            row.stop_pid.connect(self._on_stop_pid)
+            row.expand_toggled.connect(self._on_expand)
             self._list_layout.insertWidget(self._list_layout.count() - 1, row)
             self._rows.append(row)
-        while len(self._rows) > len(processes):
+        while len(self._rows) > len(groups):
             row = self._rows.pop()
             self._list_layout.removeWidget(row)
             row.deleteLater()
 
-        for row, proc in zip(self._rows, processes):
-            row.set_process(proc)
+        for row, group in zip(self._rows, groups):
+            row.set_group(group, group.key in self._expanded_keys)
             row.show()
 
-    def _on_kill(self, pid: int):
-        kill_process(pid)
+    def _on_expand(self, key: str, expanded: bool):
+        if expanded:
+            self._expanded_keys.add(key)
+        else:
+            self._expanded_keys.discard(key)
+        group = self._groups_by_key.get(key)
+        if group is None:
+            return
+        for row in self._rows:
+            if row._key == key:
+                row.set_group(group, expanded)
+                break
+
+    def _on_stop_group(self, key: str):
+        group = self._groups_by_key.get(key)
+        if group is None:
+            return
+        stop_processes([p.pid for p in group.instances])
+        self.refresh()
+
+    def _on_stop_pid(self, pid: int):
+        stop_process(pid)
         self.refresh()
