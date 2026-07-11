@@ -36,7 +36,7 @@ def set_suspended(state: bool) -> None:
     else:
         _suspend.clear()
 # P0 fan-floor override debounce (custom mode only).
-P0_ENGAGE_S = 6.0
+P0_ENGAGE_S = 10.0
 P0_RELEASE_S = 25.0
 
 _fan_logger = logging.getLogger("fan-control")

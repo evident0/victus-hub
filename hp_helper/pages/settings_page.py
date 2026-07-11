@@ -194,7 +194,7 @@ class SettingsPage(QWidget):
         layout.addWidget(p0_label)
 
         p0_hint = QLabel(
-            "Engages after ~6s continuous P0; holds ~25s after P0 ends. "
+            "Engages after ~10s continuous P0; holds ~25s after P0 ends. "
             "Custom fan mode only. The override ramps the fan up to the "
             "minimum % and blocks the curve below it until ~25s of non-P0."
         )
