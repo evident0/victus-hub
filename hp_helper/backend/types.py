@@ -22,6 +22,16 @@ class ExtraSensor:
 
 
 @dataclass
+class DiskUsage:
+    """One mounted local disk / partition for the Storage card."""
+    name: str
+    used_gb: float
+    total_gb: float
+    usage_pct: float
+    mount: str = ""
+
+
+@dataclass
 class SensorSnapshot:
     cpu_fan: SensorReading = field(default_factory=lambda: SensorReading("0 RPM"))
     gpu_fan: SensorReading = field(default_factory=lambda: SensorReading("0 RPM"))
@@ -43,6 +53,7 @@ class SensorSnapshot:
     ram_usage_pct: float | None = None
     ram_used_gb: float | None = None
     ram_total_gb: float | None = None
+    disks: list[DiskUsage] = field(default_factory=list)
     profile: SensorReading = field(default_factory=lambda: SensorReading("balanced"))
     extra_sensors: list[ExtraSensor] = field(default_factory=list)
 

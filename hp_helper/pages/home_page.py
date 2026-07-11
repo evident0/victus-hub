@@ -11,8 +11,8 @@ from PySide6.QtGui import QColor
 from hp_helper.widgets.profile_section import ProfileSection
 from hp_helper.widgets.footer import Footer
 from hp_helper.widgets.utilization_card import UtilizationCard
+from hp_helper.widgets.storage_card import StorageCard
 from hp_helper.widgets.sensor_line_graph import SensorLineGraph
-from hp_helper.sensor_stats import parse_reading_num
 from hp_helper.theme import COLORS
 
 # ~90s of history at 1 Hz sensor poll
@@ -129,7 +129,7 @@ class HomePage(QWidget):
 
         layout.addLayout(cards_row, 0)
 
-        # ── Live trends (sparklines) ──
+        # ── Live trends + storage ──
         trends_row = QHBoxLayout()
         trends_row.setSpacing(12)
 
@@ -139,13 +139,13 @@ class HomePage(QWidget):
         self._gpu_temp_trend = _TrendPanel(
             "GPU Temp", "\u00B0C", COLORS["accent_green"], 0, 100,
         )
-        self._power_trend = _TrendPanel(
-            "Power", "W", COLORS["accent_red"], 0, 80,
-        )
+        self._storage_card = StorageCard()
+        self._storage_card.setMinimumHeight(110)
+        self._storage_card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
         trends_row.addWidget(self._cpu_temp_trend)
         trends_row.addWidget(self._gpu_temp_trend)
-        trends_row.addWidget(self._power_trend)
+        trends_row.addWidget(self._storage_card)
         layout.addLayout(trends_row, 1)
 
         # Profile section
@@ -161,9 +161,7 @@ class HomePage(QWidget):
         layout.addWidget(self._footer, 0)
 
     def update_sensor_data(self, snapshot):
-        """Refresh utilization cards and trend sparklines from a sensor snapshot.
-        Left: temp (CPU/GPU or RAM if lm-sensors reports it). Right: fan RPM (CPU/GPU) or RAM usage.
-        """
+        """Refresh utilization/storage cards and trend sparklines from a sensor snapshot."""
         # CPU: usage + temp left, fan RPM right
         cpu_pct = snapshot.cpu_usage_pct or 0.0
         cpu_temp = f"{snapshot.cpu_temp_c:.0f}°C" if snapshot.cpu_temp_c is not None else "— °C"
@@ -204,18 +202,8 @@ class HomePage(QWidget):
         )
         self._gpu_temp_trend.append_sample(snapshot.gpu_temp_c, gpu_temp_display)
 
-        power_w = parse_reading_num(snapshot.cpu_power)
-        if power_w is not None:
-            self._power_trend.set_title("CPU Power")
-            power_display = snapshot.cpu_power.value
-        else:
-            power_w = parse_reading_num(snapshot.gpu_power)
-            if power_w is not None:
-                self._power_trend.set_title("GPU Power")
-                power_display = snapshot.gpu_power.value
-            else:
-                power_display = "—"
-        self._power_trend.append_sample(power_w, power_display)
+        # Storage (row 2, column 3 — was GPU Power)
+        self._storage_card.update_disks(getattr(snapshot, "disks", []) or [])
 
     def set_hardware_title(self, title: str):
         self._footer.set_hardware_title(title)
