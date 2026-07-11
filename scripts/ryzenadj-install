@@ -1,0 +1,103 @@
+#!/usr/bin/env bash
+# Build and install (or reinstall) the ryzenadj tool from source.
+#
+# Clones https://github.com/FlyGoat/RyzenAdj into ~/RyzenAdj, builds it with
+# the libpci /dev/mem backend (NOT ryzen_smu), and installs the binary to
+# /usr/local/bin/ryzenadj — the path the hp-helperd daemon looks up first.
+#
+# Without ryzen_smu, ryzenadj falls back to /dev/mem. If your kernel restricts
+# /dev/mem (strictkaufman), add `iomem=relaxed` to your kernel cmdline.
+set -euo pipefail
+
+# ── AMD CPU guard ──
+if ! grep -qm1 'AuthenticAMD' /proc/cpuinfo; then
+  printf 'Skipping ryzenadj (not an AMD CPU).\n'
+  exit 0
+fi
+
+REPO_URL="https://github.com/FlyGoat/RyzenAdj.git"
+CLONE_DIR="$HOME/RyzenAdj"
+INSTALL_BIN="/usr/local/bin/ryzenadj"
+
+if [ "$(id -u)" -eq 0 ]; then
+  SUDO=()
+else
+  SUDO=(sudo)
+fi
+
+# ── Build dependencies ──
+# Fedora: cmake gcc-c++ pciutils-devel (libpci). make and git assumed present.
+MISSING=()
+command -v cmake >/dev/null 2>&1 || MISSING+=(cmake)
+command -v g++   >/dev/null 2>&1 || MISSING+=(gcc-c++)
+command -v make  >/dev/null 2>&1 || MISSING+=(make)
+command -v git   >/dev/null 2>&1 || MISSING+=(git)
+if command -v pkg-config >/dev/null 2>&1; then
+  pkg-config --exists libpci || MISSING+=(pciutils-devel)
+else
+  [ -f /usr/include/pci/pci.h ] || MISSING+=(pciutils-devel)
+fi
+
+if [ "${#MISSING[@]}" -gt 0 ]; then
+  printf '\033[1;34m── Installing build dependencies ──\033[0m\n'
+  if command -v dnf >/dev/null 2>&1; then
+    "${SUDO[@]}" dnf install -y "${MISSING[@]}"
+  elif command -v apt >/dev/null 2>&1; then
+    DEB_PKGS=()
+    for p in "${MISSING[@]}"; do
+      case "$p" in
+        gcc-c++)        DEB_PKGS+=(g++);;
+        pciutils-devel) DEB_PKGS+=(libpci-dev);;
+        *)              DEB_PKGS+=("$p");;
+      esac
+    done
+    "${SUDO[@]}" apt install -y "${DEB_PKGS[@]}"
+  else
+    printf 'Cannot auto-install dependencies (%s).\n' "${MISSING[*]}" >&2
+    printf 'Install cmake, a C++ compiler, make, git, and libpci dev headers manually.\n' >&2
+    exit 1
+  fi
+fi
+
+# Re-check the critical tools in case a dep install was skipped or partial.
+for tool in cmake g++ make git; do
+  command -v "$tool" >/dev/null 2>&1 || {
+    printf '%s not found after dependency step — install it and re-run.\n' "$tool" >&2
+    exit 1
+  }
+done
+
+# ── Clone or update ──
+if [ -d "$CLONE_DIR/.git" ]; then
+  printf 'Updating existing clone at %s\n' "$CLONE_DIR"
+  git -C "$CLONE_DIR" fetch --all --prune
+  git -C "$CLONE_DIR" reset --hard origin/HEAD 2>/dev/null \
+    || git -C "$CLONE_DIR" reset --hard origin/master
+else
+  printf 'Cloning RyzenAdj to %s\n' "$CLONE_DIR"
+  git clone "$REPO_URL" "$CLONE_DIR"
+fi
+
+cd "$CLONE_DIR"
+# The win32 tree ships binary blobs and is irrelevant on Linux.
+rm -rf win32
+
+# ── Build ──
+printf '\033[1;34m── Building ryzenadj ──\033[0m\n'
+rm -rf build
+mkdir build && cd build
+cmake -DCMAKE_BUILD_TYPE=Release ..
+make -j"$(nproc)"
+
+if [ ! -f ryzenadj ]; then
+  printf 'Build did not produce the ryzenadj binary.\n' >&2
+  exit 1
+fi
+
+# ── Install ──
+printf 'Installing ryzenadj to %s\n' "$INSTALL_BIN"
+"${SUDO[@]}" install -Dm755 ryzenadj "$INSTALL_BIN"
+
+printf '\033[32mInstalled %s.\033[0m\n' "$INSTALL_BIN"
+printf 'Note: using the /dev/mem backend (ryzen_smu not installed).\n'
+printf 'If ryzenadj fails to init at runtime, add `iomem=relaxed` to your kernel cmdline.\n'

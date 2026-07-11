@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# Uninstall the ryzenadj tool: remove the installed binary and the source clone
+# at ~/RyzenAdj left by ryzenadj-install.
+set -euo pipefail
+
+CLONE_DIR="$HOME/RyzenAdj"
+INSTALL_BIN="/usr/local/bin/ryzenadj"
+
+if [ "$(id -u)" -eq 0 ]; then
+  SUDO=()
+else
+  SUDO=(sudo)
+fi
+
+if [ -f "$INSTALL_BIN" ] || [ -L "$INSTALL_BIN" ]; then
+  printf 'Removing %s\n' "$INSTALL_BIN"
+  "${SUDO[@]}" rm -f "$INSTALL_BIN"
+else
+  printf '%s not found — already removed.\n' "$INSTALL_BIN"
+fi
+
+if [ -d "$CLONE_DIR" ]; then
+  printf 'Removing source clone at %s\n' "$CLONE_DIR"
+  rm -rf "$CLONE_DIR"
+else
+  printf 'No source clone at %s — nothing to remove.\n' "$CLONE_DIR"
+fi
+
+printf '\033[32mUninstalled ryzenadj.\033[0m\n'
