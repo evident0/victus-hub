@@ -11,7 +11,7 @@ from pathlib import Path
 from PySide6.QtCore import Qt, QSize, QTimer
 from PySide6.QtGui import QIcon, QPixmap
 from PySide6.QtWidgets import (
-    QAbstractItemView, QFrame, QHeaderView, QVBoxLayout, QPushButton,
+    QAbstractItemView, QFrame, QHeaderView, QMenu, QVBoxLayout,
     QSizePolicy, QTreeWidget, QTreeWidgetItem,
 )
 
@@ -427,61 +427,33 @@ def read_process_groups(limit: int = _TOP_GROUPS) -> list[ProcessGroup]:
     return ordered[:limit]
 
 
-def stop_process(pid: int) -> bool:
+def stop_process(pid: int, force: bool = False) -> bool:
+    """Send SIGTERM (or SIGKILL if *force*) to *pid*."""
     if pid <= 1:
         return False
+    sig = signal.SIGKILL if force else signal.SIGTERM
     try:
-        os.kill(pid, signal.SIGTERM)
+        os.kill(pid, sig)
         return True
     except (OSError, ProcessLookupError, PermissionError):
         return False
 
 
-def stop_processes(pids: list[int]) -> None:
+def stop_processes(pids: list[int], force: bool = False) -> None:
     for pid in pids:
-        stop_process(pid)
+        stop_process(pid, force=force)
 
 
 # ── UI (QTreeWidget columns, same approach as Sensors page) ─────────────────
 
-_STOP_BTN_STYLE = f"""
-    QPushButton {{
-        background-color: {COLORS['surface_raised']};
-        color: {COLORS['text']};
-        border: 1px solid {COLORS['border']};
-        border-radius: 4px;
-        font-size: 11px;
-        font-weight: 600;
-        padding: 0 6px;
-    }}
-    QPushButton:hover {{
-        background-color: {COLORS['accent_red']};
-        border-color: {COLORS['accent_red']};
-        color: #ffffff;
-    }}
-    QPushButton:pressed {{
-        background-color: #cc1a1a;
-    }}
-    QPushButton:disabled {{
-        color: {COLORS['text_secondary']};
-        background-color: {COLORS['surface']};
-    }}
-"""
-
-# Columns: Process | CPU | RAM | Stop
+# Columns: Process | CPU | RAM
 _COL_PROCESS = 0
 _COL_CPU = 1
 _COL_RAM = 2
-_COL_STOP = 3
 
-
-def _make_stop_button(enabled: bool = True) -> QPushButton:
-    btn = QPushButton("Stop")
-    btn.setCursor(Qt.PointingHandCursor)
-    btn.setFixedSize(52, 24)
-    btn.setStyleSheet(_STOP_BTN_STYLE)
-    btn.setEnabled(enabled)
-    return btn
+_ROLE_PID = Qt.UserRole
+_ROLE_GROUP_KEY = Qt.UserRole + 1
+_ROLE_KIND = Qt.UserRole + 2  # "group" | "instance"
 
 
 class TopProcessesCard(QFrame):
@@ -493,6 +465,7 @@ class TopProcessesCard(QFrame):
         self.setMinimumHeight(110)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         surface = COLORS["surface"]
+        raised = COLORS["surface_raised"]
         self.setStyleSheet(f"""
             #topProcessesCard {{
                 background-color: {surface};
@@ -507,18 +480,24 @@ class TopProcessesCard(QFrame):
 
         self._tree = QTreeWidget()
         self._tree.setObjectName("topProcessesTree")
-        self._tree.setColumnCount(4)
-        self._tree.setHeaderLabels(["Process", "CPU", "RAM", "Stop"])
+        self._tree.setColumnCount(3)
+        self._tree.setHeaderLabels(["Process", "CPU", "RAM"])
         self._tree.setRootIsDecorated(True)
         self._tree.setIndentation(16)
         self._tree.setAnimated(True)
         self._tree.setUniformRowHeights(True)
         self._tree.setAlternatingRowColors(False)
-        self._tree.setSelectionMode(QAbstractItemView.NoSelection)
-        self._tree.setFocusPolicy(Qt.NoFocus)
+        self._tree.setSelectionMode(QAbstractItemView.SingleSelection)
+        self._tree.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self._tree.setFocusPolicy(Qt.StrongFocus)
         self._tree.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self._tree.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
-        # Flat fill matching the card (overrides global QTreeWidget / header colors)
+        # Expand/collapse only via the branch arrow, not by clicking the row
+        self._tree.setExpandsOnDoubleClick(False)
+        self._tree.setContextMenuPolicy(Qt.CustomContextMenu)
+        self._tree.customContextMenuRequested.connect(self._on_context_menu)
+
+        # Flat fill matching the card; selection highlight on click
         self._tree.setStyleSheet(f"""
             QTreeWidget#topProcessesTree {{
                 background-color: {surface};
@@ -531,9 +510,15 @@ class TopProcessesCard(QFrame):
                 padding: 3px 6px;
                 background-color: {surface};
             }}
-            QTreeWidget#topProcessesTree::item:hover,
+            QTreeWidget#topProcessesTree::item:hover {{
+                background-color: {raised};
+            }}
             QTreeWidget#topProcessesTree::item:selected {{
-                background-color: {surface};
+                background-color: {raised};
+                color: {COLORS['text']};
+            }}
+            QTreeWidget#topProcessesTree::item:selected:active {{
+                background-color: {raised};
                 color: {COLORS['text']};
             }}
             QHeaderView::section {{
@@ -550,30 +535,26 @@ class TopProcessesCard(QFrame):
             }}
         """)
 
-        # Right-align metric columns (header + cells)
         header = self._tree.header()
         header.setDefaultAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         header.setStretchLastSection(False)
         header.setSectionResizeMode(_COL_PROCESS, QHeaderView.Stretch)
         header.setSectionResizeMode(_COL_CPU, QHeaderView.Fixed)
         header.setSectionResizeMode(_COL_RAM, QHeaderView.Fixed)
-        header.setSectionResizeMode(_COL_STOP, QHeaderView.Fixed)
         self._tree.setColumnWidth(_COL_CPU, 64)
         self._tree.setColumnWidth(_COL_RAM, 72)
-        self._tree.setColumnWidth(_COL_STOP, 64)
 
-        # Center the Stop header label over the button column
         self._tree.headerItem().setTextAlignment(_COL_CPU, int(Qt.AlignRight | Qt.AlignVCenter))
         self._tree.headerItem().setTextAlignment(_COL_RAM, int(Qt.AlignRight | Qt.AlignVCenter))
-        self._tree.headerItem().setTextAlignment(_COL_STOP, int(Qt.AlignHCenter | Qt.AlignVCenter))
 
-        self._tree.itemClicked.connect(self._on_item_clicked)
         layout.addWidget(self._tree)
 
         self._group_items: dict[str, QTreeWidgetItem] = {}
         self._groups_by_key: dict[str, ProcessGroup] = {}
-        # pid → item for instance rows
         self._instance_items: dict[int, QTreeWidgetItem] = {}
+        # Selection restore across refresh: ("group", key) or ("instance", pid)
+        self._selected_ref: tuple[str, object] | None = None
+        self._tree.itemSelectionChanged.connect(self._remember_selection)
 
     def refresh(self):
         self.update_groups(read_process_groups())
@@ -581,18 +562,19 @@ class TopProcessesCard(QFrame):
     def update_groups(self, groups: list[ProcessGroup]):
         self._groups_by_key = {g.key: g for g in groups}
         new_keys = [g.key for g in groups]
-        old_keys = set(self._group_items.keys())
 
-        # Preserve expansion + scroll when structure is similar
         scroll = self._tree.verticalScrollBar().value()
         expanded = {
             key for key, item in self._group_items.items() if item.isExpanded()
         }
+        # Capture selection before any rebuild
+        self._remember_selection()
 
         structure_changed = new_keys != list(self._group_items.keys())
 
         if not structure_changed and self._group_items:
             self._update_in_place(groups)
+            self._restore_selection()
             return
 
         self._tree.clear()
@@ -602,11 +584,10 @@ class TopProcessesCard(QFrame):
         if not groups:
             return
 
-        for gi, group in enumerate(groups):
+        for group in groups:
             gitem = QTreeWidgetItem(self._tree)
             self._fill_group_item(gitem, group)
             gitem.setExpanded(group.key in expanded)
-            # Only show expand affordance when there are multiple instances
             gitem.setChildIndicatorPolicy(
                 QTreeWidgetItem.ShowIndicator if group.count > 1
                 else QTreeWidgetItem.DontShowIndicator
@@ -622,35 +603,37 @@ class TopProcessesCard(QFrame):
                     self._fill_instance_item(child, proc)
                     self._instance_items[proc.pid] = child
 
+        self._restore_selection()
         QTimer.singleShot(0, lambda: self._tree.verticalScrollBar().setValue(scroll))
 
     def _update_in_place(self, groups: list[ProcessGroup]):
-        """Refresh values without rebuilding (keeps expand state)."""
+        """Refresh values without rebuilding (keeps expand + selection)."""
         live_pids: set[int] = set()
         for group in groups:
             gitem = self._group_items.get(group.key)
             if gitem is None:
                 continue
-            self._fill_group_item(gitem, group, reuse_button=True)
+            self._fill_group_item(gitem, group)
 
             if group.count <= 1:
-                # Remove any leftover children
                 while gitem.childCount():
-                    gitem.removeChild(gitem.child(0))
+                    ch = gitem.child(0)
+                    pid = ch.data(0, _ROLE_PID)
+                    if isinstance(pid, int):
+                        self._instance_items.pop(pid, None)
+                    gitem.removeChild(ch)
                 gitem.setChildIndicatorPolicy(QTreeWidgetItem.DontShowIndicator)
                 continue
 
             gitem.setChildIndicatorPolicy(QTreeWidgetItem.ShowIndicator)
-            # Map existing children by pid stored in UserRole
             existing: dict[int, QTreeWidgetItem] = {}
             for i in range(gitem.childCount()):
                 ch = gitem.child(i)
-                pid = ch.data(0, Qt.UserRole)
+                pid = ch.data(0, _ROLE_PID)
                 if isinstance(pid, int):
                     existing[pid] = ch
 
             wanted_pids = [p.pid for p in group.instances]
-            # Remove stale
             for pid, ch in list(existing.items()):
                 if pid not in wanted_pids:
                     gitem.removeChild(ch)
@@ -666,26 +649,22 @@ class TopProcessesCard(QFrame):
                     self._fill_instance_item(ch, proc)
                     self._instance_items[proc.pid] = ch
                 else:
-                    # Reorder if needed
                     cur_index = gitem.indexOfChild(ch)
                     if cur_index != ii:
                         gitem.takeChild(cur_index)
                         gitem.insertChild(ii, ch)
-                    self._fill_instance_item(ch, proc, reuse_button=True)
+                    self._fill_instance_item(ch, proc)
 
-        # Drop instance map entries that are gone
         for pid in list(self._instance_items.keys()):
-            if pid not in live_pids and pid not in {
-                p.pid for g in groups for p in g.instances
-            }:
+            if pid not in live_pids:
                 self._instance_items.pop(pid, None)
 
-    def _fill_group_item(self, item: QTreeWidgetItem, group: ProcessGroup,
-                         reuse_button: bool = False):
+    def _fill_group_item(self, item: QTreeWidgetItem, group: ProcessGroup):
         label = f"{group.name}  ({group.count})" if group.count > 1 else group.name
         item.setText(_COL_PROCESS, label)
-        item.setData(0, Qt.UserRole + 1, group.key)  # group key
-        item.setData(0, Qt.UserRole + 2, "group")
+        item.setData(0, _ROLE_GROUP_KEY, group.key)
+        item.setData(0, _ROLE_KIND, "group")
+        item.setData(0, _ROLE_PID, None)
         if not group.icon.isNull():
             item.setIcon(_COL_PROCESS, group.icon)
         item.setText(_COL_CPU, group.cpu_display)
@@ -694,51 +673,91 @@ class TopProcessesCard(QFrame):
         item.setTextAlignment(_COL_RAM, int(Qt.AlignRight | Qt.AlignVCenter))
         item.setToolTip(_COL_PROCESS, group.name)
 
-        if reuse_button:
-            btn = self._tree.itemWidget(item, _COL_STOP)
-            if isinstance(btn, QPushButton):
-                btn.setEnabled(any(p.pid > 1 for p in group.instances))
-                return
-        btn = _make_stop_button(enabled=any(p.pid > 1 for p in group.instances))
-        key = group.key
-        btn.clicked.connect(lambda checked=False, k=key: self._on_stop_group(k))
-        self._tree.setItemWidget(item, _COL_STOP, btn)
-
-    def _fill_instance_item(self, item: QTreeWidgetItem, proc: ProcessInfo,
-                            reuse_button: bool = False):
+    def _fill_instance_item(self, item: QTreeWidgetItem, proc: ProcessInfo):
         item.setText(_COL_PROCESS, proc.detail)
-        item.setData(0, Qt.UserRole, proc.pid)
-        item.setData(0, Qt.UserRole + 2, "instance")
+        item.setData(0, _ROLE_PID, proc.pid)
+        item.setData(0, _ROLE_KIND, "instance")
+        item.setData(0, _ROLE_GROUP_KEY, proc.group_key)
         item.setText(_COL_CPU, proc.cpu_display)
         item.setText(_COL_RAM, proc.ram_display)
         item.setTextAlignment(_COL_CPU, int(Qt.AlignRight | Qt.AlignVCenter))
         item.setTextAlignment(_COL_RAM, int(Qt.AlignRight | Qt.AlignVCenter))
         item.setToolTip(_COL_PROCESS, f"{proc.name}  (PID {proc.pid})")
-        # No icon on children — indentation shows hierarchy
         item.setIcon(_COL_PROCESS, QIcon())
 
-        if reuse_button:
-            btn = self._tree.itemWidget(item, _COL_STOP)
-            if isinstance(btn, QPushButton):
-                btn.setEnabled(proc.pid > 1)
-                return
-        btn = _make_stop_button(enabled=proc.pid > 1)
-        pid = proc.pid
-        btn.clicked.connect(lambda checked=False, p=pid: self._on_stop_pid(p))
-        self._tree.setItemWidget(item, _COL_STOP, btn)
-
-    def _on_item_clicked(self, item: QTreeWidgetItem, _col: int):
-        """Toggle expand on group rows (same as Sensors page)."""
-        if item.data(0, Qt.UserRole + 2) == "group" and item.childCount() > 0:
-            item.setExpanded(not item.isExpanded())
-
-    def _on_stop_group(self, key: str):
-        group = self._groups_by_key.get(key)
-        if group is None:
+    def _remember_selection(self):
+        item = self._tree.currentItem()
+        if item is None:
             return
-        stop_processes([p.pid for p in group.instances])
-        self.refresh()
+        kind = item.data(0, _ROLE_KIND)
+        if kind == "group":
+            key = item.data(0, _ROLE_GROUP_KEY)
+            if key is not None:
+                self._selected_ref = ("group", key)
+        elif kind == "instance":
+            pid = item.data(0, _ROLE_PID)
+            if isinstance(pid, int):
+                self._selected_ref = ("instance", pid)
 
-    def _on_stop_pid(self, pid: int):
-        stop_process(pid)
-        self.refresh()
+    def _restore_selection(self):
+        ref = self._selected_ref
+        if ref is None:
+            return
+        kind, value = ref
+        item = None
+        if kind == "group":
+            item = self._group_items.get(value)  # type: ignore[arg-type]
+        elif kind == "instance":
+            item = self._instance_items.get(value)  # type: ignore[arg-type]
+            # If instance vanished, select parent group
+            if item is None and isinstance(value, int):
+                for g in self._groups_by_key.values():
+                    if any(p.pid == value for p in g.instances):
+                        break
+                else:
+                    # try group of last known
+                    pass
+        if item is not None:
+            self._tree.setCurrentItem(item)
+            item.setSelected(True)
+
+    def _on_context_menu(self, pos):
+        item = self._tree.itemAt(pos)
+        if item is None:
+            return
+        # Right-click selects / highlights the row
+        self._tree.setCurrentItem(item)
+        item.setSelected(True)
+        self._remember_selection()
+
+        pids = self._pids_for_item(item)
+        if not pids:
+            return
+
+        menu = QMenu(self)
+        multi = len(pids) > 1
+        stop_label = "Stop all" if multi else "Stop"
+        force_label = "Force stop all" if multi else "Force stop"
+        act_stop = menu.addAction(stop_label)
+        act_force = menu.addAction(force_label)
+
+        chosen = menu.exec(self._tree.viewport().mapToGlobal(pos))
+        if chosen is None:
+            return
+        force = chosen is act_force
+        if chosen is act_stop or chosen is act_force:
+            stop_processes(pids, force=force)
+            self.refresh()
+
+    def _pids_for_item(self, item: QTreeWidgetItem) -> list[int]:
+        kind = item.data(0, _ROLE_KIND)
+        if kind == "instance":
+            pid = item.data(0, _ROLE_PID)
+            return [pid] if isinstance(pid, int) and pid > 1 else []
+        if kind == "group":
+            key = item.data(0, _ROLE_GROUP_KEY)
+            group = self._groups_by_key.get(key) if key is not None else None
+            if group is None:
+                return []
+            return [p.pid for p in group.instances if p.pid > 1]
+        return []
