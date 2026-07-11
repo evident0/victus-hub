@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import os
 import signal
-import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -20,12 +19,6 @@ from hp_helper.theme import COLORS
 # Scrollable list — enough slots for mid-size apps, not only browsers.
 _TOP_GROUPS = 30
 _ICON_PX = 20
-
-_CPU_HZ = os.sysconf(os.sysconf_names["SC_CLK_TCK"]) if hasattr(os, "sysconf") else 100
-try:
-    _NCPU = max(1, os.cpu_count() or 1)
-except Exception:
-    _NCPU = 1
 
 
 def _is_runtime_binary(name: str) -> bool:
@@ -115,7 +108,8 @@ class ProcessGroup:
 
     @property
     def cpu_pct(self) -> float:
-        return sum(p.cpu_pct for p in self.instances)
+        # Sum of per-process system shares; clamp for sampling noise
+        return max(0.0, min(100.0, sum(p.cpu_pct for p in self.instances)))
 
     @property
     def ram_display(self) -> str:
@@ -138,6 +132,7 @@ def _fmt_ram(rss_kb: int) -> str:
 
 
 def _fmt_cpu(cpu_pct: float) -> str:
+    # System-relative share (0–100% of all cores combined)
     if cpu_pct < 0.05:
         return "0%"
     if cpu_pct < 10:
@@ -145,17 +140,110 @@ def _fmt_cpu(cpu_pct: float) -> str:
     return f"{cpu_pct:.0f}%"
 
 
+def _parse_stat_jiffies(data: str) -> int | None:
+    """Parse utime+stime from a /proc/.../stat payload."""
+    rparen = data.rfind(")")
+    if rparen < 0:
+        return None
+    fields = data[rparen + 2 :].split()
+    try:
+        return int(fields[11]) + int(fields[12])
+    except (ValueError, IndexError):
+        return None
+
+
 def _read_proc_cpu_jiffies(pid: int) -> int | None:
+    """Total user+system jiffies for the whole process (all threads)."""
+    task_dir = f"/proc/{pid}/task"
+    try:
+        tids = os.listdir(task_dir)
+    except OSError:
+        tids = []
+    if tids:
+        total = 0
+        any_ok = False
+        for tid in tids:
+            try:
+                with open(
+                    f"{task_dir}/{tid}/stat", encoding="utf-8", errors="replace"
+                ) as f:
+                    j = _parse_stat_jiffies(f.read())
+            except OSError:
+                continue
+            if j is not None:
+                total += j
+                any_ok = True
+        if any_ok:
+            return total
+    # Fallback: thread-group leader only
     try:
         with open(f"/proc/{pid}/stat", encoding="utf-8", errors="replace") as f:
-            data = f.read()
-        rparen = data.rfind(")")
-        if rparen < 0:
-            return None
-        fields = data[rparen + 2 :].split()
-        return int(fields[11]) + int(fields[12])
-    except (OSError, ValueError, IndexError):
+            return _parse_stat_jiffies(f.read())
+    except OSError:
         return None
+
+
+def _read_system_jiffies() -> int | None:
+    """Sum of all fields on the aggregate `cpu` line in /proc/stat."""
+    try:
+        with open("/proc/stat", encoding="utf-8", errors="replace") as f:
+            line = f.readline()
+    except OSError:
+        return None
+    if not line.startswith("cpu "):
+        return None
+    parts = line.split()
+    try:
+        # cpu user nice system idle iowait irq softirq steal guest guest_nice …
+        return sum(int(x) for x in parts[1:])
+    except ValueError:
+        return None
+
+
+def _is_thread_group_leader(pid: int) -> bool:
+    """True if *pid* is a process (TGID), not a non-leader thread.
+
+    Listing every TID under /proc would multi-count RAM and clutter the list.
+    """
+    try:
+        with open(f"/proc/{pid}/status", encoding="utf-8", errors="replace") as f:
+            tgid = None
+            pid_field = None
+            for line in f:
+                if line.startswith("Tgid:"):
+                    tgid = int(line.split()[1])
+                elif line.startswith("Pid:"):
+                    pid_field = int(line.split()[1])
+                if tgid is not None and pid_field is not None:
+                    return tgid == pid_field
+    except (OSError, ValueError, IndexError):
+        return True  # keep entry if status is unreadable
+    return True
+
+
+def _read_memory_kb(pid: int) -> int | None:
+    """Best memory estimate in kB: PSS when available, else VmRSS.
+
+    PSS (proportional set size) splits shared pages across processes, so
+    summing PSS over a multi-process app (Firefox) is far more accurate than
+    summing VmRSS (which multi-counts shared libraries).
+    """
+    # smaps_rollup is cheap and preferred (Linux 4.14+)
+    try:
+        with open(f"/proc/{pid}/smaps_rollup", encoding="utf-8", errors="replace") as f:
+            for line in f:
+                if line.startswith("Pss:"):
+                    return int(line.split()[1])
+    except (OSError, ValueError, IndexError):
+        pass
+    try:
+        with open(f"/proc/{pid}/status", encoding="utf-8", errors="replace") as f:
+            for line in f:
+                if line.startswith("VmRSS:"):
+                    return int(line.split()[1])
+    except (OSError, ValueError, IndexError):
+        pass
+    return None
 
 
 def _read_cmdline(pid: int) -> list[str]:
@@ -278,23 +366,24 @@ def _display_name_from_identity(identity: str) -> str:
 
 
 def _read_proc_meta(pid: int) -> tuple[str, str, int, str, str] | None:
-    """Return (group_name, detail, rss_kb, exe, group_key) or None."""
+    """Return (group_name, detail, mem_kb, exe, group_key) or None."""
+    if not _is_thread_group_leader(pid):
+        return None
+
     name = None
-    rss_kb = None
     try:
         with open(f"/proc/{pid}/status", encoding="utf-8", errors="replace") as f:
             for line in f:
                 if line.startswith("Name:"):
                     name = line.split(":", 1)[1].strip()
-                elif line.startswith("VmRSS:"):
-                    parts = line.split()
-                    if len(parts) >= 2:
-                        rss_kb = int(parts[1])
-                if name is not None and rss_kb is not None:
                     break
     except (OSError, ValueError):
         return None
-    if name is None or rss_kb is None or rss_kb <= 0:
+    if not name:
+        return None
+
+    mem_kb = _read_memory_kb(pid)
+    if mem_kb is None or mem_kb <= 0:
         return None
 
     exe = ""
@@ -361,7 +450,7 @@ def _read_proc_meta(pid: int) -> tuple[str, str, int, str, str] | None:
     if not detail or detail == group_name:
         detail = f"PID {pid}"
 
-    return group_name, detail, rss_kb, exe, group_key
+    return group_name, detail, mem_kb, exe, group_key
 
 
 def _ensure_desktop_cache() -> dict[str, str]:
@@ -533,31 +622,45 @@ def resolve_process_icon(name: str, exe: str = "") -> QIcon:
 
 
 class _CpuTracker:
-    def __init__(self):
-        self._prev: dict[int, tuple[int, float]] = {}
+    """Track per-pid and system jiffies to compute system-relative CPU %."""
 
-    def cpu_pct(self, pid: int, jiffies: int | None) -> float:
-        now = time.monotonic()
+    def __init__(self):
+        # pid → process jiffies at last sample
+        self._prev_proc: dict[int, int] = {}
+        self._prev_sys: int | None = None
+
+    def begin_sample(self) -> int | None:
+        """Read system jiffies once per refresh; return system delta (or None)."""
+        sys_now = _read_system_jiffies()
+        if sys_now is None:
+            self._prev_sys = None
+            return None
+        prev = self._prev_sys
+        self._prev_sys = sys_now
+        if prev is None or sys_now < prev:
+            return None
+        dsys = sys_now - prev
+        return dsys if dsys > 0 else None
+
+    def cpu_pct(self, pid: int, jiffies: int | None, system_delta: int | None) -> float:
+        """Return % of total machine CPU used by *pid* since last sample (0–100)."""
         if jiffies is None:
-            self._prev.pop(pid, None)
+            self._prev_proc.pop(pid, None)
             return 0.0
-        prev = self._prev.get(pid)
-        self._prev[pid] = (jiffies, now)
-        if prev is None:
-            return 0.0
-        prev_j, prev_t = prev
-        dt = now - prev_t
-        if dt <= 0:
+        prev_j = self._prev_proc.get(pid)
+        self._prev_proc[pid] = jiffies
+        if prev_j is None or system_delta is None:
             return 0.0
         dj = jiffies - prev_j
         if dj < 0:
             return 0.0
-        pct = (dj / _CPU_HZ) / dt * 100.0
-        return max(0.0, min(pct, 100.0 * _NCPU))
+        # system_delta already counts all cores (sum of /proc/stat cpu fields)
+        pct = 100.0 * dj / system_delta
+        return max(0.0, min(pct, 100.0))
 
     def prune(self, live_pids: set[int]):
-        for p in [p for p in self._prev if p not in live_pids]:
-            del self._prev[p]
+        for p in [p for p in self._prev_proc if p not in live_pids]:
+            del self._prev_proc[p]
 
 
 _cpu_tracker = _CpuTracker()
@@ -571,6 +674,8 @@ def read_process_groups(limit: int = _TOP_GROUPS) -> list[ProcessGroup]:
     except OSError:
         return []
 
+    system_delta = _cpu_tracker.begin_sample()
+
     for entry in entries:
         if not entry.isdigit():
             continue
@@ -578,9 +683,9 @@ def read_process_groups(limit: int = _TOP_GROUPS) -> list[ProcessGroup]:
         meta = _read_proc_meta(pid)
         if meta is None:
             continue
-        group_name, detail, rss_kb, exe, group_key = meta
+        group_name, detail, mem_kb, exe, group_key = meta
         jiffies = _read_proc_cpu_jiffies(pid)
-        cpu_pct = _cpu_tracker.cpu_pct(pid, jiffies)
+        cpu_pct = _cpu_tracker.cpu_pct(pid, jiffies, system_delta)
         # Prefer app name for icons (protonvpn-app), fall back to exe basename
         icon = resolve_process_icon(group_name, exe if not _is_runtime_binary(Path(exe).name if exe else "") else "")
         if icon.isNull():
@@ -588,7 +693,7 @@ def read_process_groups(limit: int = _TOP_GROUPS) -> list[ProcessGroup]:
         procs.append(ProcessInfo(
             pid=pid,
             name=group_name,
-            rss_kb=rss_kb,
+            rss_kb=mem_kb,  # PSS when available (field name kept for compatibility)
             cpu_pct=cpu_pct,
             exe=exe,
             group_key=group_key,
@@ -614,6 +719,9 @@ def read_process_groups(limit: int = _TOP_GROUPS) -> list[ProcessGroup]:
 
     for g in groups.values():
         g.instances.sort(key=lambda p: p.rss_kb, reverse=True)
+        # Group CPU is sum of members' system shares, still capped at 100%
+        # (sampling noise can slightly overshoot).
+        # Clamp when displaying via ProcessGroup.cpu_pct property if needed.
 
     ordered = sorted(groups.values(), key=lambda g: g.rss_kb, reverse=True)
     return ordered[:limit]
