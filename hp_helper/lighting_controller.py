@@ -44,6 +44,18 @@ class LightingController(QObject):
         except Exception:
             pass
 
+    def pause(self) -> None:
+        """Stop the lighting timer (called on system suspend); unlike
+        ``shutdown()``, does not turn the backlight off."""
+        self._timer.stop()
+
+    def resume(self) -> None:
+        """Restart the lighting timer after suspend and force the next tick
+        to re-evaluate/re-send the configured color."""
+        self._backlight_on = None
+        self._last_sent_color = None
+        self._timer.start()
+
     # ── Settings mutators (called from KeyboardPage signal handlers) ──
 
     def set_enabled(self, enabled: bool) -> None:

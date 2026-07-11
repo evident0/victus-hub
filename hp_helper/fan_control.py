@@ -24,6 +24,17 @@ from hp_helper.backend.sysfs_read import read_hp_pwm_pct
 POLL_INTERVAL = 1.0
 CONTROL_INTERVAL = 3.0
 
+# Suspend gate: when set, the control loop skips all sysfs writes so the
+# pre-suspend cleanup (fan-auto) is not immediately re-asserted as manual.
+_suspend = threading.Event()  # noqa: PLW0602 (module-level Event, intentional)
+
+
+def set_suspended(state: bool) -> None:
+    """Pause/resume the fan-control loop without cancelling the thread."""
+    if state:
+        _suspend.set()
+    else:
+        _suspend.clear()
 # P0 fan-floor override debounce (custom mode only).
 P0_ENGAGE_S = 6.0
 P0_RELEASE_S = 25.0
@@ -223,6 +234,12 @@ def start_fan_control() -> None:
 
         while True:
             import time as _time
+
+            # Suspend gate: skip all control writes while the system is
+            # suspending so the pre-suspend fan-auto cleanup is not undone.
+            if _suspend.is_set():
+                _time.sleep(POLL_INTERVAL)
+                continue
 
             # ── poll ──
             try:

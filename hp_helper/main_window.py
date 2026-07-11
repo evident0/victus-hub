@@ -19,9 +19,10 @@ from hp_helper.pages.settings_page import SettingsPage
 from hp_helper.sensor_graph_window import SensorGraphWindow
 from hp_helper.fan_curves_window import FanCurvesWindow
 from hp_helper import api
-from hp_helper.fan_control import start_fan_control
+from hp_helper.fan_control import start_fan_control, set_suspended
 from hp_helper.lighting_controller import LightingController
 from hp_helper.power_controller import PowerLimitController
+from hp_helper.power_state import PowerStateWatcher
 from hp_helper.shortcut_controller import ShortcutController
 from hp_helper.sensor_stats import next_stats, build_rows
 
@@ -160,6 +161,12 @@ class MainWindow(QMainWindow):
                 self._home_page.set_selected_fan_mode("auto")
         except Exception:
             logger.exception("init fan config check failed")
+
+        # ── Power state watcher (suspend/shutdown cleanup) ──
+        self._power_state = PowerStateWatcher(self)
+        self._power_state.suspending.connect(self._on_system_suspend)
+        self._power_state.resuming.connect(self._on_system_resume)
+        self._power_state.shutting_down.connect(self._on_system_shutdown)
     # ── Tab switching ──
 
     def set_active_tab(self, index: int):
@@ -223,6 +230,50 @@ class MainWindow(QMainWindow):
         self._save_geometry()
         self._hide_all_windows()
         event.ignore()
+
+    # ── System suspend / shutdown cleanup ──
+
+    def _on_system_suspend(self) -> None:
+        """Called by logind PrepareForSleep(True): reset the hardware to a
+        safe state *before* the system suspends, and pause the background
+        loops so they don't re-assert manual-fan / keyboard-color in the
+        brief window before suspend takes effect."""
+        set_suspended(True)
+        self._lighting.pause()
+        try:
+            api.set_fan_auto()
+            logger.info("suspend cleanup: fans set to auto")
+        except Exception:
+            logger.exception("set_fan_auto during suspend failed")
+        try:
+            api.set_keyboard_brightness(0)
+            logger.info("suspend cleanup: keyboard brightness set to 0")
+        except Exception:
+            logger.exception("set_keyboard_brightness(0) during suspend failed")
+
+    def _on_system_resume(self) -> None:
+        """Called by logind PrepareForSleep(False): restart the lighting
+        timer and unpause the fan loop so custom mode re-engages."""
+        self._lighting.resume()
+        set_suspended(False)
+
+    def _on_system_shutdown(self) -> None:
+        """Called by logind PrepareForShutdown(True): same cleanup as
+        suspend. The process is about to be killed anyway; pausing is
+        harmless and lets the fan-auto / brightness=0 writes win the race
+        against the background loops."""
+        set_suspended(True)
+        self._lighting.pause()
+        try:
+            api.set_fan_auto()
+            logger.info("shutdown cleanup: fans set to auto")
+        except Exception:
+            logger.exception("set_fan_auto during shutdown failed")
+        try:
+            api.set_keyboard_brightness(0)
+            logger.info("shutdown cleanup: keyboard brightness set to 0")
+        except Exception:
+            logger.exception("set_keyboard_brightness(0) during shutdown failed")
     # ── Geometry persistence ──
 
     def _restore_geometry(self):
