@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import os
 import signal
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QSize, QTimer
+from PySide6.QtCore import Qt, QSize, QTimer, Signal
 from PySide6.QtGui import QIcon, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView, QFrame, QHeaderView, QMenu, QVBoxLayout,
@@ -99,7 +100,7 @@ class ProcessInfo:
 class ProcessGroup:
     key: str
     name: str
-    icon: QIcon
+    icon: QIcon = field(default_factory=QIcon)
     instances: list[ProcessInfo] = field(default_factory=list)
 
     @property
@@ -667,7 +668,11 @@ _cpu_tracker = _CpuTracker()
 
 
 def read_process_groups(limit: int = _TOP_GROUPS) -> list[ProcessGroup]:
-    """Scan /proc, group by app identity, return top groups by RAM."""
+    """Scan /proc, group by app identity, return top groups by RAM.
+
+    Thread-safe for a single concurrent scanner. Does **not** create QIcons
+    (those are attached on the GUI thread via ``attach_group_icons``).
+    """
     procs: list[ProcessInfo] = []
     try:
         entries = os.listdir("/proc")
@@ -686,10 +691,6 @@ def read_process_groups(limit: int = _TOP_GROUPS) -> list[ProcessGroup]:
         group_name, detail, mem_kb, exe, group_key = meta
         jiffies = _read_proc_cpu_jiffies(pid)
         cpu_pct = _cpu_tracker.cpu_pct(pid, jiffies, system_delta)
-        # Prefer app name for icons (protonvpn-app), fall back to exe basename
-        icon = resolve_process_icon(group_name, exe if not _is_runtime_binary(Path(exe).name if exe else "") else "")
-        if icon.isNull():
-            icon = resolve_process_icon(group_name, exe)
         procs.append(ProcessInfo(
             pid=pid,
             name=group_name,
@@ -698,7 +699,6 @@ def read_process_groups(limit: int = _TOP_GROUPS) -> list[ProcessGroup]:
             exe=exe,
             group_key=group_key,
             detail=detail,
-            icon=icon,
         ))
 
     _cpu_tracker.prune({p.pid for p in procs})
@@ -708,23 +708,33 @@ def read_process_groups(limit: int = _TOP_GROUPS) -> list[ProcessGroup]:
         key = p.group_key or p.name.lower()
         g = groups.get(key)
         if g is None:
-            groups[key] = ProcessGroup(key=key, name=p.name, icon=p.icon, instances=[p])
+            groups[key] = ProcessGroup(key=key, name=p.name, instances=[p])
         else:
             g.instances.append(p)
-            if g.icon.isNull() and not p.icon.isNull():
-                g.icon = p.icon
             # Prefer a more specific display name over a bare runtime name
             if _is_runtime_binary(g.name) and not _is_runtime_binary(p.name):
                 g.name = p.name
 
     for g in groups.values():
         g.instances.sort(key=lambda p: p.rss_kb, reverse=True)
-        # Group CPU is sum of members' system shares, still capped at 100%
-        # (sampling noise can slightly overshoot).
-        # Clamp when displaying via ProcessGroup.cpu_pct property if needed.
 
     ordered = sorted(groups.values(), key=lambda g: g.rss_kb, reverse=True)
     return ordered[:limit]
+
+
+def attach_group_icons(groups: list[ProcessGroup]) -> None:
+    """Resolve QIcons on the GUI thread (cheap after the first cache fill)."""
+    for g in groups:
+        exe = g.instances[0].exe if g.instances else ""
+        exe_base = Path(exe).name if exe else ""
+        icon = resolve_process_icon(
+            g.name, exe if not _is_runtime_binary(exe_base) else "",
+        )
+        if icon.isNull() and exe:
+            icon = resolve_process_icon(g.name, exe)
+        g.icon = icon
+        for p in g.instances:
+            p.icon = icon
 
 
 def stop_process(pid: int, force: bool = False) -> bool:
@@ -758,6 +768,9 @@ _ROLE_KIND = Qt.UserRole + 2  # "group" | "instance"
 
 class TopProcessesCard(QFrame):
     """Double-width card: grouped processes in an aligned tree table."""
+
+    # Emitted from a worker thread with list[ProcessGroup] (no QIcons yet)
+    _scan_finished = Signal(object)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -796,6 +809,12 @@ class TopProcessesCard(QFrame):
         self._tree.setExpandsOnDoubleClick(False)
         self._tree.setContextMenuPolicy(Qt.CustomContextMenu)
         self._tree.customContextMenuRequested.connect(self._on_context_menu)
+
+        # Background /proc scan — never block the GUI thread
+        self._scan_lock = threading.Lock()
+        self._scan_busy = False
+        self._scan_again = False
+        self._scan_finished.connect(self._on_scan_finished)
 
         # Flat fill matching the card; selection highlight on click
         self._tree.setStyleSheet(f"""
@@ -857,7 +876,40 @@ class TopProcessesCard(QFrame):
         self._tree.itemSelectionChanged.connect(self._remember_selection)
 
     def refresh(self):
-        self.update_groups(read_process_groups())
+        """Kick off a background /proc scan; UI updates when it completes."""
+        with self._scan_lock:
+            if self._scan_busy:
+                # Coalesce: run one more scan after the in-flight one finishes
+                self._scan_again = True
+                return
+            self._scan_busy = True
+        threading.Thread(
+            target=self._scan_worker, daemon=True, name="proc-scan",
+        ).start()
+
+    def _scan_worker(self):
+        try:
+            groups = read_process_groups()
+        except Exception:
+            groups = []
+        self._scan_finished.emit(groups)
+
+    def _on_scan_finished(self, groups: object):
+        group_list: list[ProcessGroup] = groups if isinstance(groups, list) else []
+        # QIcon / theme work stays on the GUI thread
+        try:
+            attach_group_icons(group_list)
+        except Exception:
+            pass
+        self.update_groups(group_list)
+
+        again = False
+        with self._scan_lock:
+            self._scan_busy = False
+            again = self._scan_again
+            self._scan_again = False
+        if again:
+            self.refresh()
 
     def update_groups(self, groups: list[ProcessGroup]):
         self._groups_by_key = {g.key: g for g in groups}
@@ -872,40 +924,43 @@ class TopProcessesCard(QFrame):
 
         structure_changed = new_keys != list(self._group_items.keys())
 
-        if not structure_changed and self._group_items:
-            self._update_in_place(groups)
+        self._tree.setUpdatesEnabled(False)
+        try:
+            if not structure_changed and self._group_items:
+                self._update_in_place(groups)
+                self._restore_selection()
+                return
+
+            self._tree.clear()
+            self._group_items.clear()
+            self._instance_items.clear()
+
+            if not groups:
+                return
+
+            for group in groups:
+                gitem = QTreeWidgetItem(self._tree)
+                self._fill_group_item(gitem, group)
+                gitem.setExpanded(group.key in expanded)
+                gitem.setChildIndicatorPolicy(
+                    QTreeWidgetItem.ShowIndicator if group.count > 1
+                    else QTreeWidgetItem.DontShowIndicator
+                )
+                font = gitem.font(_COL_PROCESS)
+                font.setBold(True)
+                gitem.setFont(_COL_PROCESS, font)
+                self._group_items[group.key] = gitem
+
+                if group.count > 1:
+                    for proc in group.instances:
+                        child = QTreeWidgetItem(gitem)
+                        self._fill_instance_item(child, proc)
+                        self._instance_items[proc.pid] = child
+
             self._restore_selection()
-            return
-
-        self._tree.clear()
-        self._group_items.clear()
-        self._instance_items.clear()
-
-        if not groups:
-            return
-
-        for group in groups:
-            gitem = QTreeWidgetItem(self._tree)
-            self._fill_group_item(gitem, group)
-            gitem.setExpanded(group.key in expanded)
-            gitem.setChildIndicatorPolicy(
-                QTreeWidgetItem.ShowIndicator if group.count > 1
-                else QTreeWidgetItem.DontShowIndicator
-            )
-            font = gitem.font(_COL_PROCESS)
-            font.setBold(True)
-            gitem.setFont(_COL_PROCESS, font)
-            self._group_items[group.key] = gitem
-
-            if group.count > 1:
-                for proc in group.instances:
-                    child = QTreeWidgetItem(gitem)
-                    self._fill_instance_item(child, proc)
-                    self._instance_items[proc.pid] = child
-
-        self._restore_selection()
-        QTimer.singleShot(0, lambda: self._tree.verticalScrollBar().setValue(scroll))
-
+        finally:
+            self._tree.setUpdatesEnabled(True)
+            QTimer.singleShot(0, lambda: self._tree.verticalScrollBar().setValue(scroll))
     def _update_in_place(self, groups: list[ProcessGroup]):
         """Refresh values without rebuilding (keeps expand + selection)."""
         live_pids: set[int] = set()
