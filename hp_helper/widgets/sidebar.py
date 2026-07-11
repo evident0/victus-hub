@@ -18,14 +18,19 @@ class Sidebar(QWidget):
 
     tab_changed = Signal(int)
 
+    # Button size; right margin is 0 so tabs sit flush against content panels.
+    _BTN = 56
+    _ICON = 28
+    _SIDE_MARGIN = 4
+
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setFixedWidth(56)
+        self.setFixedWidth(self._SIDE_MARGIN + self._BTN)
         self.setObjectName("sidebar")
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(4, 4, 4, 4)
-        layout.setSpacing(2)
+        layout.setContentsMargins(self._SIDE_MARGIN, 6, 0, 6)
+        layout.setSpacing(4)
         layout.setAlignment(Qt.AlignTop)
 
         self._buttons: list[QPushButton] = []
@@ -33,10 +38,10 @@ class Sidebar(QWidget):
 
         for i, (icon_file, tooltip) in enumerate(TABS):
             btn = QPushButton(self)
-            btn.setIcon(load_icon(icon_file, size=24))
-            btn.setIconSize(QSize(24, 24))
+            btn.setIcon(load_icon(icon_file, size=self._ICON))
+            btn.setIconSize(QSize(self._ICON, self._ICON))
             btn.setToolTip(tooltip)
-            btn.setFixedSize(48, 48)
+            btn.setFixedSize(self._BTN, self._BTN)
             btn.setCursor(Qt.PointingHandCursor)
             btn.setObjectName("sidebarBtn")
             btn.setProperty("active", i == 0)
