@@ -1,19 +1,41 @@
-"""Sensors page with collapsible grouped table."""
+"""Sensors page with collapsible grouped table (Top Processes visual style)."""
 
 from PySide6.QtWidgets import (
-    QAbstractItemView, QPushButton,
+    QAbstractItemView, QFrame, QHeaderView, QPushButton,
     QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget,
 )
 from PySide6.QtCore import QSize, Qt, Signal, QTimer
 from PySide6.QtGui import QColor, QIcon
 
 from hp_helper.theme import COLORS
-from pathlib import Path
-
 from hp_helper.icon_utils import load_pixmap
 
 # Lazily built so QApplication exists before QPixmap allocation
 _graph_icon: QIcon | None = None
+
+_COL_SENSOR = 0
+_COL_CURRENT = 1
+_COL_MAX = 2
+_COL_MIN = 3
+_COL_AVG = 4
+_COL_GRAPH = 5
+
+_GRAPH_BTN_STYLE = f"""
+    QPushButton {{
+        background: transparent;
+        border: none;
+        border-radius: 3px;
+    }}
+    QPushButton:hover {{
+        background-color: {COLORS['surface_raised']};
+    }}
+    QPushButton:pressed {{
+        background-color: {COLORS['border']};
+    }}
+    QPushButton:disabled {{
+        background: transparent;
+    }}
+"""
 
 
 def _get_graph_icon() -> QIcon:
@@ -32,33 +54,102 @@ class SensorsPage(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        surface = COLORS["surface"]
+        raised = COLORS["surface_raised"]
+
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(8, 8, 8, 8)
-        layout.setSpacing(4)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(0)
+
+        # Card frame — same shell as Top Processes
+        card = QFrame()
+        card.setObjectName("sensorsCard")
+        card.setStyleSheet(f"""
+            #sensorsCard {{
+                background-color: {surface};
+                border: 1px solid {COLORS['border']};
+                border-radius: 10px;
+            }}
+        """)
+        card_layout = QVBoxLayout(card)
+        card_layout.setContentsMargins(6, 6, 6, 6)
+        card_layout.setSpacing(0)
 
         self._tree = QTreeWidget()
+        self._tree.setObjectName("sensorsTree")
         self._tree.setColumnCount(6)
-        self._tree.setHeaderLabels(["Sensor", "Current", "Maximum", "Minimum", "Average", "Graph"])
+        self._tree.setHeaderLabels([
+            "Sensor", "Current", "Maximum", "Minimum", "Average", "Graph",
+        ])
         self._tree.setRootIsDecorated(True)
-        self._tree.setIndentation(0)
-        self._tree.setAlternatingRowColors(False)
+        self._tree.setIndentation(16)
         self._tree.setAnimated(True)
-        self._tree.setSelectionMode(QAbstractItemView.NoSelection)
+        self._tree.setUniformRowHeights(True)
+        self._tree.setAlternatingRowColors(False)
+        self._tree.setSelectionMode(QAbstractItemView.SingleSelection)
+        self._tree.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self._tree.setFocusPolicy(Qt.StrongFocus)
+        self._tree.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self._tree.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
+        # Expand/collapse only via the branch arrow (match Top Processes)
+        self._tree.setExpandsOnDoubleClick(False)
 
-        # Column widths
-        self._tree.setColumnWidth(0, 200)
-        self._tree.setColumnWidth(1, 100)
-        self._tree.setColumnWidth(2, 100)
-        self._tree.setColumnWidth(3, 100)
-        self._tree.setColumnWidth(4, 100)
-        self._tree.setColumnWidth(5, 60)
+        self._tree.setStyleSheet(f"""
+            QTreeWidget#sensorsTree {{
+                background-color: {surface};
+                border: none;
+                border-radius: 0;
+                outline: none;
+                color: {COLORS['text']};
+            }}
+            QTreeWidget#sensorsTree::item {{
+                padding: 3px 6px;
+                background-color: {surface};
+            }}
+            QTreeWidget#sensorsTree::item:hover {{
+                background-color: {raised};
+            }}
+            QTreeWidget#sensorsTree::item:selected,
+            QTreeWidget#sensorsTree::item:selected:active {{
+                background-color: {raised};
+                color: {COLORS['text']};
+            }}
+            QHeaderView::section {{
+                background-color: {surface};
+                color: {COLORS['text_secondary']};
+                border: none;
+                border-bottom: 1px solid {COLORS['border']};
+                padding: 4px 8px;
+                font-weight: bold;
+                font-size: 11px;
+            }}
+            QHeaderView {{
+                background-color: {surface};
+            }}
+        """)
 
-        self._tree.itemClicked.connect(self._on_item_clicked)
+        header = self._tree.header()
+        header.setDefaultAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        header.setStretchLastSection(False)
+        header.setSectionResizeMode(_COL_SENSOR, QHeaderView.Stretch)
+        for col in (_COL_CURRENT, _COL_MAX, _COL_MIN, _COL_AVG):
+            header.setSectionResizeMode(col, QHeaderView.Fixed)
+            self._tree.setColumnWidth(col, 100)
+            self._tree.headerItem().setTextAlignment(
+                col, int(Qt.AlignRight | Qt.AlignVCenter),
+            )
+        header.setSectionResizeMode(_COL_GRAPH, QHeaderView.Fixed)
+        self._tree.setColumnWidth(_COL_GRAPH, 56)
+        self._tree.headerItem().setTextAlignment(
+            _COL_GRAPH, int(Qt.AlignHCenter | Qt.AlignVCenter),
+        )
+
+        card_layout.addWidget(self._tree)
+        layout.addWidget(card)
 
         # Tracking for in-place updates (avoids destroying item widgets on every poll)
         self._sensor_items: dict[str, QTreeWidgetItem] = {}
         self._group_items: dict[str, QTreeWidgetItem] = {}
-        layout.addWidget(self._tree)
 
     def update_rows(self, rows: list):
         """Refresh sensor values in-place when structure is stable; rebuild only on change."""
@@ -78,31 +169,33 @@ class SensorsPage(QWidget):
             for group_name, group_rows in groups.items():
                 gitem = self._group_items.get(group_name)
                 if gitem is not None:
-                    gitem.setText(1, f"({len(group_rows)})")
+                    gitem.setText(_COL_CURRENT, f"({len(group_rows)})")
 
             for key, row in by_key.items():
                 item = self._sensor_items[key]
                 d = row["definition"]
                 stats = row["stats"]
                 current_val = stats.get("current", {}).get("value", "—")
-                item.setText(1, str(current_val))
-                item.setText(2, str(stats.get("maximum", "—")))
-                item.setText(3, str(stats.get("minimum", "—")))
-                item.setText(4, str(stats.get("average", "—")))
-                item.setToolTip(0, stats.get("current", {}).get("source", ""))
-                # Temp coloring
+                item.setText(_COL_CURRENT, str(current_val))
+                item.setText(_COL_MAX, str(stats.get("maximum", "—")))
+                item.setText(_COL_MIN, str(stats.get("minimum", "—")))
+                item.setText(_COL_AVG, str(stats.get("average", "—")))
+                item.setToolTip(_COL_SENSOR, stats.get("current", {}).get("source", ""))
+                # Temp coloring (value only — row stays flat)
                 if d.unit == "\u00B0C":
                     try:
                         n = float(str(current_val).replace("\u00B0C", "").strip())
-                        item.setForeground(1, QColor("#ff4444") if n > 95 else QColor(COLORS["text"]))
+                        item.setForeground(
+                            _COL_CURRENT,
+                            QColor("#ff4444") if n > 95 else QColor(COLORS["text"]),
+                        )
                     except ValueError:
                         pass
                 else:
-                    item.setForeground(1, QColor(COLORS["text"]))
+                    item.setForeground(_COL_CURRENT, QColor(COLORS["text"]))
             return
 
         # ── Structure changed: rebuild the tree ──
-        # Save scroll position and expanded groups before clearing
         scroll_bar = self._tree.verticalScrollBar()
         saved_scroll = scroll_bar.value()
         saved_expanded: set[str] = set()
@@ -117,86 +210,65 @@ class SensorsPage(QWidget):
 
         for group_name, group_rows in groups.items():
             group_item = QTreeWidgetItem(self._tree)
-            group_item.setText(0, group_name)
-            group_item.setText(1, f"({len(group_rows)})")
-            group_item.setExpanded(group_name in saved_expanded if saved_expanded else True)
-            # Style group header
-            for c in range(6):
-                group_item.setBackground(c, QColor("#252525"))
-            group_font = group_item.font(0)
+            group_item.setText(_COL_SENSOR, group_name)
+            group_item.setText(_COL_CURRENT, f"({len(group_rows)})")
+            group_item.setExpanded(
+                group_name in saved_expanded if saved_expanded else True
+            )
+            group_item.setChildIndicatorPolicy(QTreeWidgetItem.ShowIndicator)
+            group_font = group_item.font(_COL_SENSOR)
             group_font.setBold(True)
-            group_font.setPointSize(10)
-            group_item.setFont(0, group_font)
+            group_item.setFont(_COL_SENSOR, group_font)
             self._group_items[group_name] = group_item
 
-            for ri, row in enumerate(group_rows):
+            for row in group_rows:
                 d = row["definition"]
                 stats = row["stats"]
 
                 item = QTreeWidgetItem(group_item)
-                item.setText(0, d.name)
-                item.setToolTip(0, stats.get("current", {}).get("source", ""))
+                item.setText(_COL_SENSOR, d.name)
+                item.setToolTip(_COL_SENSOR, stats.get("current", {}).get("source", ""))
 
                 current_val = stats.get("current", {}).get("value", "—")
-                item.setText(1, str(current_val))
-                item.setText(2, str(stats.get("maximum", "—")))
-                item.setText(3, str(stats.get("minimum", "—")))
-                item.setText(4, str(stats.get("average", "—")))
+                item.setText(_COL_CURRENT, str(current_val))
+                item.setText(_COL_MAX, str(stats.get("maximum", "—")))
+                item.setText(_COL_MIN, str(stats.get("minimum", "—")))
+                item.setText(_COL_AVG, str(stats.get("average", "—")))
+                for col in (_COL_CURRENT, _COL_MAX, _COL_MIN, _COL_AVG):
+                    item.setTextAlignment(col, int(Qt.AlignRight | Qt.AlignVCenter))
 
-                # Graph button in column 5 — transparent icon-only
+                # Graph button — icon-only, flat
                 btn = QPushButton()
                 btn.setIcon(_get_graph_icon())
                 btn.setIconSize(QSize(18, 18))
                 btn.setFixedSize(24, 24)
-                btn.setStyleSheet("""
-                    QPushButton {
-                        background: transparent;
-                        border: none;
-                        border-radius: 3px;
-                    }
-                    QPushButton:hover {
-                        background: rgba(255, 255, 255, 0.10);
-                    }
-                    QPushButton:pressed {
-                        background: rgba(255, 255, 255, 0.15);
-                    }
-                    QPushButton:disabled {
-                        background: transparent;
-                    }
-                """)
+                btn.setStyleSheet(_GRAPH_BTN_STYLE)
                 if d.graphable:
                     btn.setCursor(Qt.PointingHandCursor)
                     btn.setToolTip(f"Open {d.name} graph")
                     btn.clicked.connect(
-                        lambda checked, k=d.key: self.open_graph_requested.emit(k)
+                        lambda checked=False, k=d.key: self.open_graph_requested.emit(k)
                     )
                 else:
                     btn.setEnabled(False)
                     btn.setToolTip("Not graphable")
-                self._tree.setItemWidget(item, 5, btn)
-                # Alternating row color
-                bg = "#181818" if ri % 2 == 0 else "#1d1d1d"
-                for c in range(6):
-                    item.setBackground(c, QColor(bg))
+                self._tree.setItemWidget(item, _COL_GRAPH, btn)
 
                 # Temp coloring
                 if d.unit == "\u00B0C":
                     try:
                         n = float(str(current_val).replace("\u00B0C", "").strip())
                         if n > 95:
-                            item.setForeground(1, QColor("#ff4444"))
+                            item.setForeground(_COL_CURRENT, QColor("#ff4444"))
                     except ValueError:
                         pass
 
                 self._sensor_items[d.key] = item
 
-        # Restore scroll position after the tree repopulates
+        # Align metric columns on group rows too
+        for gitem in self._group_items.values():
+            gitem.setTextAlignment(
+                _COL_CURRENT, int(Qt.AlignRight | Qt.AlignVCenter),
+            )
+
         QTimer.singleShot(0, lambda: scroll_bar.setValue(saved_scroll))
-
-
-    def _on_item_clicked(self, item: QTreeWidgetItem, col: int):
-        """Toggle collapse/expand on group header click (col 0)."""
-        if item.parent() is None:  # group header
-            item.setExpanded(not item.isExpanded())
-
-

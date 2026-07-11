@@ -452,6 +452,29 @@ def _icon_from_filesystem(name: str) -> QIcon:
     return QIcon()
 
 
+def _selection_stable_icon(icon: QIcon, size: int = _ICON_PX) -> QIcon:
+    """Return an icon that looks identical when the row is selected/active.
+
+    QTreeWidget paints QIcon.Selected under highlight; many theme icons
+    recolor or blank that mode, so bake the same pixmap into every mode.
+    """
+    if icon.isNull():
+        return icon
+    pm = icon.pixmap(QSize(size, size))
+    if pm.isNull():
+        return icon
+    stable = QIcon()
+    for mode in (
+        QIcon.Mode.Normal,
+        QIcon.Mode.Selected,
+        QIcon.Mode.Active,
+        QIcon.Mode.Disabled,
+    ):
+        for state in (QIcon.State.On, QIcon.State.Off):
+            stable.addPixmap(pm, mode, state)
+    return stable
+
+
 def resolve_process_icon(name: str, exe: str = "") -> QIcon:
     if not QIcon.themeName():
         for candidate in ("breeze", "Adwaita", "hicolor"):
@@ -496,6 +519,7 @@ def resolve_process_icon(name: str, exe: str = "") -> QIcon:
             icon = QIcon.fromTheme(key)
             if icon.isNull():
                 icon = _icon_from_filesystem(key)
+        icon = _selection_stable_icon(icon)
         _icon_cache[key] = icon
         if not icon.isNull():
             return icon
@@ -505,7 +529,7 @@ def resolve_process_icon(name: str, exe: str = "") -> QIcon:
         fallback = _icon_from_filesystem("application-x-executable")
     if fallback.isNull():
         fallback = QIcon.fromTheme("application-default-icon")
-    return fallback
+    return _selection_stable_icon(fallback)
 
 
 class _CpuTracker:
