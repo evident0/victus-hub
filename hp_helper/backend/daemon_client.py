@@ -99,7 +99,17 @@ def request_keyboard_last_event() -> tuple[list[int], int, int]:
     return mods, int(parts[2]), int(parts[3])
 
 
-def request_power_limits(stapm_limit: int, fast_limit: int, slow_limit: int) -> str:
-    logger.info("\u2192 daemon: power-limits STAPM=%d fast=%d slow=%d", stapm_limit, fast_limit, slow_limit)
-    response = _request_daemon(f"power-limits\t{stapm_limit}\t{fast_limit}\t{slow_limit}\n")
+def request_power_limits(
+    stapm_limit: int,
+    fast_limit: int,
+    slow_limit: int,
+    tctl_temp: int = 95,
+) -> str:
+    logger.info(
+        "\u2192 daemon: power-limits STAPM=%d fast=%d slow=%d tctl=%d",
+        stapm_limit, fast_limit, slow_limit, tctl_temp,
+    )
+    response = _request_daemon(
+        f"power-limits\t{stapm_limit}\t{fast_limit}\t{slow_limit}\t{tctl_temp}\n"
+    )
     return protocol.parse_status_response(response)

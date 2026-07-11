@@ -48,6 +48,7 @@ class PowerLimitController(QObject):
                     settings.stapm_limit,
                     settings.fast_limit,
                     settings.slow_limit,
+                    settings.tctl_temp,
                 )
                 self.limits_changed.emit()
             except Exception:

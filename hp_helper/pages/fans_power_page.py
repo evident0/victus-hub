@@ -14,7 +14,9 @@ from hp_helper.theme import COLORS
 from hp_helper.pages.settings_page import make_spin
 from hp_helper.power_limits import (
     POWER_MIN_MW, POWER_MAX_MW, POWER_STEP_MW, DEFAULT_POWER_LIMIT_MW,
-    DEFAULT_REAPPLY_SECONDS, PowerLimitSettings, clamp_power_limit,
+    DEFAULT_REAPPLY_SECONDS, DEFAULT_TCTL_TEMP_C,
+    TCTL_TEMP_MIN_C, TCTL_TEMP_MAX_C,
+    PowerLimitSettings, clamp_power_limit, clamp_tctl_temp,
     read_power_enabled, write_power_enabled,
     read_power_limit_settings, write_power_limit_settings,
 )
@@ -39,12 +41,14 @@ class FansPowerPage(QWidget):
         self._stapm_limit = pwr.stapm_limit
         self._fast_limit = pwr.fast_limit
         self._slow_limit = pwr.slow_limit
+        self._tctl_temp = pwr.tctl_temp
         self._reapply_seconds = pwr.reapply_seconds
         self._power_enabled = read_power_enabled()
         # Last values sent via Apply (used to detect dirty sliders)
         self._applied_stapm = pwr.stapm_limit
         self._applied_fast = pwr.fast_limit
         self._applied_slow = pwr.slow_limit
+        self._applied_tctl = pwr.tctl_temp
 
         self._edit_profile = 1
         self._profiles: list[FanProfileConfig] = []
@@ -77,10 +81,6 @@ class FansPowerPage(QWidget):
         power_title.setStyleSheet("font-size: 18px; font-weight: 800; color: #ffffff;")
         power_layout.addWidget(power_title)
 
-        subtitle = QLabel("RyzenAdj limits in watts.")
-        subtitle.setStyleSheet(f"font-size: 12px; color: {COLORS['text_secondary']};")
-        power_layout.addWidget(subtitle)
-
         # Sliders
         self._stapm_wrapper = self._make_power_slider("STAPM Limit", self._stapm_limit)
         self._stapm_wrapper._slider.valueChanged.connect(self._on_stapm_changed)
@@ -94,18 +94,17 @@ class FansPowerPage(QWidget):
         self._slow_wrapper._slider.valueChanged.connect(self._on_slow_changed)
         power_layout.addWidget(self._slow_wrapper)
 
-        # Reapply spinbox
+        self._tctl_wrapper = self._make_tctl_slider(self._tctl_temp)
+        self._tctl_wrapper._slider.valueChanged.connect(self._on_tctl_changed)
+        power_layout.addWidget(self._tctl_wrapper)
+
+        # Reapply spinbox (minimum 1s)
         self._reapply_spin = make_spin(
             "Auto reapply interval", "s",
-            self._reapply_seconds, 0, 3600,
+            self._reapply_seconds, 1, 3600,
         )
         self._reapply_spin._spin.valueChanged.connect(self._on_reapply_changed)
         power_layout.addLayout(self._reapply_spin)
-
-        reapply_help = QLabel("0 disables periodic reapply. Default is 5 seconds.")
-        reapply_help.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 11px;")
-        reapply_help.setWordWrap(True)
-        power_layout.addWidget(reapply_help)
 
 
         # Apply button + enable checkbox + status
@@ -282,6 +281,35 @@ class FansPowerPage(QWidget):
         w._slider = slider  # type: ignore
         return w
 
+    def _make_tctl_slider(self, initial_c: int = DEFAULT_TCTL_TEMP_C) -> QWidget:
+        w = QWidget()
+        w.setStyleSheet("background: transparent;")
+        l = QVBoxLayout(w)
+        l.setContentsMargins(0, 0, 0, 0)
+        l.setSpacing(4)
+
+        row = QHBoxLayout()
+        lbl = QLabel("Tctl Temp")
+        lbl.setStyleSheet(f"color: #d8d8d8; font-size: 12px;")
+        row.addWidget(lbl)
+        row.addStretch()
+        val_label = QLabel(f"{initial_c} °C")
+        val_label.setStyleSheet("color: #ffffff; font-size: 12px; font-weight: bold;")
+        row.addWidget(val_label)
+        l.addLayout(row)
+
+        slider = QSlider(Qt.Horizontal)
+        slider.setRange(TCTL_TEMP_MIN_C, TCTL_TEMP_MAX_C)
+        slider.setSingleStep(1)
+        slider.setPageStep(5)
+        slider.setValue(initial_c)
+        slider.valueChanged.connect(lambda v: val_label.setText(f"{v} °C"))
+        l.addWidget(slider)
+
+        w._val_label = val_label  # type: ignore
+        w._slider = slider  # type: ignore
+        return w
+
     # ── Power callbacks ──
 
     def _on_stapm_changed(self, value: int):
@@ -297,14 +325,19 @@ class FansPowerPage(QWidget):
         self._slow_limit = clamp_power_limit(value)
         self._update_apply_enabled()
 
+    def _on_tctl_changed(self, value: int):
+        self._tctl_temp = clamp_tctl_temp(value)
+        self._update_apply_enabled()
+
     def _on_reapply_changed(self, value: int):
         # Persist interval only; keep last-applied limit values until Apply
-        self._reapply_seconds = max(0, value)
+        self._reapply_seconds = max(1, value)
         applied = read_power_limit_settings()
         write_power_limit_settings(PowerLimitSettings(
             stapm_limit=applied.stapm_limit,
             fast_limit=applied.fast_limit,
             slow_limit=applied.slow_limit,
+            tctl_temp=applied.tctl_temp,
             reapply_seconds=self._reapply_seconds,
         ))
 
@@ -319,6 +352,7 @@ class FansPowerPage(QWidget):
             self._stapm_limit != self._applied_stapm
             or self._fast_limit != self._applied_fast
             or self._slow_limit != self._applied_slow
+            or self._tctl_temp != self._applied_tctl
         )
 
     def _update_apply_enabled(self):
@@ -335,6 +369,7 @@ class FansPowerPage(QWidget):
         self._applied_stapm = settings.stapm_limit
         self._applied_fast = settings.fast_limit
         self._applied_slow = settings.slow_limit
+        self._applied_tctl = settings.tctl_temp
         self._update_apply_enabled()
 
         # Apply immediately so limits take effect without waiting for reapply tick
@@ -344,6 +379,7 @@ class FansPowerPage(QWidget):
                     settings.stapm_limit,
                     settings.fast_limit,
                     settings.slow_limit,
+                    settings.tctl_temp,
                 )
             except Exception:
                 pass
@@ -367,6 +403,7 @@ class FansPowerPage(QWidget):
             stapm_limit=self._stapm_limit,
             fast_limit=self._fast_limit,
             slow_limit=self._slow_limit,
+            tctl_temp=self._tctl_temp,
             reapply_seconds=self._reapply_seconds,
         )
 
@@ -541,10 +578,12 @@ class FansPowerPage(QWidget):
         self._stapm_wrapper._slider.setValue(pwr.stapm_limit)
         self._fast_wrapper._slider.setValue(pwr.fast_limit)
         self._slow_wrapper._slider.setValue(pwr.slow_limit)
+        self._tctl_wrapper._slider.setValue(pwr.tctl_temp)
         self._reapply_spin._spin.setValue(pwr.reapply_seconds)
         self._applied_stapm = pwr.stapm_limit
         self._applied_fast = pwr.fast_limit
         self._applied_slow = pwr.slow_limit
+        self._applied_tctl = pwr.tctl_temp
         self._power_enabled = read_power_enabled()
         self._power_check.blockSignals(True)
         self._power_check.setChecked(self._power_enabled)

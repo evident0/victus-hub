@@ -149,8 +149,8 @@ def get_keyboard_last_event() -> KeyEvent:
     return KeyEvent(mods=tuple(sorted(mods)), key=key, seq=seq)
 
 
-def apply_power_limits(stapm: int, fast: int, slow: int) -> str:
-    return daemon_client.request_power_limits(stapm, fast, slow)
+def apply_power_limits(stapm: int, fast: int, slow: int, tctl_temp: int = 95) -> str:
+    return daemon_client.request_power_limits(stapm, fast, slow, tctl_temp)
 
 
 def get_fan_config() -> FanConfig:

@@ -223,6 +223,17 @@ def _parse_rgb(body: str) -> tuple[int, int, int]:
         raise RuntimeError("invalid integer") from None
 
 
+def _parse_power_limits(body: str) -> tuple[int, int, int, int]:
+    """Parse power-limit fields: stapm, fast, slow, tctl-temp (°C)."""
+    parts = body.split("\t")
+    if len(parts) != 4:
+        raise RuntimeError("expected 4 integers (stapm, fast, slow, tctl)")
+    try:
+        return int(parts[0]), int(parts[1]), int(parts[2]), int(parts[3])
+    except ValueError:
+        raise RuntimeError("invalid integer") from None
+
+
 def _make_dispatch(sampler: RaplPowerSampler, sampler_lock: threading.Lock | None):
     """Build the (prefix -> handler) table for the request dispatch.
 
@@ -286,9 +297,12 @@ def _make_dispatch(sampler: RaplPowerSampler, sampler_lock: threading.Lock | Non
         return f"OK\t{mods_csv}\t{key}\t{seq}\n"
 
     def _power_limits(body: str) -> str:
-        s, f, sl = _parse_rgb(body)  # same shape: three tab-separated ints
-        logger.info("[power-limits] daemon request: STAPM=%d fast=%d slow=%d", s, f, sl)
-        result = ryzenadj.apply_power_limits(s, f, sl)
+        s, f, sl, tctl = _parse_power_limits(body)
+        logger.info(
+            "[power-limits] daemon request: STAPM=%d fast=%d slow=%d tctl=%d",
+            s, f, sl, tctl,
+        )
+        result = ryzenadj.apply_power_limits(s, f, sl, tctl)
         return protocol.format_status_response((True, result))
 
     def _keyboard_last_input(_body: str) -> str:
