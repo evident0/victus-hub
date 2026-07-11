@@ -5,11 +5,11 @@ from PySide6.QtCore import Signal, Qt, QSize
 
 from hp_helper.icon_utils import load_icon
 TABS = [
-    ("icons8-laptop-32.png", "Home"),
-    ("icons8-fan-32.png", "Fans & Power"),
-    ("icons8-temperature-32.png", "Sensors"),
-    ("icons8-keyboard-32.png", "Keyboard"),
-    ("icons8-settings-32.png", "Settings"),
+    ("NewIcons/laptop.png", "Home"),
+    ("NewIcons/fan.png", "Fans & Power"),
+    ("NewIcons/temperature.png", "Sensors"),
+    ("NewIcons/keyboard.png", "Keyboard"),
+    ("NewIcons/settings.png", "Settings"),
 ]
 
 
@@ -20,7 +20,7 @@ class Sidebar(QWidget):
 
     # Button size; right margin is 0 so tabs sit flush against content panels.
     _BTN = 56
-    _ICON = 28
+    _ICON = 32
     _SIDE_MARGIN = 4
 
     def __init__(self, parent=None):
@@ -38,7 +38,7 @@ class Sidebar(QWidget):
 
         for i, (icon_file, tooltip) in enumerate(TABS):
             btn = QPushButton(self)
-            btn.setIcon(load_icon(icon_file, size=self._ICON))
+            btn.setIcon(load_icon(icon_file, color=None, size=self._ICON))
             btn.setIconSize(QSize(self._ICON, self._ICON))
             btn.setToolTip(tooltip)
             btn.setFixedSize(self._BTN, self._BTN)

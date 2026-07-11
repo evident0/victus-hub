@@ -24,10 +24,9 @@ def load_icon(filename: str, color: str | None = "#ffffff", size: int = 24) -> Q
     if colored.isNull():
         return QIcon()
     icon = QIcon()
-    # Supply common sizes for crisp rendering at different DPIs.
-    for s in (16, 24, 32, 48):
-        if s <= size or s == max(16, size):
-            icon.addPixmap(colored.scaled(s, s, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+    # Supply common sizes plus the requested size for crisp rendering at different DPIs.
+    for s in sorted({16, 24, 32, 48, size}):
+        icon.addPixmap(colored.scaled(s, s, Qt.KeepAspectRatio, Qt.SmoothTransformation))
     return icon
 
 
