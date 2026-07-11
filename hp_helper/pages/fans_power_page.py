@@ -1,9 +1,9 @@
-"""Fans & Power page — fan curve editor + power limit sliders."""
+"""Fans & Power page — fan curve editor + power limit steppers."""
 
 import threading
 
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QSlider,
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QCheckBox,
 )
 from PySide6.QtCore import Qt, Signal, QTimer
@@ -13,8 +13,7 @@ from hp_helper.widgets.fan_chart import FanChart
 from hp_helper.theme import COLORS
 from hp_helper.pages.settings_page import make_spin
 from hp_helper.power_limits import (
-    POWER_MIN_MW, POWER_MAX_MW, POWER_STEP_MW, DEFAULT_POWER_LIMIT_MW,
-    DEFAULT_REAPPLY_SECONDS, DEFAULT_TCTL_TEMP_C,
+    POWER_MIN_MW, POWER_MAX_MW,
     TCTL_TEMP_MIN_C, TCTL_TEMP_MAX_C,
     PowerLimitSettings, clamp_power_limit, clamp_tctl_temp,
     read_power_enabled, write_power_enabled,
@@ -44,7 +43,7 @@ class FansPowerPage(QWidget):
         self._tctl_temp = pwr.tctl_temp
         self._reapply_seconds = pwr.reapply_seconds
         self._power_enabled = read_power_enabled()
-        # Last values sent via Apply (used to detect dirty sliders)
+        # Last values sent via Apply (used to detect dirty controls)
         self._applied_stapm = pwr.stapm_limit
         self._applied_fast = pwr.fast_limit
         self._applied_slow = pwr.slow_limit
@@ -81,22 +80,37 @@ class FansPowerPage(QWidget):
         power_title.setStyleSheet("font-size: 18px; font-weight: 800; color: #ffffff;")
         power_layout.addWidget(power_title)
 
-        # Sliders
-        self._stapm_wrapper = self._make_power_slider("STAPM Limit", self._stapm_limit)
-        self._stapm_wrapper._slider.valueChanged.connect(self._on_stapm_changed)
-        power_layout.addWidget(self._stapm_wrapper)
+        # Power limit steppers (watts / °C)
+        power_min_w = POWER_MIN_MW // 1000
+        power_max_w = POWER_MAX_MW // 1000
 
-        self._fast_wrapper = self._make_power_slider("Fast Limit", self._fast_limit)
-        self._fast_wrapper._slider.valueChanged.connect(self._on_fast_changed)
-        power_layout.addWidget(self._fast_wrapper)
+        self._stapm_spin = make_spin(
+            "STAPM Limit", "W",
+            round(self._stapm_limit / 1000), power_min_w, power_max_w,
+        )
+        self._stapm_spin._spin.valueChanged.connect(self._on_stapm_changed)
+        power_layout.addLayout(self._stapm_spin)
 
-        self._slow_wrapper = self._make_power_slider("Slow Limit", self._slow_limit)
-        self._slow_wrapper._slider.valueChanged.connect(self._on_slow_changed)
-        power_layout.addWidget(self._slow_wrapper)
+        self._fast_spin = make_spin(
+            "Fast Limit", "W",
+            round(self._fast_limit / 1000), power_min_w, power_max_w,
+        )
+        self._fast_spin._spin.valueChanged.connect(self._on_fast_changed)
+        power_layout.addLayout(self._fast_spin)
 
-        self._tctl_wrapper = self._make_tctl_slider(self._tctl_temp)
-        self._tctl_wrapper._slider.valueChanged.connect(self._on_tctl_changed)
-        power_layout.addWidget(self._tctl_wrapper)
+        self._slow_spin = make_spin(
+            "Slow Limit", "W",
+            round(self._slow_limit / 1000), power_min_w, power_max_w,
+        )
+        self._slow_spin._spin.valueChanged.connect(self._on_slow_changed)
+        power_layout.addLayout(self._slow_spin)
+
+        self._tctl_spin = make_spin(
+            "Tctl Temp", "°C",
+            self._tctl_temp, TCTL_TEMP_MIN_C, TCTL_TEMP_MAX_C,
+        )
+        self._tctl_spin._spin.valueChanged.connect(self._on_tctl_changed)
+        power_layout.addLayout(self._tctl_spin)
 
         # Reapply spinbox (minimum 1s)
         self._reapply_spin = make_spin(
@@ -248,81 +262,19 @@ class FansPowerPage(QWidget):
         self._load_config()
         self._update_profile_label()
 
-    # ── Power slider helpers ──
-
-    def _make_power_slider(self, label: str, initial_mw: int = DEFAULT_POWER_LIMIT_MW) -> QWidget:
-        w = QWidget()
-        w.setStyleSheet("background: transparent;")
-        l = QVBoxLayout(w)
-        l.setContentsMargins(0, 0, 0, 0)
-        l.setSpacing(4)
-
-        row = QHBoxLayout()
-        lbl = QLabel(label)
-        lbl.setStyleSheet(f"color: #d8d8d8; font-size: 12px;")
-        row.addWidget(lbl)
-        row.addStretch()
-        val_label = QLabel(f"{round(initial_mw / 1000)} W")
-        val_label.setStyleSheet("color: #ffffff; font-size: 12px; font-weight: bold;")
-        row.addWidget(val_label)
-        l.addLayout(row)
-
-        slider = QSlider(Qt.Horizontal)
-        slider.setRange(POWER_MIN_MW, POWER_MAX_MW)
-        slider.setSingleStep(POWER_STEP_MW)
-        slider.setPageStep(POWER_STEP_MW * 5)
-        slider.setValue(initial_mw)
-        slider.valueChanged.connect(
-            lambda v: val_label.setText(f"{round(v / 1000)} W")
-        )
-        l.addWidget(slider)
-
-        w._val_label = val_label  # type: ignore
-        w._slider = slider  # type: ignore
-        return w
-
-    def _make_tctl_slider(self, initial_c: int = DEFAULT_TCTL_TEMP_C) -> QWidget:
-        w = QWidget()
-        w.setStyleSheet("background: transparent;")
-        l = QVBoxLayout(w)
-        l.setContentsMargins(0, 0, 0, 0)
-        l.setSpacing(4)
-
-        row = QHBoxLayout()
-        lbl = QLabel("Tctl Temp")
-        lbl.setStyleSheet(f"color: #d8d8d8; font-size: 12px;")
-        row.addWidget(lbl)
-        row.addStretch()
-        val_label = QLabel(f"{initial_c} °C")
-        val_label.setStyleSheet("color: #ffffff; font-size: 12px; font-weight: bold;")
-        row.addWidget(val_label)
-        l.addLayout(row)
-
-        slider = QSlider(Qt.Horizontal)
-        slider.setRange(TCTL_TEMP_MIN_C, TCTL_TEMP_MAX_C)
-        slider.setSingleStep(1)
-        slider.setPageStep(5)
-        slider.setValue(initial_c)
-        slider.valueChanged.connect(lambda v: val_label.setText(f"{v} °C"))
-        l.addWidget(slider)
-
-        w._val_label = val_label  # type: ignore
-        w._slider = slider  # type: ignore
-        return w
-
     # ── Power callbacks ──
 
-    def _on_stapm_changed(self, value: int):
-        # Local only — daemon command updates only on Apply
-        self._stapm_limit = clamp_power_limit(value)
+    def _on_stapm_changed(self, value_w: int):
+        # Local only — daemon command updates only on Apply (value is watts)
+        self._stapm_limit = clamp_power_limit(value_w * 1000)
         self._update_apply_enabled()
 
-    def _on_fast_changed(self, value: int):
-        self._fast_limit = clamp_power_limit(value)
+    def _on_fast_changed(self, value_w: int):
+        self._fast_limit = clamp_power_limit(value_w * 1000)
         self._update_apply_enabled()
 
-    def _on_slow_changed(self, value: int):
-        self._slow_limit = clamp_power_limit(value)
+    def _on_slow_changed(self, value_w: int):
+        self._slow_limit = clamp_power_limit(value_w * 1000)
         self._update_apply_enabled()
 
     def _on_tctl_changed(self, value: int):
@@ -347,7 +299,7 @@ class FansPowerPage(QWidget):
         self._update_power_status()
         self._update_apply_enabled()
 
-    def _sliders_dirty(self) -> bool:
+    def _power_values_dirty(self) -> bool:
         return (
             self._stapm_limit != self._applied_stapm
             or self._fast_limit != self._applied_fast
@@ -356,8 +308,8 @@ class FansPowerPage(QWidget):
         )
 
     def _update_apply_enabled(self):
-        # Clickable when inactive, or when active but sliders differ from last Apply
-        can_apply = (not self._power_enabled) or self._sliders_dirty()
+        # Clickable when inactive, or when active but values differ from last Apply
+        can_apply = (not self._power_enabled) or self._power_values_dirty()
         self._apply_btn.setEnabled(can_apply)
         self._apply_btn.setCursor(
             Qt.PointingHandCursor if can_apply else Qt.ArrowCursor
@@ -575,10 +527,10 @@ class FansPowerPage(QWidget):
     # ── Public API for timer sync ──
     def sync_power_from_settings(self):
         pwr = read_power_limit_settings()
-        self._stapm_wrapper._slider.setValue(pwr.stapm_limit)
-        self._fast_wrapper._slider.setValue(pwr.fast_limit)
-        self._slow_wrapper._slider.setValue(pwr.slow_limit)
-        self._tctl_wrapper._slider.setValue(pwr.tctl_temp)
+        self._stapm_spin._spin.setValue(round(pwr.stapm_limit / 1000))
+        self._fast_spin._spin.setValue(round(pwr.fast_limit / 1000))
+        self._slow_spin._spin.setValue(round(pwr.slow_limit / 1000))
+        self._tctl_spin._spin.setValue(pwr.tctl_temp)
         self._reapply_spin._spin.setValue(pwr.reapply_seconds)
         self._applied_stapm = pwr.stapm_limit
         self._applied_fast = pwr.fast_limit
