@@ -1,6 +1,8 @@
 # Victus Hub
 
-![showcase](showcase.png)
+![sensors tab](showcase_sensors.png)
+![settings tab](showcase_settings.png)
+![main tab](showcase_main.png)
 
 A control panel for HP Victus and Omen laptops on Linux. It wraps the
 hardware pieces that the stock OS drivers don't expose in a useful way —
