@@ -1,6 +1,35 @@
 # HP Keyboard RGB Kernel Module (hp-kbd-rgb)
 
-This document describes the `hp-kbd-rgb` out-of-tree kernel module located in `kernel/hp-kbd-rgb/`.
+## Commands
+
+### 4-Zone (recommended method)
+
+```bash
+# Per-zone colors
+echo "255 0 0"   | sudo tee /sys/class/leds/hp::kbd_backlight_zoned_backlight-right/multi_intensity
+echo "0 255 0"   | sudo tee /sys/class/leds/hp::kbd_backlight_zoned_backlight-center/multi_intensity
+echo "0 0 255"   | sudo tee /sys/class/leds/hp::kbd_backlight_zoned_backlight-left/multi_intensity
+echo "255 255 0" | sudo tee /sys/class/leds/hp::kbd_backlight_zoned_backlight-wasd/multi_intensity
+
+# Turn a zone completely off
+echo 0 | sudo tee /sys/class/leds/hp::kbd_backlight_zoned_backlight-right/brightness
+```
+
+### Single-Zone
+
+```bash
+echo "128 0 255" | sudo tee /sys/class/leds/hp::kbd_backlight/multi_intensity
+```
+or
+```bash
+ echo "128 0 255" | sudo tee /sys/devices/platform/hp-kbd-rgb/color
+```
+
+### Global shortcut (limited)
+
+```bash
+echo "255 128 64" | sudo tee /sys/devices/platform/hp-kbd-rgb/color
+```
 
 ## Overview
 
@@ -58,34 +87,6 @@ Writing `multi_intensity` triggers:
 2. `hp_kbd_backlight_set_rgb_color(zone, r, g, b)` — zone-aware
 3. `hp_kbd_backlight_set_on(true)`
 
-## Commands
-
-### 4-Zone (recommended method)
-
-```bash
-# Per-zone colors
-echo "255 0 0"   | sudo tee /sys/class/leds/hp::kbd_backlight_zoned_backlight-right/multi_intensity
-echo "0 255 0"   | sudo tee /sys/class/leds/hp::kbd_backlight_zoned_backlight-center/multi_intensity
-echo "0 0 255"   | sudo tee /sys/class/leds/hp::kbd_backlight_zoned_backlight-left/multi_intensity
-echo "255 255 0" | sudo tee /sys/class/leds/hp::kbd_backlight_zoned_backlight-wasd/multi_intensity
-
-# Turn a zone completely off
-echo 0 | sudo tee /sys/class/leds/hp::kbd_backlight_zoned_backlight-right/brightness
-```
-
-### Single-Zone
-
-```bash
-echo "128 0 255" | sudo tee /sys/devices/platform/hp-kbd-rgb/color
-# or
-echo "128 0 255" | sudo tee /sys/class/leds/hp::kbd_backlight/multi_intensity
-```
-
-### Global shortcut (limited)
-
-```bash
-echo "255 128 64" | sudo tee /sys/devices/platform/hp-kbd-rgb/color
-```
 
 ### Inspection
 
@@ -113,12 +114,6 @@ There are no:
 - Speed parameters
 - Breathing, wave, cycle, strobe commands
 - Any animation state in the driver
-
-All "effects" in this project (`LightingEffect = "static" | "breathing" | "color-cycle" | "strobe"`) are **software animations** implemented in:
-- `hp_helper/keyboard_lighting.py`
-- `hp_helper/lighting_controller.py`
-
-These repeatedly write new static colors to the sysfs path on a timer. The daemon (`hp_helperd/sysfs.py`) exposes `write_keyboard_color()` (LED `multi_intensity` + `brightness=255`) and `write_keyboard_brightness()` (LED `brightness`), both targeting `/sys/class/leds/hp::kbd_backlight*`.
 
 ## Internal Details
 
@@ -150,7 +145,3 @@ These repeatedly write new static colors to the sysfs path on a timer. The daemo
 - Install test: `echo "0 255 0" | sudo tee /sys/devices/platform/hp-kbd-rgb/color`
 - Color table handling: `hp_kbd_backlight_set_rgb_color()` and `hp_kbd_backlight_get_color_table()`
 - LED registration: `hp_kbd_rgb_register_zone()`
-
----
-
-Generated from direct source analysis (2026-07-06). Module not loaded on this system during investigation.
