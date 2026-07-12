@@ -1,10 +1,10 @@
 # Victus Hub
 
 ![main tab](showcase_main.png)
-<p align="center">
-  <img src="./showcase_sensors.png" height="300" />
-  <img src="./showcase_settings.png" height="300" />
-</p>
+Sensors Panel            |  Settings Panel
+:-------------------------:|:-------------------------:
+![](showcase_sensors.png)  |  ![](showcase_settings.png)
+
 A control panel for HP Victus (and maybe Omen laptops) on Linux. 
 
 It was built and tested on 8BD4 (HP Victus 16-s0001nv) 
