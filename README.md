@@ -82,7 +82,7 @@ terminal or check the desktop entry's output). The daemon logs via
 
 ## Limitations
 - **No Mux switch** Mux switch for HP/Omen laptops is not available on linux. PRIME laptops can use [envycontrol](https://github.com/bayasdev/envycontrol) (not included). supergfxctl doesn't appear to work.
-- **RGB effects** My hp victus has no effects in OGH. I could spam the acpi with color commands to create "effects" but the thing is fragile enough as it is.
+- **RGB effects** My hp victus has no effects in OGH. I could spam the acpi with color commands to create "effects" but the thing is fragile enough as is.
 - **4 zone rgb** The kernel module supports it but I can't test it yet.
 - **Custom HP WMI module** Some devices need it, request it by opening an issue.
 - **ACPI Module** Not needed for most laptops and most distros have it disabled by default.
