@@ -1,21 +1,23 @@
 # Victus Hub
 
-![sensors tab](showcase_sensors.png)
-![settings tab](showcase_settings.png)
 ![main tab](showcase_main.png)
-
+<p align="center">
+  <img src="./showcase_sensors.png" height="300" />
+  <img src="./showcase_settings.png" height="300" />
+</p>
 A control panel for HP Victus (and maybe Omen laptops) on Linux. 
 
-It was built and tested on a Victus 16 with a Ryzen 7 7840HS / RTX 4070
-under Fedora. Other HP Omen/Victus models with the same WMI firmware
-interface should work; your mileage may vary.
+It was built and tested on 8BD4 (HP Victus 16-s0001nv) 
+and Fedora. Other HP Omen/Victus should work provided hp-wmi support is availabe;
+
 
 ## What it does
-- **System profiles** — maps the three UI profiles to `tuned-adm` (tested on fedora)
+- **System profiles** — maps the three UI profiles to `tuned-adm` (tested on fedora acpi profile is set correctly)
    or `power-profilesctl` if available.
 - **Custom fan control** — Three modes:
   *auto* (hands control back to the EC), *max* (100%), and *custom* (your
-  curve). Fan floor override when GPU hits P0 for 10 seconds.
+  curve). Fan floor override in settings when GPU hits P0 for 10 seconds.
+  GPU Usage changes in game a lot (going into menus) but P0 is more stable.
 - **Keyboard RGB** — static color and brightness via a custom
   `hp-kbd-rgb` kernel module (a companion to the upstream hp-wmi RGB
   patch series; it doesn't claim the HP WMI GUID, so the stock `hp-wmi`
@@ -30,6 +32,7 @@ interface should work; your mileage may vary.
 Settings persist under `~/.config/hp-helper/`.
 
 ## Requirements
+- nvidia-smi
 - Linux with systemd (specifically `systemd-logind`)
 - Python 3.9+ with PySide6 (6.8 or newer; `pip install -e .` pulls it)
 - An AMD Ryzen CPU for the power-limit stuff `ryzenadj` is skipped
@@ -76,6 +79,13 @@ instance rather than starting a new one.
 The app logs to the terminal it was launched from (so run it from a
 terminal or check the desktop entry's output). The daemon logs via
 `journalctl -u hp-helperd`.
+
+## Limitations
+- **No Mux switch** Mux switch for HP/Omen laptops is not available on linux. PRIME laptops can use [envycontrol](https://github.com/bayasdev/envycontrol) (not included). supergfxctl doesn't appear to work.
+- **RGB effects** My hp victus has no effects in OGH. I could spam the acpi with color commands to create "effects" but the thing is fragile enough as it is.
+- **4 zone rgb** The kernel module supports it but I can't test it yet.
+- **Custom HP WMI module** Some devices need it, request it by opening an issue.
+- **ACPI Module** Not needed for most laptops and most distros have it disabled by default.
 
 ## Project Structure
 
