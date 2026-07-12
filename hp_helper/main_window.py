@@ -33,7 +33,7 @@ class MainWindow(QMainWindow):
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("HP Helper")
+        self.setWindowTitle("Victus Hub")
         self.resize(960, 640)
         self.setMinimumSize(930, 680)
 

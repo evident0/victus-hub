@@ -11,6 +11,10 @@ from hp_helper.backend.rapl import CpuPowerSample
 
 SOCKET_PATH = "/run/hp-helperd/hp-helper-rs.sock"
 
+# ANSI red for error responses (most terminals support colors).
+_RED = "\033[31m"
+_RESET = "\033[0m"
+
 logger = logging.getLogger(__name__)
 
 
@@ -30,10 +34,13 @@ def _request_daemon(request: str, quiet: bool = False) -> str:
         sock.close()
         resp = response.decode().strip()
         if not quiet:
-            logger.info("\u2190 daemon: %s", resp)
+            if resp.startswith("ERR"):
+                logger.info("%s\u2190 daemon: %s%s", _RED, resp, _RESET)
+            else:
+                logger.info("\u2190 daemon: %s", resp)
         return resp
     except OSError as e:
-        logger.info("\u2190 daemon: ERROR %s", e)
+        logger.info("%s\u2190 daemon: ERROR %s%s", _RED, e, _RESET)
         raise RuntimeError(str(e))
 
 def request_cpu_power() -> CpuPowerSample:
