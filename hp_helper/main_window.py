@@ -123,6 +123,7 @@ class MainWindow(QMainWindow):
         self._lighting.frame_changed.connect(self._keyboard_page.apply_frame)
         self._keyboard_page.enabled_changed.connect(self._lighting.set_enabled)
         self._keyboard_page.color_changed.connect(self._lighting.set_color)
+        self._keyboard_page.zone_color_changed.connect(self._lighting.set_zone_color)
         self._keyboard_page.idle_timeout_changed.connect(self._lighting.set_idle_timeout)
 
         self._power = PowerLimitController(self)

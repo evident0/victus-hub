@@ -223,6 +223,20 @@ def _parse_rgb(body: str) -> tuple[int, int, int]:
         raise RuntimeError("invalid integer") from None
 
 
+def _parse_zone_rgb(body: str) -> tuple[int, int, int, int]:
+    """Parse four tab-separated integers (zone, r, g, b)."""
+    parts = body.split("\t")
+    if len(parts) != 4:
+        raise RuntimeError("expected 4 integers (zone, r, g, b)")
+    try:
+        zone, red, green, blue = (int(parts[0]), int(parts[1]), int(parts[2]), int(parts[3]))
+    except ValueError:
+        raise RuntimeError("invalid integer") from None
+    if not (0 <= red <= 255 and 0 <= green <= 255 and 0 <= blue <= 255):
+        raise RuntimeError("rgb components must be 0-255")
+    return zone, red, green, blue
+
+
 def _parse_power_limits(body: str) -> tuple[int, int, int, int]:
     """Parse power-limit fields: stapm, fast, slow, tctl-temp (°C)."""
     parts = body.split("\t")
@@ -276,10 +290,29 @@ def _make_dispatch(sampler: RaplPowerSampler, sampler_lock: threading.Lock | Non
             return protocol.format_status_response((False, str(e)))
 
     def _keyboard_color(body: str) -> str:
-        r, g, b = _parse_rgb(body)
-        logger.info("[keyboard-rgb] daemon request: color %d %d %d", r, g, b)
-        result = sysfs.write_keyboard_color(r, g, b)
-        return protocol.format_status_response((True, result))
+        # 3 fields: set all zones to the same RGB (single-zone / bulk path).
+        # 4 fields: set one zone (zone, r, g, b).
+        n = len(body.split("\t"))
+        if n == 3:
+            r, g, b = _parse_rgb(body)
+            logger.info("[keyboard-rgb] daemon request: color %d %d %d", r, g, b)
+            try:
+                result = sysfs.write_keyboard_color(r, g, b)
+            except RuntimeError as e:
+                return protocol.format_status_response((False, str(e)))
+            return protocol.format_status_response((True, result))
+        if n == 4:
+            zone, r, g, b = _parse_zone_rgb(body)
+            logger.info(
+                "[keyboard-rgb] daemon request: zone %d color %d %d %d",
+                zone, r, g, b,
+            )
+            try:
+                result = sysfs.write_keyboard_zone_color(zone, r, g, b)
+            except RuntimeError as e:
+                return protocol.format_status_response((False, str(e)))
+            return protocol.format_status_response((True, result))
+        raise RuntimeError("expected 3 integers (r g b) or 4 (zone r g b)")
 
     def _keyboard_brightness(body: str) -> str:
         level = _parse_int(body, "brightness")

@@ -125,8 +125,28 @@ def set_fan_pwm(pwm: int) -> str:
     return daemon_client.request_fan_pwm(pwm)
 
 
-def set_keyboard_color(red: int, green: int, blue: int) -> str:
-    return daemon_client.request_keyboard_color(red, green, blue)
+def get_keyboard_zone_count() -> int:
+    """Return keyboard RGB zone count from the kernel module (1 or 4).
+
+    zone_count is world-readable under the platform device; no daemon needed.
+    Falls back to 1 when the module is absent.
+    """
+    from pathlib import Path
+
+    try:
+        raw = Path("/sys/devices/platform/hp-kbd-rgb/zone_count").read_text().strip()
+        count = int(raw)
+        return count if count >= 1 else 1
+    except (OSError, ValueError):
+        return 1
+
+
+def set_keyboard_color(
+    red: int, green: int, blue: int, zone: int | None = None,
+) -> str:
+    """Set keyboard color on all zones, or on one zone when *zone* is given."""
+    return daemon_client.request_keyboard_color(red, green, blue, zone=zone)
+
 
 def set_keyboard_brightness(level: int) -> str:
     return daemon_client.request_keyboard_brightness(level)

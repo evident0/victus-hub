@@ -1,4 +1,10 @@
-"""Keyboard page with lighting controls and visual keyboard preview."""
+"""Keyboard page with lighting controls and visual keyboard preview.
+
+Single-zone hardware keeps one color picker. Multi-zone (4-zone) hardware
+shows independent pickers for Right / Center / Left / WASD.
+"""
+
+from __future__ import annotations
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
@@ -7,10 +13,15 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, Signal, QRectF
 from PySide6.QtGui import QPainter, QColor, QFont
 
+from hp_helper import api
 from hp_helper.theme import COLORS
 from hp_helper.pages.settings_page import make_spin
 from hp_helper.keyboard_lighting import (
-    read_lighting_settings, write_lighting_settings,
+    ZONE_NAMES,
+    normalize_zone_colors,
+    read_lighting_settings,
+    write_lighting_settings,
+    zone_for_key,
 )
 
 # ── Keyboard layout ──
@@ -53,27 +64,59 @@ _CHASSIS_PAD = 12.0     # padding inside the chassis to the key block
 _CHASSIS_MARGIN = 10.0  # margin around chassis within the widget
 
 
-class KeyboardVisual(QWidget):
-    """Visual keyboard preview showing the current static color (or off)."""
+def _style_color_btn(hex_str: str) -> str:
+    return (
+        f"background-color: {hex_str}; "
+        f"border: 1px solid {COLORS['border']}; border-radius: 4px;"
+    )
 
-    def __init__(self, parent=None):
+
+class KeyboardVisual(QWidget):
+    """Visual keyboard preview showing static color(s) (or off)."""
+
+    def __init__(self, parent=None, zone_count: int = 1):
         super().__init__(parent)
-        self._key_color = QColor("#2a2a2a")
+        self._zone_count = max(1, zone_count)
+        self._zone_colors = [QColor("#2a2a2a")] * self._zone_count
         self._enabled = False
         self.setMinimumHeight(240)
         self.setSizePolicy(self.sizePolicy().horizontalPolicy(),
                            self.sizePolicy().verticalPolicy())
+
     def set_key_state(self, enabled: bool, color: QColor):
+        """Single-zone helper: paint every key with one color."""
         self._enabled = enabled
-        self._key_color = color if enabled else QColor(0, 0, 0)
+        fill = color if enabled else QColor(0, 0, 0)
+        self._zone_colors = [fill] * self._zone_count
         self.update()
 
-    # ── Key color computation (static only now) ──
-    def _key_color_at(self, key_x: float, key_y: float) -> QColor:
-        """Color for a single key (ignores position; static color)."""
+    def set_zone_state(self, enabled: bool, colors: list[QColor]):
+        """Multi-zone helper: one QColor per hardware zone."""
+        self._enabled = enabled
+        if not enabled:
+            self._zone_colors = [QColor(0, 0, 0)] * self._zone_count
+        else:
+            filled: list[QColor] = []
+            for i in range(self._zone_count):
+                if i < len(colors):
+                    filled.append(colors[i])
+                elif colors:
+                    filled.append(colors[-1])
+                else:
+                    filled.append(QColor("#2a2a2a"))
+            self._zone_colors = filled
+        self.update()
+
+    def _color_for_key(self, label: str, key_center_x: float) -> QColor:
         if not self._enabled:
             return QColor(0, 0, 0)
-        return self._key_color
+        if self._zone_count <= 1:
+            return self._zone_colors[0]
+        zone = zone_for_key(label, key_center_x, _MAIN_ROW_WIDTH)
+        if zone < 0 or zone >= len(self._zone_colors):
+            return self._zone_colors[0]
+        return self._zone_colors[zone]
+
     # ── Painting ──
 
     def paintEvent(self, event):
@@ -102,8 +145,6 @@ class KeyboardVisual(QWidget):
         unit_w = inner_w / _MAIN_ROW_WIDTH
 
         # Compute unit from height — enforce square 1u keys
-        # row_h = (inner_h - (n_rows - 1) * _GAP_PX) / n_rows
-        # square → unit - _GAP_PX == row_h  →  unit_h = row_h + _GAP_PX
         row_h_limit = (inner_h - (n_rows - 1) * _GAP_PX) / n_rows
         unit_h = row_h_limit + _GAP_PX
 
@@ -128,14 +169,14 @@ class KeyboardVisual(QWidget):
                 x = base_x
             y = base_y + row_idx * (row_h + _GAP_PX)
 
-            flex_x = 0.0  # running flex-space x for hue computation
+            flex_x = 0.0  # running flex-space x for zone computation
             for label, kw, gap in row:
                 x += gap * unit
                 key_w = kw * unit - _GAP_PX
                 key_rect = QRectF(x, y, key_w, row_h)
 
-                # Compute per-key color
-                color = self._key_color_at(flex_x + kw / 2, float(row_idx))
+                key_center_x = flex_x + gap + kw / 2
+                color = self._color_for_key(label, key_center_x)
 
                 # Glow under lit keys (skip dark/disabled)
                 if self._enabled and color.value() > 30:
@@ -181,13 +222,22 @@ class KeyboardPage(QWidget):
     """Keyboard lighting tab with controls and visual preview."""
 
     enabled_changed = Signal(bool)
-    color_changed = Signal(str)
+    color_changed = Signal(str)           # single-zone color
+    zone_color_changed = Signal(int, str)  # multi-zone: (zone_index, hex)
     idle_timeout_changed = Signal(int)
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self._zone_count = api.get_keyboard_zone_count()
         # Load settings
         s = read_lighting_settings()
+        self._zone_hexes = normalize_zone_colors(
+            s.color, s.zone_colors, self._zone_count,
+        )
+        if self._zone_count > 1:
+            s.zone_colors = list(self._zone_hexes)
+            s.color = self._zone_hexes[0]
+        self._settings = s
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(16, 12, 16, 12)
@@ -199,8 +249,8 @@ class KeyboardPage(QWidget):
         layout.addWidget(title)
 
         # Visual keyboard
-        self._visual = KeyboardVisual()
-        self._visual.set_key_state(s.enabled, QColor(s.color))
+        self._visual = KeyboardVisual(zone_count=self._zone_count)
+        self._apply_visual_from_settings()
         layout.addWidget(self._visual, 1)
 
         # Controls grid
@@ -216,18 +266,46 @@ class KeyboardPage(QWidget):
         self._enable_check.toggled.connect(self._on_enabled_changed)
         ctrl_layout.addWidget(self._enable_check)
 
-        # Color
-        color_label = QLabel("Color")
-        color_label.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 11px;")
-        ctrl_layout.addWidget(color_label)
+        self._color_btn: QPushButton | None = None
+        self._zone_btns: list[QPushButton] = []
 
-        self._color_btn = QPushButton()
-        self._color_btn.setFixedSize(34, 28)
-        self._color_btn.setStyleSheet(
-            f"background-color: {s.color}; border: 1px solid {COLORS['border']}; border-radius: 4px;"
-        )
-        self._color_btn.clicked.connect(self._pick_color)
-        ctrl_layout.addWidget(self._color_btn)
+        if self._zone_count <= 1:
+            # Single color (original UI)
+            color_label = QLabel("Color")
+            color_label.setStyleSheet(
+                f"color: {COLORS['text_secondary']}; font-size: 11px;"
+            )
+            ctrl_layout.addWidget(color_label)
+
+            self._color_btn = QPushButton()
+            self._color_btn.setFixedSize(34, 28)
+            self._color_btn.setStyleSheet(_style_color_btn(s.color))
+            self._color_btn.clicked.connect(self._pick_color)
+            ctrl_layout.addWidget(self._color_btn)
+        else:
+            # One picker per hardware zone
+            for zone_idx, name in enumerate(ZONE_NAMES[: self._zone_count]):
+                zone_box = QVBoxLayout()
+                zone_box.setContentsMargins(0, 0, 0, 0)
+                zone_box.setSpacing(2)
+                zone_label = QLabel(name)
+                zone_label.setStyleSheet(
+                    f"color: {COLORS['text_secondary']}; font-size: 11px;"
+                )
+                zone_label.setAlignment(Qt.AlignCenter)
+                zone_box.addWidget(zone_label)
+
+                btn = QPushButton()
+                btn.setFixedSize(34, 28)
+                btn.setToolTip(f"{name} zone color")
+                hex_str = self._zone_hexes[zone_idx]
+                btn.setStyleSheet(_style_color_btn(hex_str))
+                btn.clicked.connect(
+                    lambda _checked=False, z=zone_idx: self._pick_zone_color(z)
+                )
+                zone_box.addWidget(btn)
+                self._zone_btns.append(btn)
+                ctrl_layout.addLayout(zone_box)
 
         # Idle timeout
         self._idle_timeout = make_spin(
@@ -241,37 +319,84 @@ class KeyboardPage(QWidget):
 
         ctrl_layout.addStretch()
         layout.addWidget(controls)
-        self._settings = s
 
+    def _apply_visual_from_settings(self) -> None:
+        if self._zone_count <= 1:
+            self._visual.set_key_state(
+                self._settings.enabled, QColor(self._settings.color),
+            )
+        else:
+            colors = [QColor(h) for h in self._zone_hexes]
+            self._visual.set_zone_state(self._settings.enabled, colors)
+
+    def _persist(self) -> None:
+        if self._zone_count > 1:
+            self._settings.zone_colors = list(self._zone_hexes)
+            self._settings.color = self._zone_hexes[0]
+        write_lighting_settings(self._settings)
 
     def _on_enabled_changed(self, checked: bool):
         self._settings.enabled = checked
-        write_lighting_settings(self._settings)
-        self._visual.set_key_state(checked, QColor(self._settings.color))
+        self._persist()
+        self._apply_visual_from_settings()
         self.enabled_changed.emit(checked)
 
     def _pick_color(self):
+        """Single-zone color picker (original path)."""
         current = QColor(self._settings.color)
         color = QColorDialog.getColor(current, self, "Keyboard Color")
         if color.isValid():
             hex_str = color.name()
             self._settings.color = hex_str
-            self._color_btn.setStyleSheet(
-                f"background-color: {hex_str}; border: 1px solid {COLORS['border']}; border-radius: 4px;"
-            )
-            write_lighting_settings(self._settings)
+            self._zone_hexes = [hex_str]
+            if self._color_btn is not None:
+                self._color_btn.setStyleSheet(_style_color_btn(hex_str))
+            self._persist()
             self._visual.set_key_state(self._settings.enabled, color)
             self.color_changed.emit(hex_str)
 
+    def _pick_zone_color(self, zone: int):
+        """Multi-zone color picker for one zone."""
+        if zone < 0 or zone >= len(self._zone_hexes):
+            return
+        current = QColor(self._zone_hexes[zone])
+        name = ZONE_NAMES[zone] if zone < len(ZONE_NAMES) else f"Zone {zone}"
+        color = QColorDialog.getColor(current, self, f"{name} Zone Color")
+        if not color.isValid():
+            return
+        hex_str = color.name()
+        self._zone_hexes[zone] = hex_str
+        if zone < len(self._zone_btns):
+            self._zone_btns[zone].setStyleSheet(_style_color_btn(hex_str))
+        self._persist()
+        self._apply_visual_from_settings()
+        self.zone_color_changed.emit(zone, hex_str)
+
     def _on_idle_timeout_changed(self, value: int):
         self._settings.idle_timeout = max(0, value)
-        write_lighting_settings(self._settings)
+        self._persist()
         self.idle_timeout_changed.emit(self._settings.idle_timeout)
 
-    # ── Animation frame update (static only) ──
-    def apply_frame(self, color_rgb):
-        """Update the visual keyboard from a (static) frame color."""
-        r, g, b = color_rgb.red, color_rgb.green, color_rgb.blue
+    # ── Animation frame update ──
+    def apply_frame(self, frame):
+        """Update the visual keyboard from controller frames.
+
+        *frame* is a list of RgbColor (one per zone). A single RgbColor is
+        still accepted for robustness.
+        """
+        if isinstance(frame, (list, tuple)):
+            if not frame:
+                self._visual.set_zone_state(False, [])
+                return
+            colors = [
+                QColor(c.red, c.green, c.blue) for c in frame
+            ]
+            is_off = all(max(c.red(), c.green(), c.blue()) == 0 for c in colors)
+            self._visual.set_zone_state(not is_off, colors)
+            return
+
+        # Legacy single RgbColor
+        r, g, b = frame.red, frame.green, frame.blue
         qc = QColor(r, g, b)
         is_off = max(r, g, b) == 0
         self._visual.set_key_state(not is_off, qc)

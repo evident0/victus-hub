@@ -54,6 +54,18 @@ def write_pwm(pwm: int) -> str:
     return write_sysfs(hwmon / "pwm1", pwm)
 
 
+def get_keyboard_zone_count() -> int:
+    """Return zone count from the platform device (1 or 4). Defaults to 1."""
+    zc_path = Path(KBD_RGB_PLATFORM) / "zone_count"
+    try:
+        zone_count = int(zc_path.read_text().strip())
+    except (OSError, ValueError):
+        return 1
+    if zone_count < 1:
+        return 1
+    return zone_count
+
+
 def _kbd_rgb_led_names() -> list[str]:
     """Return the LED class device basenames for the keyboard zones.
 
@@ -62,11 +74,7 @@ def _kbd_rgb_led_names() -> list[str]:
       - single-zone (1): hp::kbd_backlight
       - 4-zone (4):      hp::kbd_backlight_zoned_backlight-{right,center,left,wasd}
     """
-    zc_path = Path(KBD_RGB_PLATFORM) / "zone_count"
-    try:
-        zone_count = int(zc_path.read_text().strip())
-    except (OSError, ValueError):
-        zone_count = 1
+    zone_count = get_keyboard_zone_count()
 
     if zone_count == 1:
         return ["hp::kbd_backlight"]
@@ -78,24 +86,42 @@ def _kbd_rgb_led_names() -> list[str]:
     ][:zone_count]
 
 
+def _write_led_color(led: Path, red: int, green: int, blue: int) -> str:
+    """Write multi_intensity + full brightness for one LED class device."""
+    value = f"{red} {green} {blue}"
+    write_sysfs(led / "multi_intensity", value)
+    write_sysfs(led / "brightness", 255)
+    return str(led)
+
+
 def write_keyboard_color(red: int, green: int, blue: int) -> str:
-    """Set the keyboard backlight color via the LED multicolor interface.
+    """Set the same keyboard backlight color on every zone.
 
     Writes ``multi_intensity`` on every zone's LED class device, then
     sets ``brightness`` to 255 so the backlight turns on at full
     intensity with the requested color.  This keeps the LED subsystem
-    state in sync with the hardware (unlike writing the legacy platform
-    ``color`` node, which desynced brightness from color).
+    state in sync with the hardware.
     """
     value = f"{red} {green} {blue}"
     labels: list[str] = []
     for name in _kbd_rgb_led_names():
-        led = Path(KBD_RGB_LEDS) / name
-        write_sysfs(led / "multi_intensity", value)
-        write_sysfs(led / "brightness", 255)
-        labels.append(str(led))
+        labels.append(_write_led_color(Path(KBD_RGB_LEDS) / name, red, green, blue))
     logger.info("[keyboard-rgb] color %s -> %s", value, ", ".join(labels))
     return labels[0] if labels else KBD_RGB_LEDS
+
+
+def write_keyboard_zone_color(zone: int, red: int, green: int, blue: int) -> str:
+    """Set color for a single zone (0-based index into LED name list)."""
+    names = _kbd_rgb_led_names()
+    if zone < 0 or zone >= len(names):
+        raise RuntimeError(f"zone {zone} out of range (0-{max(0, len(names) - 1)})")
+    led = Path(KBD_RGB_LEDS) / names[zone]
+    label = _write_led_color(led, red, green, blue)
+    logger.info(
+        "[keyboard-rgb] zone %d color %d %d %d -> %s",
+        zone, red, green, blue, label,
+    )
+    return label
 
 
 def write_keyboard_brightness(level: int) -> str:
