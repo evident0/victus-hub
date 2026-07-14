@@ -333,71 +333,10 @@ static ssize_t zero_insize_support_show(struct device *dev,
 }
 static DEVICE_ATTR_RO(zero_insize_support);
 
-static ssize_t color_show(struct device *dev, struct device_attribute *attr,
-			  char *buf)
-{
-	u8 color_table[HP_COLOR_TABLE_SIZE];
-	int ret;
-
-	ret = hp_kbd_backlight_get_color_table(color_table);
-	if (ret)
-		return ret;
-
-	return sysfs_emit(buf, "%u %u %u\n",
-			  color_table[HP_COLOR_TABLE_PADDING],
-			  color_table[HP_COLOR_TABLE_PADDING + 1],
-			  color_table[HP_COLOR_TABLE_PADDING + 2]);
-}
-
-static ssize_t color_store(struct device *dev, struct device_attribute *attr,
-			   const char *buf, size_t count)
-{
-	unsigned int red, green, blue;
-	unsigned int zone;
-	int ret;
-
-	if (sscanf(buf, "%u %u %u", &red, &green, &blue) != 3)
-		return -EINVAL;
-	if (red > 255 || green > 255 || blue > 255)
-		return -EINVAL;
-
-	/*
-	 * The global color attribute is a convenience that sets the color
-	 * table directly.  Keep the per-zone mc_subled intensity fields in
-	 * sync so that subsequent writes to the LED brightness file scale the
-	 * correct color instead of a stale snapshot from module load.
-	 *
-	 * On single-zone keyboards there is only zone 0 and set_rgb_color
-	 * fills all 8 color-table slots, so we only need to update zone 0.
-	 * On 4-zone keyboards the global knob is zone-0 only (documented
-	 * limitation), so we update zone 0 as well.
-	 */
-	zone = 0;
-	hp_kbd_rgb.subleds[zone][0].intensity = red;
-	hp_kbd_rgb.subleds[zone][1].intensity = green;
-	hp_kbd_rgb.subleds[zone][2].intensity = blue;
-
-	ret = hp_kbd_backlight_set_rgb_color(zone, red, green, blue);
-	if (ret)
-		return ret;
-
-	ret = hp_kbd_backlight_set_on(true);
-	if (ret)
-		return ret;
-
-	/* Reflect the forced-on state in the LED class device. */
-	hp_kbd_rgb.leds[zone].led_cdev.brightness = LED_FULL;
-
-	return count;
-}
-static DEVICE_ATTR_RW(color);
-
-
 static struct attribute *hp_kbd_rgb_attrs[] = {
 	&dev_attr_keyboard_type.attr,
 	&dev_attr_zone_count.attr,
 	&dev_attr_zero_insize_support.attr,
-	&dev_attr_color.attr,
 	NULL,
 };
 ATTRIBUTE_GROUPS(hp_kbd_rgb);

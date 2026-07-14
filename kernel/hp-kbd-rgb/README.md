@@ -20,16 +20,6 @@ echo 0 | sudo tee /sys/class/leds/hp::kbd_backlight_zoned_backlight-right/bright
 ```bash
 echo "128 0 255" | sudo tee /sys/class/leds/hp::kbd_backlight/multi_intensity
 ```
-or
-```bash
- echo "128 0 255" | sudo tee /sys/devices/platform/hp-kbd-rgb/color
-```
-
-### Global shortcut (limited)
-
-```bash
-echo "255 128 64" | sudo tee /sys/devices/platform/hp-kbd-rgb/color
-```
 
 ## Overview
 
@@ -49,19 +39,8 @@ Platform device:
 /sys/devices/platform/hp-kbd-rgb/
 ├── keyboard_type          (ro)   e.g. 0x01
 ├── zone_count             (ro)   1 or 4
-├── zero_insize_support    (ro)
-└── color                  (rw)   "R G B" (0-255)
+└── zero_insize_support    (ro)
 ```
-
-### Global `color` attribute
-
-Writing to `color` sets the color table via `hp_kbd_backlight_set_rgb_color(0, r, g, b)` **and** keeps the per-zone `mc_subled` intensity fields in sync, so subsequent writes to the LED `brightness` file scale the correct color instead of a stale snapshot.
-
-- On **4-zone** keyboards this only updates zone 0 (right).
-- On **single-zone** it fills all slots with the same color.
-- It also forces the backlight on and reflects the on state in the LED class device.
-
-This is a simplified global knob and **not** suitable for per-zone control.
 
 ### LED Class Multicolor Devices
 
@@ -126,22 +105,19 @@ There are no:
 
 ## Limitations
 
-1. Top-level `color` attribute is zone-0 only.
-2. No native hardware effects — all animation costs CPU and generates many WMI calls.
-3. Per-zone support exists in the driver but is **not wired up** in the current Python daemon or UI.
-4. Per-key RGB keyboards (`0x03`) are explicitly unsupported.
-5. No persistence across reboots or suspend (driver sets `LED_RETAIN_AT_SHUTDOWN`).
+1. No native hardware effects — all animation costs CPU and generates many WMI calls.
+2. Per-key RGB keyboards (`0x03`) are explicitly unsupported.
+3. No persistence across reboots or suspend (driver sets `LED_RETAIN_AT_SHUTDOWN`).
 
 ## Current Project Usage
 
-- Daemon writes the LED multicolor interface (`multi_intensity` + `brightness`), not the legacy platform `color` node.
+- Daemon writes the LED multicolor interface (`multi_intensity` + `brightness`) per zone.
 - Lighting effects are purely software.
 - The "RGB enabled" checkbox and idle dim turn the backlight off via `brightness=0` (the proper LED off path), not by sending color `0 0 0`.
-- No code currently writes individual `multi_intensity` files for the four zones (all zones get the same color).
+- Per-zone control is fully wired: the Python daemon and UI support independent colors for each zone (right, center, left, wasd).
 
 ## References
 
 - Source: `kernel/hp-kbd-rgb/hp-kbd-rgb.c`
-- Install test: `echo "0 255 0" | sudo tee /sys/devices/platform/hp-kbd-rgb/color`
 - Color table handling: `hp_kbd_backlight_set_rgb_color()` and `hp_kbd_backlight_get_color_table()`
 - LED registration: `hp_kbd_rgb_register_zone()`
