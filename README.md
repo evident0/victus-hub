@@ -8,7 +8,7 @@ Sensors Panel            |  Settings Panel
 A control panel for HP Victus (and maybe Omen laptops) on Linux. 
 
 It was built and tested on 8BD4 (HP Victus 16-s0001nv) 
-and Fedora. Other HP Omen/Victus should work provided hp-wmi support is availabe;
+with Fedora. Other HP Omen/Victus should work provided hp-wmi support is availabe;
 
 
 ## What it does
@@ -18,6 +18,7 @@ and Fedora. Other HP Omen/Victus should work provided hp-wmi support is availabe
   *auto* (hands control back to the EC), *max* (100%), and *custom* (your
   curve). Fan floor override in settings when GPU hits P0 for 10 seconds.
   GPU Usage changes in game a lot (going into menus) but P0 is more stable.
+  - **Mux switch** Mux switch support for Victus Laptops ,OMEN should also work (untested).  PRIME laptops can also try [envycontrol](https://github.com/bayasdev/envycontrol) (not included).  
 - **Keyboard RGB** — static color and brightness via a custom
   `hp-kbd-rgb` kernel module (a companion to the upstream hp-wmi RGB
   patch series; it doesn't claim the HP WMI GUID, so the stock `hp-wmi`
@@ -38,7 +39,6 @@ Settings persist under `~/.config/hp-helper/`.
 - An AMD Ryzen CPU for the power-limit stuff `ryzenadj` is skipped
   automatically on Intel (sorry intel users but I can't test Intel for now).
 - `tuned-adm` or `power-profilesctl` for system profile management
-  (optional, gracefully skipped if not installed)
 - Kernel headers matching your running kernel, to build the module
 
 ## Installing
@@ -81,9 +81,8 @@ terminal or check the desktop entry's output). The daemon logs via
 `journalctl -u hp-helperd`.
 
 ## Limitations
-- **No Mux switch** Mux switch for HP/Omen laptops is not available on linux. PRIME laptops can use [envycontrol](https://github.com/bayasdev/envycontrol) (not included). supergfxctl doesn't appear to work.
+
 - **RGB effects** My hp victus has no effects in OGH. I could spam the acpi with color commands to create "effects" but the thing is fragile enough as is.
-- **4 zone rgb** The kernel module supports it but I can't test it yet.
 - **Custom HP WMI module** Some devices need it, request it by opening an issue.
 - **ACPI Module** Not needed for most laptops and most distros have it disabled by default.
 
@@ -94,8 +93,3 @@ terminal or check the desktop entry's output). The daemon logs via
 - **`hp_helperd/`** — the root daemon. Runs as a systemd service
   (`hp-helperd.service`), listens on `/run/hp-helperd/hp-helper-rs.sock`,
 - **`kernel/hp-kbd-rgb/`** — keyboard RGB module.
-
-## License
-
-The kernel module is GPL-2.0-or-later. Everything else inherits the
-project's license unless noted otherwise.
