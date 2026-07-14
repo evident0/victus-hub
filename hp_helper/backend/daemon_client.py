@@ -48,6 +48,12 @@ def request_cpu_power() -> CpuPowerSample:
     return protocol.parse_cpu_power_response(response)
 
 
+def request_gpu_mux_mode(mode: int) -> str:
+    logger.info("\u2192 daemon: gpu-mux-mode %d", mode)
+    response = _request_daemon(f"gpu-mux-mode\t{mode}\n")
+    return protocol.parse_status_response(response)
+
+
 def request_fan_auto() -> str:
     logger.info("\u2192 daemon: fan-auto")
     response = _request_daemon("fan-auto\n")

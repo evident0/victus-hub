@@ -42,6 +42,7 @@ __all__ = [
     "set_custom_fan_enabled",
     "set_manual_preset",
     "apply_power_limits",
+    "set_gpu_mux_mode",
 ]
 
 
@@ -111,6 +112,10 @@ def get_current_profile() -> int | None:
 
 def set_system_profile(profile: int) -> str:
     return profiles.apply_system_profile(profile)
+
+
+def set_gpu_mux_mode(mode: int) -> str:
+    return daemon_client.request_gpu_mux_mode(mode)
 
 
 def set_fan_auto() -> str:

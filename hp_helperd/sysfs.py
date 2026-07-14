@@ -10,6 +10,7 @@ from hp_helper.backend.sysfs_read import find_hwmon_by_name
 
 KBD_RGB_PLATFORM = "/sys/devices/platform/hp-kbd-rgb"
 KBD_RGB_LEDS = "/sys/class/leds"
+GPU_MUX_PLATFORM = Path("/sys/devices/platform/hp-gpu-mux")
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +32,14 @@ def write_sysfs(path: Path, value: int | str) -> str:
         raise RuntimeError(f"{label}: {e}")
     logger.info("%s=%s", label, value)
     return label
+
+
+def write_gpu_mux_mode(mode: int) -> str:
+    """Request a GPU MUX mode index (0=hybrid, 1=discrete, 2=optimus, 3=uma)."""
+    path = GPU_MUX_PLATFORM / "gpu_mux_mode"
+    if not path.exists():
+        raise RuntimeError("hp-gpu-mux platform device not found")
+    return write_sysfs(path, mode)
 
 
 def write_pwm_enable(mode: int) -> str:

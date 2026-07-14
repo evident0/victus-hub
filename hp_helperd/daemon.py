@@ -264,6 +264,15 @@ def _make_dispatch(sampler: RaplPowerSampler, sampler_lock: threading.Lock | Non
             sample = sampler.read()
         return protocol.format_cpu_power_response(sample)
 
+    def _gpu_mux_mode(body: str) -> str:
+        mode = _parse_int(body, "gpu-mux-mode")
+        logger.info("[gpu-mux] daemon request: gpu-mux-mode %d", mode)
+        try:
+            result = sysfs.write_gpu_mux_mode(mode)
+            return protocol.format_status_response((True, result))
+        except RuntimeError as e:
+            return protocol.format_status_response((False, str(e)))
+
     def _fan_auto(_body: str) -> str:
         logger.info("[fan-control] daemon request: fan-auto")
         try:
@@ -345,6 +354,7 @@ def _make_dispatch(sampler: RaplPowerSampler, sampler_lock: threading.Lock | Non
 
     return [
         ("cpu-power", _cpu_power),
+        ("gpu-mux-mode\t", _gpu_mux_mode),
         ("fan-auto", _fan_auto),
         ("fan-pwm\t", _fan_pwm),
         ("fan-manual", _fan_manual),

@@ -1,9 +1,10 @@
 """Profile selection section with centered profile buttons and fan mode segmented control."""
 
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout
-from PySide6.QtCore import Signal
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel
+from PySide6.QtCore import Qt, Signal
 
 from hp_helper.widgets.app_button import AppButton
+from hp_helper.widgets.gpu_mux_control import GpuMuxControl
 from hp_helper.widgets.segmented_control import SegmentedControl
 from hp_helper.theme import COLORS
 
@@ -50,16 +51,38 @@ class ProfileSection(QWidget):
         profile_row.addStretch()
         root.addLayout(profile_row)
 
-        # ── Fan mode segmented control (centered) ──
+        # ── Fan mode + GPU MUX controls (centered) ──
         fan_row = QHBoxLayout()
+        fan_row.setSpacing(8)
         fan_row.addStretch()
+
+        fan_row.addWidget(self._segment_label("Fan mode"))
         self._fan_segments = SegmentedControl(FAN_MODES)
         self._fan_segments.setFixedWidth(360)
         self._fan_segments.segment_selected.connect(self._on_fan_select)
         self._fan_segments.action_requested.connect(self._on_fan_action)
         fan_row.addWidget(self._fan_segments)
+
+        self._mux_control = GpuMuxControl()
+        if self._mux_control.is_available():
+            fan_row.addSpacing(12)
+            fan_row.addWidget(self._segment_label("MUX"))
+            width = max(160, 88 * self._mux_control.mode_count())
+            self._mux_control.setFixedWidth(width)
+            fan_row.addWidget(self._mux_control)
+
         fan_row.addStretch()
         root.addLayout(fan_row)
+
+    @staticmethod
+    def _segment_label(text: str) -> QLabel:
+        label = QLabel(text)
+        label.setAlignment(Qt.AlignVCenter | Qt.AlignRight)
+        label.setStyleSheet(
+            f"color: {COLORS['text_secondary']}; font-size: 12px; font-weight: 600;"
+            " background: transparent;"
+        )
+        return label
 
     # ── Profile selection ──
 
