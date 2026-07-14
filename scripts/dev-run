@@ -90,16 +90,20 @@ printf '\033[1;34m── Installing hp-helperd daemon ──\033[0m\n'
 # Editable pip install so hp_helperd is importable from anywhere
 python3 -m pip install -e . --quiet 2>/dev/null || true
 
-# Install systemd service
+# Install systemd service (template uses @ROOT_DIR@; substitute real path)
 SERVICE_SRC="$ROOT_DIR/data/hp-helperd.service"
 SERVICE_DST="/etc/systemd/system/$SERVICE_NAME"
 
+TMP_UNIT=$(mktemp)
+sed "s|@ROOT_DIR@|$ROOT_DIR|g" "$SERVICE_SRC" > "$TMP_UNIT"
+
 NEEDS_RELOAD=0
-if [ ! -f "$SERVICE_DST" ] || ! cmp -s "$SERVICE_SRC" "$SERVICE_DST"; then
+if [ ! -f "$SERVICE_DST" ] || ! cmp -s "$TMP_UNIT" "$SERVICE_DST"; then
     printf 'Installing systemd service to %s\n' "$SERVICE_DST"
-    sudo install -Dm644 "$SERVICE_SRC" "$SERVICE_DST"
+    sudo install -Dm644 "$TMP_UNIT" "$SERVICE_DST"
     NEEDS_RELOAD=1
 fi
+rm -f "$TMP_UNIT"
 
 if [ "$NEEDS_RELOAD" -eq 1 ]; then
     sudo systemctl daemon-reload

@@ -50,12 +50,17 @@ printf '\033[1;34m── Installing hp-helperd daemon + hp-helper program ──
 cd "$ROOT_DIR"
 python3 -m pip install -e . --quiet 2>/dev/null || true
 
+# Render the unit with the real project path (template uses @ROOT_DIR@).
+TMP_UNIT=$(mktemp)
+sed "s|@ROOT_DIR@|$ROOT_DIR|g" "$SERVICE_SRC" > "$TMP_UNIT"
+
 NEEDS_RELOAD=0
-if [ ! -f "$SERVICE_DST" ] || ! cmp -s "$SERVICE_SRC" "$SERVICE_DST"; then
+if [ ! -f "$SERVICE_DST" ] || ! cmp -s "$TMP_UNIT" "$SERVICE_DST"; then
     printf 'Installing systemd service to %s\n' "$SERVICE_DST"
-    "${SUDO[@]}" install -Dm644 "$SERVICE_SRC" "$SERVICE_DST"
+    "${SUDO[@]}" install -Dm644 "$TMP_UNIT" "$SERVICE_DST"
     NEEDS_RELOAD=1
 fi
+rm -f "$TMP_UNIT"
 
 if [ "$NEEDS_RELOAD" -eq 1 ]; then
     "${SUDO[@]}" systemctl daemon-reload

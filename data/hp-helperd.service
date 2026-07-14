@@ -5,8 +5,8 @@ After=systemd-udevd.service
 [Service]
 Type=simple
 ExecStart=/usr/bin/python3 -m hp_helperd
-WorkingDirectory=/home/evident/Documents/hp_qt
-Environment=PYTHONPATH=/home/evident/Documents/hp_qt
+WorkingDirectory=@ROOT_DIR@
+Environment=PYTHONPATH=@ROOT_DIR@
 Restart=on-failure
 RestartSec=1
 RuntimeDirectory=hp-helperd
