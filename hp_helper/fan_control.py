@@ -26,11 +26,18 @@ CONTROL_INTERVAL = 3.0
 
 # Suspend gate: when set, the control loop skips all sysfs writes so the
 # pre-suspend cleanup (fan-auto) is not immediately re-asserted as manual.
+# While suspended, in-loop ownership (was_custom) is also dropped so that
+# on resume the enter-custom path runs again (fan-manual + force first write).
 _suspend = threading.Event()  # noqa: PLW0602 (module-level Event, intentional)
 
 
 def set_suspended(state: bool) -> None:
-    """Pause/resume the fan-control loop without cancelling the thread."""
+    """Pause/resume the fan-control loop without cancelling the thread.
+
+    While suspended the loop holds off sysfs writes. On resume it must
+    re-claim hardware (custom was set to auto in pre-suspend cleanup);
+    that is done by clearing ownership state inside the loop, not here.
+    """
     if state:
         _suspend.set()
     else:
@@ -229,6 +236,9 @@ def start_fan_control() -> None:
         ramp_down_since: float | None = None
         next_control = 0.0
         was_custom = False
+        # After entering custom, bypass write_min_delta once so we always take
+        # manual control even when the curve target matches the current duty.
+        force_write = False
         p0_state = P0FloorState()
         first_tick = True
 
@@ -237,7 +247,18 @@ def start_fan_control() -> None:
 
             # Suspend gate: skip all control writes while the system is
             # suspending so the pre-suspend fan-auto cleanup is not undone.
+            # Drop custom ownership so resume re-runs the enter-custom path
+            # (request_fan_manual + force_write). Without this, was_custom
+            # stays True, last_written_pct is stale, and the loop may never
+            # write — fans remain on EC auto (or any residual PWM) until a
+            # large curve delta happens.
             if _suspend.is_set():
+                was_custom = False
+                force_write = False
+                last_written_pct = None
+                ramp_down_since = None
+                p0_state = p0_state.reset()
+                next_control = 0.0
                 _time.sleep(POLL_INTERVAL)
                 continue
 
@@ -268,6 +289,7 @@ def start_fan_control() -> None:
             profile = cfg.profiles[profile_idx]
             if cfg.manual_preset is not None:
                 was_custom = False
+                force_write = False
                 p0_state = p0_state.reset()
                 _time.sleep(POLL_INTERVAL)
                 continue
@@ -280,6 +302,7 @@ def start_fan_control() -> None:
                     last_written_pct = None
                     ramp_down_since = None
                     was_custom = False
+                    force_write = False
                     p0_state = p0_state.reset()
                 _time.sleep(POLL_INTERVAL)
                 continue
@@ -287,6 +310,16 @@ def start_fan_control() -> None:
                 last_written_pct = read_hp_pwm_pct()
                 ramp_down_since = None
                 p0_state = p0_state.reset()
+                force_write = True
+                # Do not wait for the next CONTROL_INTERVAL to take ownership.
+                next_control = 0.0
+                _fan_logger.info(
+                    "fan-control: entering custom (fan-manual + force first write)"
+                )
+                try:
+                    _daemon_client.request_fan_manual()
+                except Exception:
+                    pass
             was_custom = True
 
             now = _time.monotonic()
@@ -376,21 +409,30 @@ def start_fan_control() -> None:
                         and next_pct > curve_pct + 0.01
                     )
                     delta = abs(next_pct - (last_written_pct if last_written_pct is not None else 0.0))
-                    if last_written_pct is None or delta >= cfg.write_min_delta_pct:
+                    # force_write: take manual ownership even when delta is tiny
+                    # (curve target ≈ live PWM after seeding from hwmon).
+                    if (
+                        force_write
+                        or last_written_pct is None
+                        or delta >= cfg.write_min_delta_pct
+                    ):
                         pwm = max(0, min(int(next_pct * 255.0 / 100.0), 255))
+                        reason = " (enter custom)" if force_write else ""
                         _fan_logger.info(
-                            "cpu=%.0f°C gpu=%s pstate=%s target=%.0f%% cur=%.0f%% → next=%.0f%% delta=%.1f → pwm=%d WRITE%s",
+                            "cpu=%.0f°C gpu=%s pstate=%s target=%.0f%% cur=%.0f%% → next=%.0f%% delta=%.1f → pwm=%d WRITE%s%s",
                             cpu_avg if cpu_avg is not None else 0.0,
                             f"{gpu_avg:.0f}°C" if gpu_avg is not None else "N/A",
                             snap.gpu_pstate or "N/A",
                             target, current, next_pct, delta, pwm,
                             " (P0 floor)" if floor_holds else "",
+                            reason,
                         )
                         try:
                             _daemon_client.request_fan_pwm(pwm)
                         except Exception:
                             pass
                         last_written_pct = next_pct
+                        force_write = False
                     else:
                         if floor_holds:
                             _fan_logger.info(

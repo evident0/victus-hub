@@ -150,11 +150,17 @@ class MainWindow(QMainWindow):
 
         # Fan-control background thread
         start_fan_control()
-        # Sync fan mode segmented control from persisted config.
+        # Sync fan mode segmented control from persisted config and apply
+        # hardware for custom/max (UI-only restore left EC in auto while
+        # config said custom — fan loop could skip writes when duty matched).
         try:
             _cfg = api.get_fan_config()
             if _cfg.custom_enabled:
                 self._home_page.set_selected_fan_mode("custom")
+                try:
+                    api.set_fan_manual()
+                except Exception:
+                    logger.exception("set fan manual (restore custom) failed")
             elif _cfg.manual_preset == "max":
                 self._home_page.set_selected_fan_mode("max")
                 self._set_fan_max()
@@ -254,9 +260,26 @@ class MainWindow(QMainWindow):
 
     def _on_system_resume(self) -> None:
         """Called by logind PrepareForSleep(False): restart the lighting
-        timer and unpause the fan loop so custom mode re-engages."""
+        timer, unpause the fan loop, and restore non-auto fan modes.
+
+        Suspend cleanup leaves the EC in fan-auto. Custom is re-claimed by
+        the fan-control thread (ownership is cleared while suspended, so the
+        next poll re-runs enter-custom: fan-manual + force first PWM write).
+        Max is applied here because the control loop does not drive max mode.
+        """
         self._lighting.resume()
         set_suspended(False)
+        try:
+            _cfg = api.get_fan_config()
+            if _cfg.manual_preset == "max":
+                try:
+                    api.set_fan_manual()
+                    api.set_fan_pwm(255)
+                    logger.info("resume: restored fan max")
+                except Exception:
+                    logger.exception("resume fan max restore failed")
+        except Exception:
+            logger.exception("resume fan restore failed")
 
     def _on_system_shutdown(self) -> None:
         """Called by logind PrepareForShutdown(True): same cleanup as
