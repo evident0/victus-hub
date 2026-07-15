@@ -130,11 +130,13 @@ def request_power_limits(
     slow_limit: int,
     tctl_temp: int = 95,
 ) -> str:
-    logger.info(
-        "\u2192 daemon: power-limits STAPM=%d fast=%d slow=%d tctl=%d",
-        stapm_limit, fast_limit, slow_limit, tctl_temp,
-    )
+    # Noisy when limits are re-applied periodically; keep quiet unless debugging.
+    # logger.info(
+    #     "\u2192 daemon: power-limits STAPM=%d fast=%d slow=%d tctl=%d",
+    #     stapm_limit, fast_limit, slow_limit, tctl_temp,
+    # )
     response = _request_daemon(
-        f"power-limits\t{stapm_limit}\t{fast_limit}\t{slow_limit}\t{tctl_temp}\n"
+        f"power-limits\t{stapm_limit}\t{fast_limit}\t{slow_limit}\t{tctl_temp}\n",
+        quiet=True,
     )
     return protocol.parse_status_response(response)
