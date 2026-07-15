@@ -54,3 +54,7 @@ kernel/hp-wmi/*.cmd
 kernel/hp-wmi/Module.symvers
 kernel/hp-wmi/modules.order
 kernel/hp-wmi/.*
+
+# Local-only reference sources (not for public repo)
+kernel/hp-wmi/reference_modules/
+kernel/hp-wmi/.local-reference_modules/
