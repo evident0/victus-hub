@@ -46,3 +46,11 @@ kernel/hp-gpu-mux/*.cmd
 kernel/hp-gpu-mux/Module.symvers
 kernel/hp-gpu-mux/modules.order
 kernel/hp-gpu-mux/.*
+# Kernel module build artifacts (hp-wmi)
+kernel/hp-wmi/*.o
+kernel/hp-wmi/*.ko
+kernel/hp-wmi/*.mod*
+kernel/hp-wmi/*.cmd
+kernel/hp-wmi/Module.symvers
+kernel/hp-wmi/modules.order
+kernel/hp-wmi/.*

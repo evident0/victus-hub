@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+MODULE_NAME="hp-wmi"
+MODULE_SYS_NAME="hp_wmi"
+KERNEL_RELEASE="$(uname -r)"
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+MODULE_DIR="$(cd -- "$SCRIPT_DIR/.." && pwd)"
+MODULE_KO="$MODULE_DIR/${MODULE_NAME}.ko"
+INSTALL_PATH="/lib/modules/${KERNEL_RELEASE}/extra/${MODULE_NAME}.ko"
+AUTOLOAD_CONF="/etc/modules-load.d/${MODULE_NAME}.conf"
+
+if [ "$(id -u)" -eq 0 ]; then
+  SUDO=()
+else
+  SUDO=(sudo)
+fi
+
+if [ ! -d "/lib/modules/${KERNEL_RELEASE}/build" ]; then
+  printf 'Kernel build directory is missing: /lib/modules/%s/build\n' "$KERNEL_RELEASE" >&2
+  printf 'Install kernel headers/devel package for the running kernel first.\n' >&2
+  exit 1
+fi
+
+printf 'Building %s for kernel %s...\n' "$MODULE_NAME" "$KERNEL_RELEASE"
+make -C "$MODULE_DIR"
+
+if [ ! -f "$MODULE_KO" ]; then
+  printf 'Build did not produce %s\n' "$MODULE_KO" >&2
+  exit 1
+fi
+
+if [ -d "/sys/module/${MODULE_SYS_NAME}" ]; then
+  printf 'Unloading currently loaded %s...\n' "$MODULE_NAME"
+  "${SUDO[@]}" modprobe -r "$MODULE_NAME" || "${SUDO[@]}" rmmod "$MODULE_SYS_NAME"
+fi
+
+printf 'Installing %s to %s...\n' "$MODULE_KO" "$INSTALL_PATH"
+"${SUDO[@]}" install -Dm644 "$MODULE_KO" "$INSTALL_PATH"
+
+printf 'Updating module dependency cache...\n'
+"${SUDO[@]}" depmod -a "$KERNEL_RELEASE"
+
+printf 'Configuring autoload at boot: %s\n' "$AUTOLOAD_CONF"
+printf '%s\n' "$MODULE_NAME" | "${SUDO[@]}" tee "$AUTOLOAD_CONF" >/dev/null
+
+printf 'Loading module...\n'
+"${SUDO[@]}" modprobe "$MODULE_NAME"
+
+printf 'Installed and loaded %s.\n' "$MODULE_NAME"
+printf 'Platform device: /sys/devices/platform/hp-wmi/\n'
+printf 'Platform profile: /sys/firmware/acpi/platform_profile\n'

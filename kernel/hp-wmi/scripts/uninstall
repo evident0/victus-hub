@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+MODULE_NAME="hp-wmi"
+MODULE_SYS_NAME="hp_wmi"
+KERNEL_RELEASE="$(uname -r)"
+INSTALL_PATH="/lib/modules/${KERNEL_RELEASE}/extra/${MODULE_NAME}.ko"
+AUTOLOAD_CONF="/etc/modules-load.d/${MODULE_NAME}.conf"
+
+if [ "$(id -u)" -eq 0 ]; then
+  SUDO=()
+else
+  SUDO=(sudo)
+fi
+
+if [ -d "/sys/module/${MODULE_SYS_NAME}" ]; then
+  printf 'Unloading %s...\n' "$MODULE_NAME"
+  "${SUDO[@]}" modprobe -r "$MODULE_NAME" || "${SUDO[@]}" rmmod "$MODULE_SYS_NAME"
+fi
+
+if [ -f "$AUTOLOAD_CONF" ]; then
+  printf 'Removing autoload config: %s\n' "$AUTOLOAD_CONF"
+  "${SUDO[@]}" rm -f "$AUTOLOAD_CONF"
+fi
+
+if [ -f "$INSTALL_PATH" ]; then
+  printf 'Removing installed module: %s\n' "$INSTALL_PATH"
+  "${SUDO[@]}" rm -f "$INSTALL_PATH"
+fi
+
+printf 'Updating module dependency cache...\n'
+"${SUDO[@]}" depmod -a "$KERNEL_RELEASE"
+
+printf 'Uninstalled %s for kernel %s.\n' "$MODULE_NAME" "$KERNEL_RELEASE"
+printf 'In-tree hp-wmi can be loaded again with: sudo modprobe hp-wmi\n'
