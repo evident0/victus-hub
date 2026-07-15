@@ -8,6 +8,7 @@ HP_WMI_SRC="${ROOT_DIR}/kernel/hp-wmi/hp-wmi.c"
 HP_WMI_KMOD_INSTALL="${ROOT_DIR}/kernel/hp-wmi/scripts/install"
 HP_WMI_MODULE_SYS_NAME="hp_wmi"
 HP_WMI_MODULE_NAME="hp-wmi"
+HP_WMI_PLATFORM_PATH="/sys/devices/platform/hp-wmi"
 
 KBD_RGB_KMOD_INSTALL="${ROOT_DIR}/kernel/hp-kbd-rgb/scripts/install"
 KBD_RGB_MODULE_SYS_NAME="hp_kbd_rgb"
@@ -78,6 +79,12 @@ maybe_install_hp_wmi() {
 		printf 'Custom %s has no explicit board entry for %s.\n' \
 			"$HP_WMI_MODULE_NAME" "${board:-unknown}"
 		printf 'In-tree/generic hp-wmi may still load; custom module adds board-specific tables.\n'
+	fi
+
+	# In-tree (or already loaded) driver already exposes the platform device.
+	if [ -d "$HP_WMI_PLATFORM_PATH" ]; then
+		printf 'Note: %s is available; custom %s module may not be necessary.\n' \
+			"$HP_WMI_PLATFORM_PATH" "$HP_WMI_MODULE_NAME"
 	fi
 
 	if [ "$listed" -eq 0 ]; then
