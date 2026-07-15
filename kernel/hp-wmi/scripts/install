@@ -3,6 +3,7 @@ set -euo pipefail
 
 MODULE_NAME="hp-wmi"
 MODULE_SYS_NAME="hp_wmi"
+BIOSCFG_SYS_NAME="hp_bioscfg"
 KERNEL_RELEASE="$(uname -r)"
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 MODULE_DIR="$(cd -- "$SCRIPT_DIR/.." && pwd)"
@@ -33,6 +34,13 @@ fi
 if [ -d "/sys/module/${MODULE_SYS_NAME}" ]; then
   printf 'Unloading currently loaded %s...\n' "$MODULE_NAME"
   "${SUDO[@]}" modprobe -r "$MODULE_NAME" || "${SUDO[@]}" rmmod "$MODULE_SYS_NAME"
+fi
+
+# Fedora (and similar): hp_bioscfg claims the same WMI BIOS GUID as hp-wmi.
+# Free it before loading so probe can recreate /sys/devices/platform/hp-wmi/.
+if [ -d "/sys/module/${BIOSCFG_SYS_NAME}" ]; then
+  printf 'Unloading %s (shares WMI BIOS GUID with %s)...\n' "$BIOSCFG_SYS_NAME" "$MODULE_NAME"
+  "${SUDO[@]}" modprobe -r "$BIOSCFG_SYS_NAME" || "${SUDO[@]}" rmmod "$BIOSCFG_SYS_NAME" || true
 fi
 
 printf 'Installing %s to %s...\n' "$MODULE_KO" "$INSTALL_PATH"

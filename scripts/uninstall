@@ -82,7 +82,9 @@ printf '\033[1;34m── Uninstalling hp-helper Python packages ──\033[0m\n'
 python3 -m pip uninstall -y hp-helper 2>/dev/null || true
 
 # ── 4. Kernel modules ──
-printf '\033[1;34m── Uninstalling custom hp-wmi kernel module ──\033[0m\n'
+# hp-wmi uninstall is a no-op when no custom extra/ install is present (avoids
+# unloading in-tree hp_wmi and losing the WMI GUID race to hp_bioscfg).
+printf '\033[1;34m── Uninstalling custom hp-wmi kernel module (if installed) ──\033[0m\n'
 if [ ! -x "$HP_WMI_KMOD_UNINSTALL" ]; then
 	printf 'Kernel module uninstall script not found or not executable: %s\n' "$HP_WMI_KMOD_UNINSTALL" >&2
 else
@@ -113,4 +115,4 @@ fi
 
 printf '\033[32m── Uninstall complete ──\033[0m\n'
 printf '  ~/.config/hp-helper was left in place (user settings preserved).\n'
-printf '  In-tree hp-wmi can be loaded again with: sudo modprobe hp-wmi\n'
+printf '  Custom hp-wmi (if any) was removed and in-tree hp-wmi restored when possible.\n'

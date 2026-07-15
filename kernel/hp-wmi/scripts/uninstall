@@ -1,11 +1,21 @@
 #!/usr/bin/env bash
+# Remove the out-of-tree hp-wmi module installed by this project, then restore
+# the in-tree driver when possible.
+#
+# Important: stock and custom share the module name "hp_wmi". Unloading whenever
+# /sys/module/hp_wmi exists would tear down a healthy in-tree driver even when
+# nothing custom was installed. On Fedora, hp_bioscfg also claims the same WMI
+# BIOS GUID, so after an unload the GUID can be stolen and
+# /sys/devices/platform/hp-wmi/ never comes back until hp_bioscfg is unloaded.
 set -euo pipefail
 
 MODULE_NAME="hp-wmi"
 MODULE_SYS_NAME="hp_wmi"
+BIOSCFG_SYS_NAME="hp_bioscfg"
 KERNEL_RELEASE="$(uname -r)"
 INSTALL_PATH="/lib/modules/${KERNEL_RELEASE}/extra/${MODULE_NAME}.ko"
 AUTOLOAD_CONF="/etc/modules-load.d/${MODULE_NAME}.conf"
+PLATFORM_PATH="/sys/devices/platform/hp-wmi"
 
 if [ "$(id -u)" -eq 0 ]; then
   SUDO=()
@@ -13,8 +23,27 @@ else
   SUDO=(sudo)
 fi
 
+custom_installed=false
+if [ -f "$INSTALL_PATH" ] || [ -f "$AUTOLOAD_CONF" ]; then
+  custom_installed=true
+fi
+
+if [ "$custom_installed" = false ]; then
+  printf 'No custom %s install found under extra/ or modules-load.d; leaving in-tree module alone.\n' "$MODULE_NAME"
+  if [ -d "/sys/module/${MODULE_SYS_NAME}" ]; then
+    printf 'In-tree %s is currently loaded.\n' "$MODULE_NAME"
+  elif [ -d "$PLATFORM_PATH" ]; then
+    printf 'Platform device %s is present.\n' "$PLATFORM_PATH"
+  else
+    printf 'Note: %s is not loaded. If fans/hotkeys are missing, free the shared WMI GUID and load stock:\n' "$MODULE_NAME"
+    printf '  sudo modprobe -r %s 2>/dev/null || true\n' "$BIOSCFG_SYS_NAME"
+    printf '  sudo modprobe %s\n' "$MODULE_NAME"
+  fi
+  exit 0
+fi
+
 if [ -d "/sys/module/${MODULE_SYS_NAME}" ]; then
-  printf 'Unloading %s...\n' "$MODULE_NAME"
+  printf 'Unloading custom/out-of-tree %s...\n' "$MODULE_NAME"
   "${SUDO[@]}" modprobe -r "$MODULE_NAME" || "${SUDO[@]}" rmmod "$MODULE_SYS_NAME"
 fi
 
@@ -31,5 +60,25 @@ fi
 printf 'Updating module dependency cache...\n'
 "${SUDO[@]}" depmod -a "$KERNEL_RELEASE"
 
-printf 'Uninstalled %s for kernel %s.\n' "$MODULE_NAME" "$KERNEL_RELEASE"
-printf 'In-tree hp-wmi can be loaded again with: sudo modprobe hp-wmi\n'
+# Fedora (and similar): hp_bioscfg aliases the same WMI BIOS GUID as hp-wmi.
+# Free it so in-tree hp-wmi can bind and recreate the platform device.
+if [ -d "/sys/module/${BIOSCFG_SYS_NAME}" ]; then
+  printf 'Unloading %s (shares WMI BIOS GUID with %s)...\n' "$BIOSCFG_SYS_NAME" "$MODULE_NAME"
+  "${SUDO[@]}" modprobe -r "$BIOSCFG_SYS_NAME" || "${SUDO[@]}" rmmod "$BIOSCFG_SYS_NAME" || true
+fi
+
+printf 'Loading in-tree %s...\n' "$MODULE_NAME"
+if "${SUDO[@]}" modprobe "$MODULE_NAME"; then
+  if [ -d "$PLATFORM_PATH" ]; then
+    printf 'Restored in-tree %s (%s).\n' "$MODULE_NAME" "$PLATFORM_PATH"
+  else
+    printf 'Loaded %s but platform device %s is missing; check dmesg.\n' "$MODULE_NAME" "$PLATFORM_PATH" >&2
+  fi
+else
+  printf 'Failed to load in-tree %s. Try:\n' "$MODULE_NAME" >&2
+  printf '  sudo modprobe -r %s\n' "$BIOSCFG_SYS_NAME" >&2
+  printf '  sudo modprobe %s\n' "$MODULE_NAME" >&2
+  exit 1
+fi
+
+printf 'Uninstalled custom %s for kernel %s.\n' "$MODULE_NAME" "$KERNEL_RELEASE"
