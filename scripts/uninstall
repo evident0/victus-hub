@@ -3,7 +3,7 @@
 #   1. .desktop entry + icon
 #   2. hp-helperd daemon           (stop, disable, remove service, pip uninstall)
 #   3. hp-helper program           (pip uninstall — same distribution)
-#   4. hp-kbd-rgb + hp-gpu-mux kernel modules  (unload, remove, autoload)
+#   4. custom hp-wmi + hp-kbd-rgb + hp-gpu-mux kernel modules
 #   5. ryzenadj                    (remove binary + ~/RyzenAdj source clone)
 # ~/.config/hp-helper is left in place (user settings preserved).
 set -euo pipefail
@@ -14,58 +14,66 @@ SERVICE_DST="/etc/systemd/system/$SERVICE_NAME"
 SOCKET_RUNTIME_DIR="/run/hp-helperd"
 ICON_DST="/usr/share/icons/hicolor/1024x1024/apps/hp-helper.png"
 DESKTOP_DST="/usr/share/applications/hp-helper.desktop"
+HP_WMI_KMOD_UNINSTALL="$ROOT_DIR/kernel/hp-wmi/scripts/uninstall"
 KBD_RGB_KMOD_UNINSTALL="$ROOT_DIR/kernel/hp-kbd-rgb/scripts/uninstall"
 GPU_MUX_KMOD_UNINSTALL="$ROOT_DIR/kernel/hp-gpu-mux/scripts/uninstall"
 RYZENADJ_UNINSTALL="$ROOT_DIR/scripts/ryzenadj-uninstall"
 
 if [ "$(id -u)" -eq 0 ]; then
-    SUDO=()
+	SUDO=()
 else
-    SUDO=(sudo)
+	SUDO=(sudo)
 fi
 
 # ── 1. Desktop entry + icon ──
 printf '\033[1;34m── Removing desktop entry + icon ──\033[0m\n'
 if [ -f "$DESKTOP_DST" ]; then
-    printf 'Removing %s\n' "$DESKTOP_DST"
-    "${SUDO[@]}" rm -f "$DESKTOP_DST"
-    "${SUDO[@]}" update-desktop-database /usr/share/applications 2>/dev/null || true
+	printf 'Removing %s\n' "$DESKTOP_DST"
+	"${SUDO[@]}" rm -f "$DESKTOP_DST"
+	"${SUDO[@]}" update-desktop-database /usr/share/applications 2>/dev/null || true
 fi
 if [ -f "$ICON_DST" ]; then
-    printf 'Removing icon %s\n' "$ICON_DST"
-    "${SUDO[@]}" rm -f "$ICON_DST"
-    "${SUDO[@]}" gtk-update-icon-cache -f /usr/share/icons/hicolor 2>/dev/null || true
+	printf 'Removing icon %s\n' "$ICON_DST"
+	"${SUDO[@]}" rm -f "$ICON_DST"
+	"${SUDO[@]}" gtk-update-icon-cache -f /usr/share/icons/hicolor 2>/dev/null || true
 fi
+# Remove multi-size icons installed by scripts/install
+for size in 16 22 24 32 48 64 128 256 512 1024; do
+	icon="/usr/share/icons/hicolor/${size}x${size}/apps/hp-helper.png"
+	if [ -f "$icon" ]; then
+		"${SUDO[@]}" rm -f "$icon"
+	fi
+done
 
 # ── 2. Daemon ──
 printf '\033[1;34m── Uninstalling hp-helperd daemon ──\033[0m\n'
 
 if command -v systemctl >/dev/null 2>&1; then
-    if systemctl is-active --quiet "$SERVICE_NAME" 2>/dev/null; then
-        printf 'Stopping %s...\n' "$SERVICE_NAME"
-        "${SUDO[@]}" systemctl stop "$SERVICE_NAME" || true
-    fi
+	if systemctl is-active --quiet "$SERVICE_NAME" 2>/dev/null; then
+		printf 'Stopping %s...\n' "$SERVICE_NAME"
+		"${SUDO[@]}" systemctl stop "$SERVICE_NAME" || true
+	fi
 
-    if systemctl is-enabled --quiet "$SERVICE_NAME" 2>/dev/null; then
-        printf 'Disabling %s...\n' "$SERVICE_NAME"
-        "${SUDO[@]}" systemctl disable "$SERVICE_NAME" || true
-    fi
+	if systemctl is-enabled --quiet "$SERVICE_NAME" 2>/dev/null; then
+		printf 'Disabling %s...\n' "$SERVICE_NAME"
+		"${SUDO[@]}" systemctl disable "$SERVICE_NAME" || true
+	fi
 
-    if [ -f "$SERVICE_DST" ]; then
-        printf 'Removing service file: %s\n' "$SERVICE_DST"
-        "${SUDO[@]}" rm -f "$SERVICE_DST"
-        printf 'Reloading systemd...\n'
-        "${SUDO[@]}" systemctl daemon-reload
-        "${SUDO[@]}" systemctl reset-failed "$SERVICE_NAME" 2>/dev/null || true
-    fi
+	if [ -f "$SERVICE_DST" ]; then
+		printf 'Removing service file: %s\n' "$SERVICE_DST"
+		"${SUDO[@]}" rm -f "$SERVICE_DST"
+		printf 'Reloading systemd...\n'
+		"${SUDO[@]}" systemctl daemon-reload
+		"${SUDO[@]}" systemctl reset-failed "$SERVICE_NAME" 2>/dev/null || true
+	fi
 else
-    printf 'systemctl not found — skipping systemd steps.\n'
+	printf 'systemctl not found — skipping systemd steps.\n'
 fi
 
 # Best-effort cleanup of runtime artifacts
 if [ -d "$SOCKET_RUNTIME_DIR" ]; then
-    printf 'Removing runtime directory %s\n' "$SOCKET_RUNTIME_DIR"
-    "${SUDO[@]}" rm -rf "$SOCKET_RUNTIME_DIR" || true
+	printf 'Removing runtime directory %s\n' "$SOCKET_RUNTIME_DIR"
+	"${SUDO[@]}" rm -rf "$SOCKET_RUNTIME_DIR" || true
 fi
 
 # ── 3. Program + daemon Python packages ──
@@ -74,27 +82,35 @@ printf '\033[1;34m── Uninstalling hp-helper Python packages ──\033[0m\n'
 python3 -m pip uninstall -y hp-helper 2>/dev/null || true
 
 # ── 4. Kernel modules ──
+printf '\033[1;34m── Uninstalling custom hp-wmi kernel module ──\033[0m\n'
+if [ ! -x "$HP_WMI_KMOD_UNINSTALL" ]; then
+	printf 'Kernel module uninstall script not found or not executable: %s\n' "$HP_WMI_KMOD_UNINSTALL" >&2
+else
+	bash "$HP_WMI_KMOD_UNINSTALL"
+fi
+
 printf '\033[1;34m── Uninstalling hp-kbd-rgb kernel module ──\033[0m\n'
 if [ ! -x "$KBD_RGB_KMOD_UNINSTALL" ]; then
-    printf 'Kernel module uninstall script not found or not executable: %s\n' "$KBD_RGB_KMOD_UNINSTALL" >&2
+	printf 'Kernel module uninstall script not found or not executable: %s\n' "$KBD_RGB_KMOD_UNINSTALL" >&2
 else
-    bash "$KBD_RGB_KMOD_UNINSTALL"
+	bash "$KBD_RGB_KMOD_UNINSTALL"
 fi
 
 printf '\033[1;34m── Uninstalling hp-gpu-mux kernel module ──\033[0m\n'
 if [ ! -x "$GPU_MUX_KMOD_UNINSTALL" ]; then
-    printf 'Kernel module uninstall script not found or not executable: %s\n' "$GPU_MUX_KMOD_UNINSTALL" >&2
+	printf 'Kernel module uninstall script not found or not executable: %s\n' "$GPU_MUX_KMOD_UNINSTALL" >&2
 else
-    bash "$GPU_MUX_KMOD_UNINSTALL"
+	bash "$GPU_MUX_KMOD_UNINSTALL"
 fi
 
 # ── 5. ryzenadj ──
 printf '\033[1;34m── Uninstalling ryzenadj ──\033[0m\n'
 if [ ! -x "$RYZENADJ_UNINSTALL" ]; then
-    printf 'ryzenadj uninstall script not found or not executable: %s\n' "$RYZENADJ_UNINSTALL" >&2
+	printf 'ryzenadj uninstall script not found or not executable: %s\n' "$RYZENADJ_UNINSTALL" >&2
 else
-    bash "$RYZENADJ_UNINSTALL"
+	bash "$RYZENADJ_UNINSTALL"
 fi
 
 printf '\033[32m── Uninstall complete ──\033[0m\n'
 printf '  ~/.config/hp-helper was left in place (user settings preserved).\n'
+printf '  In-tree hp-wmi can be loaded again with: sudo modprobe hp-wmi\n'

@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
 # Install (or reinstall) all HP Helper components:
-#   1. hp-kbd-rgb + hp-gpu-mux kernel modules  (build, load, autoload)
-#   2. ryzenadj                  (clone + build + install to /usr/local/bin)
-#   3. hp-helperd daemon         (pip editable + systemd service)
-#   4. hp-helper program         (pip entry point, same install as daemon)
-#   5. .desktop entry + icon     (app-menu integration)
+#   1. Optional: custom hp-wmi, hp-kbd-rgb, hp-gpu-mux, ryzenadj  (prompted)
+#   2. hp-helperd daemon         (pip editable + systemd service)
+#   3. hp-helper program         (pip entry point, same install as daemon)
+#   4. .desktop entry + icon     (app-menu integration)
 set -euo pipefail
 
 ROOT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+# shellcheck source=kmod-prompts.sh
+source "$ROOT_DIR/scripts/kmod-prompts.sh"
+
 SERVICE_NAME=hp-helperd.service
 SERVICE_SRC="$ROOT_DIR/data/hp-helperd.service"
 SERVICE_DST="/etc/systemd/system/$SERVICE_NAME"
@@ -15,44 +17,17 @@ SOCKET_PATH="/run/hp-helperd/hp-helper-rs.sock"
 ICON_SRC="$ROOT_DIR/hp_helper/resources/icons/logoV.png"
 ICON_DST="/usr/share/icons/hicolor/1024x1024/apps/hp-helper.png"
 DESKTOP_DST="/usr/share/applications/hp-helper.desktop"
-KBD_RGB_KMOD_INSTALL="$ROOT_DIR/kernel/hp-kbd-rgb/scripts/install"
-GPU_MUX_KMOD_INSTALL="$ROOT_DIR/kernel/hp-gpu-mux/scripts/install"
-RYZENADJ_INSTALL="$ROOT_DIR/scripts/ryzenadj-install"
 
 if [ "$(id -u)" -eq 0 ]; then
-    SUDO=()
+	SUDO=()
 else
-    SUDO=(sudo)
+	SUDO=(sudo)
 fi
 
-# ── 1. Kernel modules ──
-printf '\033[1;34m── Installing hp-kbd-rgb kernel module ──\033[0m\n'
-if [ ! -x "$KBD_RGB_KMOD_INSTALL" ]; then
-    printf 'Kernel module install script not found or not executable: %s\n' "$KBD_RGB_KMOD_INSTALL" >&2
-    exit 1
-fi
-bash "$KBD_RGB_KMOD_INSTALL"
+# ── 1. Optional kernel modules / tools (prompted) ──
+prompt_optional_components
 
-printf '\033[1;34m── Installing hp-gpu-mux kernel module ──\033[0m\n'
-if [ ! -x "$GPU_MUX_KMOD_INSTALL" ]; then
-    printf 'Kernel module install script not found or not executable: %s\n' "$GPU_MUX_KMOD_INSTALL" >&2
-    exit 1
-fi
-bash "$GPU_MUX_KMOD_INSTALL"
-
-# ── 2. ryzenadj ──
-if ! grep -qm1 'AuthenticAMD' /proc/cpuinfo; then
-    printf 'Skipping ryzenadj (not an AMD CPU).\n'
-else
-    printf '\033[1;34m── Installing ryzenadj ──\033[0m\n'
-    if [ ! -x "$RYZENADJ_INSTALL" ]; then
-        printf 'ryzenadj install script not found or not executable: %s\n' "$RYZENADJ_INSTALL" >&2
-        exit 1
-    fi
-    bash "$RYZENADJ_INSTALL"
-fi
-
-# ── 3. Daemon + program (editable pip install brings both hp_helper* and
+# ── 2. Daemon + program (editable pip install brings both hp_helper* and
 #        hp_helperd* plus the hp-helper console-script entry point) ──
 printf '\033[1;34m── Installing hp-helperd daemon + hp-helper program ──\033[0m\n'
 cd "$ROOT_DIR"
@@ -64,15 +39,15 @@ sed "s|@ROOT_DIR@|$ROOT_DIR|g" "$SERVICE_SRC" > "$TMP_UNIT"
 
 NEEDS_RELOAD=0
 if [ ! -f "$SERVICE_DST" ] || ! cmp -s "$TMP_UNIT" "$SERVICE_DST"; then
-    printf 'Installing systemd service to %s\n' "$SERVICE_DST"
-    "${SUDO[@]}" install -Dm644 "$TMP_UNIT" "$SERVICE_DST"
-    NEEDS_RELOAD=1
+	printf 'Installing systemd service to %s\n' "$SERVICE_DST"
+	"${SUDO[@]}" install -Dm644 "$TMP_UNIT" "$SERVICE_DST"
+	NEEDS_RELOAD=1
 fi
 rm -f "$TMP_UNIT"
 
 if [ "$NEEDS_RELOAD" -eq 1 ]; then
-    "${SUDO[@]}" systemctl daemon-reload
-    "${SUDO[@]}" systemctl reset-failed "$SERVICE_NAME" >/dev/null 2>&1 || true
+	"${SUDO[@]}" systemctl daemon-reload
+	"${SUDO[@]}" systemctl reset-failed "$SERVICE_NAME" >/dev/null 2>&1 || true
 fi
 
 "${SUDO[@]}" systemctl enable "$SERVICE_NAME" >/dev/null
@@ -81,44 +56,44 @@ printf 'Starting %s...\n' "$SERVICE_NAME"
 
 # Wait for socket to appear
 for _ in $(seq 1 30); do
-    if [ -S "$SOCKET_PATH" ]; then
-        printf '\033[32mDaemon ready (%s)\033[0m\n' "$SOCKET_PATH"
-        break
-    fi
-    sleep 0.2
+	if [ -S "$SOCKET_PATH" ]; then
+		printf '\033[32mDaemon ready (%s)\033[0m\n' "$SOCKET_PATH"
+		break
+	fi
+	sleep 0.2
 done
 
-# ── 4. Desktop entry + icon ──
+# ── 3. Desktop entry + icon ──
 printf '\033[1;34m── Installing desktop entry ──\033[0m\n'
 if [ -f "$ICON_SRC" ]; then
-    # Install the program's own icon (logoV) at standard hicolor sizes so the
-    # .desktop Icon=hp-helper resolves crisply at every DPI/menu size.
-    if command -v convert >/dev/null 2>&1; then
-        for size in 16 22 24 32 48 64 128 256 512 1024; do
-            dst="/usr/share/icons/hicolor/${size}x${size}/apps/hp-helper.png"
-            printf 'Installing %sx%s icon to %s\n' "$size" "$size" "$dst"
-            "${SUDO[@]}" install -d "/usr/share/icons/hicolor/${size}x${size}/apps"
-            convert "$ICON_SRC" -resize "${size}x${size}" "png32:${TMPDIR:-/tmp}/hp-helper-${size}.png" 2>/dev/null
-            "${SUDO[@]}" install -Dm644 "${TMPDIR:-/tmp}/hp-helper-${size}.png" "$dst"
-            rm -f "${TMPDIR:-/tmp}/hp-helper-${size}.png"
-        done
-    else
-        # No ImageMagick — fall back to the single source size.
-        printf 'Installing icon to %s\n' "$ICON_DST"
-        "${SUDO[@]}" install -Dm644 "$ICON_SRC" "$ICON_DST"
-    fi
-    "${SUDO[@]}" gtk-update-icon-cache -f /usr/share/icons/hicolor 2>/dev/null || true
+	# Install the program's own icon (logoV) at standard hicolor sizes so the
+	# .desktop Icon=hp-helper resolves crisply at every DPI/menu size.
+	if command -v convert >/dev/null 2>&1; then
+		for size in 16 22 24 32 48 64 128 256 512 1024; do
+			dst="/usr/share/icons/hicolor/${size}x${size}/apps/hp-helper.png"
+			printf 'Installing %sx%s icon to %s\n' "$size" "$size" "$dst"
+			"${SUDO[@]}" install -d "/usr/share/icons/hicolor/${size}x${size}/apps"
+			convert "$ICON_SRC" -resize "${size}x${size}" "png32:${TMPDIR:-/tmp}/hp-helper-${size}.png" 2>/dev/null
+			"${SUDO[@]}" install -Dm644 "${TMPDIR:-/tmp}/hp-helper-${size}.png" "$dst"
+			rm -f "${TMPDIR:-/tmp}/hp-helper-${size}.png"
+		done
+	else
+		# No ImageMagick — fall back to the single source size.
+		printf 'Installing icon to %s\n' "$ICON_DST"
+		"${SUDO[@]}" install -Dm644 "$ICON_SRC" "$ICON_DST"
+	fi
+	"${SUDO[@]}" gtk-update-icon-cache -f /usr/share/icons/hicolor 2>/dev/null || true
 fi
 
 HP_HELPER_BIN="$(command -v hp-helper || true)"
 if [ -z "$HP_HELPER_BIN" ]; then
-    # ~/.local/bin may not be on PATH when pip installs to --user
-    HP_HELPER_BIN="$HOME/.local/bin/hp-helper"
+	# ~/.local/bin may not be on PATH when pip installs to --user
+	HP_HELPER_BIN="$HOME/.local/bin/hp-helper"
 fi
 if [ ! -x "$HP_HELPER_BIN" ]; then
-    printf 'hp-helper entry point not found — cannot write desktop Exec line.\n' >&2
-    printf 'Run pip install again or verify hp-helper is on PATH.\n' >&2
-    exit 1
+	printf 'hp-helper entry point not found — cannot write desktop Exec line.\n' >&2
+	printf 'Run pip install again or verify hp-helper is on PATH.\n' >&2
+	exit 1
 fi
 HP_HELPER_BIN="$(readlink -f "$HP_HELPER_BIN")"
 printf 'Resolved hp-helper to %s\n' "$HP_HELPER_BIN"
@@ -138,7 +113,6 @@ DESKTOP
 "${SUDO[@]}" update-desktop-database /usr/share/applications 2>/dev/null || true
 
 printf '\033[32m── Install complete ──\033[0m\n'
-printf '  • Kernel modules: hp-kbd-rgb, hp-gpu-mux  (loaded, autoload at boot)\n'
-printf '  • Tool:          ryzenadj    (/usr/local/bin/ryzenadj)\n'
+printf '  • Optional modules/tools were prompted (hp-wmi, hp-kbd-rgb, hp-gpu-mux, ryzenadj)\n'
 printf '  • Daemon:        %s (running)\n' "$SERVICE_NAME"
 printf '  • Program:       hp-helper   (app menu or: hp-helper)\n'
