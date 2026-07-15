@@ -7,9 +7,9 @@ from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QColor, QFont
 
 from hp_helper.widgets.sensor_line_graph import SensorLineGraph
-from hp_helper.theme import COLORS
+from hp_helper.app.theme import COLORS
 from hp_helper import api
-from hp_helper.sensor_definitions import (
+from hp_helper.features.sensors.definitions import (
     SensorDefinition, sensor_definition_for_key,
 )
 
@@ -39,7 +39,7 @@ class SensorGraphWindow(QMainWindow):
         self.resize(820, 260)
         self.setMinimumSize(500, 200)
         # App icon (logoV) — same as main window
-        from hp_helper.icon_utils import load_icon
+        from hp_helper.app.icon_utils import load_icon
         self.setWindowIcon(load_icon("logoV.png", color=None, size=48))
 
         self.setStyleSheet(f"background-color: {COLORS['bg']};")

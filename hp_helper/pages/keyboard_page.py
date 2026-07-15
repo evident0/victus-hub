@@ -14,9 +14,9 @@ from PySide6.QtCore import Qt, Signal, QRectF
 from PySide6.QtGui import QPainter, QColor, QFont
 
 from hp_helper import api
-from hp_helper.theme import COLORS
+from hp_helper.app.theme import COLORS
 from hp_helper.pages.settings_page import make_spin
-from hp_helper.keyboard_lighting import (
+from hp_helper.features.keyboard.lighting import (
     ZONE_NAMES,
     normalize_zone_colors,
     read_lighting_settings,

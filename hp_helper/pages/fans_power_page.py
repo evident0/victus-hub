@@ -10,9 +10,9 @@ from PySide6.QtCore import Qt, Signal, QTimer
 from PySide6.QtGui import QColor
 
 from hp_helper.widgets.fan_chart import FanChart
-from hp_helper.theme import COLORS
+from hp_helper.app.theme import COLORS
 from hp_helper.pages.settings_page import make_spin
-from hp_helper.power_limits import (
+from hp_helper.features.power.limits import (
     POWER_MIN_MW, POWER_MAX_MW,
     TCTL_TEMP_MIN_C, TCTL_TEMP_MAX_C,
     PowerLimitSettings, clamp_power_limit, clamp_tctl_temp,

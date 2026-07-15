@@ -12,7 +12,7 @@ import time
 from PySide6.QtCore import QObject, QTimer, Signal
 
 from hp_helper import api
-from hp_helper.keyboard_lighting import (
+from hp_helper.features.keyboard.lighting import (
     LightingSettings,
     RgbColor,
     hex_to_rgb,

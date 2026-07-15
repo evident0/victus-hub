@@ -4,7 +4,7 @@ Ported from the stats helpers that lived at the bottom of main_window.py
 (originally ported from App.tsx).
 """
 
-from hp_helper.sensor_definitions import (
+from hp_helper.features.sensors.definitions import (
     SENSOR_DEFINITIONS,
     dynamic_sensor_definition,
     SensorDefinition,

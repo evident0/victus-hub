@@ -7,8 +7,8 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import QSize, Qt, Signal, QTimer
 from PySide6.QtGui import QColor, QIcon
 
-from hp_helper.theme import COLORS
-from hp_helper.icon_utils import load_pixmap
+from hp_helper.app.theme import COLORS
+from hp_helper.app.icon_utils import load_pixmap
 
 # Lazily built so QApplication exists before QPixmap allocation
 _graph_icon: QIcon | None = None

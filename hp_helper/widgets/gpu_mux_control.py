@@ -9,8 +9,8 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont
 
 from hp_helper import api
-from hp_helper.gpu_mux import GpuMuxMode, read_gpu_mux_state
-from hp_helper.theme import COLORS
+from hp_helper.features.gpu.mux import GpuMuxMode, read_gpu_mux_state
+from hp_helper.app.theme import COLORS
 
 logger = logging.getLogger(__name__)
 

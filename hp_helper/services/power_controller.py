@@ -11,7 +11,7 @@ import time
 from PySide6.QtCore import QObject, QTimer, Signal
 
 from hp_helper import api
-from hp_helper.power_limits import read_power_enabled, read_power_limit_settings
+from hp_helper.features.power.limits import read_power_enabled, read_power_limit_settings
 
 
 class PowerLimitController(QObject):

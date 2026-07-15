@@ -7,8 +7,8 @@ from pathlib import Path
 from PySide6.QtWidgets import QApplication
 from PySide6.QtCore import Qt
 
-from hp_helper.main_window import MainWindow
-from hp_helper.single_instance import SingleInstanceGuard, default_socket_path
+from hp_helper.app.main_window import MainWindow
+from hp_helper.app.single_instance import SingleInstanceGuard, default_socket_path
 
 
 # Surface daemon-traffic logs in the terminal; daemon_client + main_window
@@ -21,7 +21,7 @@ def main():
     app.setApplicationName("hp-helper")
     app.setOrganizationName("hp-helper")
     # App-wide window icon (logoV) so every top-level window (main, sensor graphs, fan curves, etc.) gets it
-    from hp_helper.icon_utils import load_icon
+    from hp_helper.app.icon_utils import load_icon
     app_icon = load_icon("logoV.png", color=None, size=48)
     app.setWindowIcon(app_icon)
 

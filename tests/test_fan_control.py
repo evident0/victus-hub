@@ -9,7 +9,7 @@ import collections
 import unittest
 
 from hp_helper.backend.types import FanPoint, FanProfileConfig
-from hp_helper.fan_control import (
+from hp_helper.services.fan_control import (
     P0_ENGAGE_S,
     P0_RELEASE_S,
     P0FloorState,

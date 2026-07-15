@@ -9,22 +9,22 @@ from PySide6.QtWidgets import (
     QSystemTrayIcon, QWidget,
 )
 
-from hp_helper.theme import COLORS
+from hp_helper.app.theme import COLORS
 from hp_helper.widgets.sidebar import Sidebar
 from hp_helper.pages.home_page import HomePage
 from hp_helper.pages.fans_power_page import FansPowerPage
 from hp_helper.pages.sensors_page import SensorsPage
 from hp_helper.pages.keyboard_page import KeyboardPage
 from hp_helper.pages.settings_page import SettingsPage
-from hp_helper.sensor_graph_window import SensorGraphWindow
-from hp_helper.fan_curves_window import FanCurvesWindow
+from hp_helper.windows.sensor_graph_window import SensorGraphWindow
+from hp_helper.windows.fan_curves_window import FanCurvesWindow
 from hp_helper import api
-from hp_helper.fan_control import start_fan_control, set_suspended
-from hp_helper.lighting_controller import LightingController
-from hp_helper.power_controller import PowerLimitController
-from hp_helper.power_state import PowerStateWatcher
-from hp_helper.shortcut_controller import ShortcutController
-from hp_helper.sensor_stats import next_stats, build_rows
+from hp_helper.services.fan_control import start_fan_control, set_suspended
+from hp_helper.services.lighting_controller import LightingController
+from hp_helper.services.power_controller import PowerLimitController
+from hp_helper.app.power_state import PowerStateWatcher
+from hp_helper.services.shortcut_controller import ShortcutController
+from hp_helper.features.sensors.stats import next_stats, build_rows
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +38,7 @@ class MainWindow(QMainWindow):
         self.setMinimumSize(930, 680)
 
         # App icon — logoV.png with native colors (no tint, no solid background)
-        from hp_helper.icon_utils import load_icon
+        from hp_helper.app.icon_utils import load_icon
         self._app_icon = load_icon("logoV.png", color=None, size=48)
         self.setWindowIcon(self._app_icon)
 

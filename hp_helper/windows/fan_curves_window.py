@@ -7,7 +7,7 @@ from PySide6.QtCore import QTimer
 from PySide6.QtGui import QColor
 
 from hp_helper.widgets.fan_chart import FanChart
-from hp_helper.theme import COLORS
+from hp_helper.app.theme import COLORS
 from hp_helper.api import (
     get_fan_config, save_fan_profile,
     FanPoint, FanProfileConfig,
@@ -27,7 +27,7 @@ class FanCurvesWindow(QMainWindow):
         self.resize(860, 620)
         self.setMinimumSize(600, 300)
         # App icon (logoV) — same as main window
-        from hp_helper.icon_utils import load_icon
+        from hp_helper.app.icon_utils import load_icon
         self.setWindowIcon(load_icon("logoV.png", color=None, size=48))
 
         self.setStyleSheet(f"background-color: {COLORS['bg']};")

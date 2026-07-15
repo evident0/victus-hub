@@ -8,7 +8,7 @@ from PySide6.QtGui import (
 )
 
 from hp_helper.backend.types import FanPoint
-from hp_helper.theme import COLORS
+from hp_helper.app.theme import COLORS
 
 CHART_PADDING = 52
 POINT_R = 7

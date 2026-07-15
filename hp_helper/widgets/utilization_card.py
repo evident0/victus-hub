@@ -6,7 +6,7 @@ from PySide6.QtCore import Qt, QRectF
 from PySide6.QtGui import QPainter, QPen, QFont, QColor
 from PySide6.QtWidgets import QFrame, QVBoxLayout, QHBoxLayout, QLabel, QWidget, QSizePolicy
 
-from hp_helper.theme import COLORS
+from hp_helper.app.theme import COLORS
 
 
 class _CircularProgress(QWidget):

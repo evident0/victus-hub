@@ -12,7 +12,7 @@ from hp_helper.widgets.footer import Footer
 from hp_helper.widgets.utilization_card import UtilizationCard
 from hp_helper.widgets.storage_card import StorageCard
 from hp_helper.widgets.top_processes_card import TopProcessesCard
-from hp_helper.theme import COLORS
+from hp_helper.app.theme import COLORS
 
 
 class HomePage(QWidget):

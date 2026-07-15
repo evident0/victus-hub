@@ -8,7 +8,7 @@ from PySide6.QtWidgets import (
     QSizePolicy, QWidget, QScrollArea,
 )
 
-from hp_helper.theme import COLORS
+from hp_helper.app.theme import COLORS
 from hp_helper.backend.types import DiskUsage
 
 _WARN_PCT = 90.0

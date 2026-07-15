@@ -11,7 +11,7 @@ from PySide6.QtGui import QColor, QIcon, QPainter, QPixmap
 from PySide6.QtSvg import QSvgRenderer
 
 
-_ICON_ROOT = Path(__file__).parent / "resources" / "icons"
+_ICON_ROOT = Path(__file__).resolve().parent.parent / "resources" / "icons"
 
 
 def load_icon(filename: str, color: str | None = "#ffffff", size: int = 24) -> QIcon:

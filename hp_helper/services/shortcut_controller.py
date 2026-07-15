@@ -18,7 +18,7 @@ import logging
 from PySide6.QtCore import QObject, QTimer, Signal
 
 from hp_helper import api
-from hp_helper.keyboard_shortcut import (
+from hp_helper.features.keyboard.shortcut import (
     KeybindSettings,
     read_keybind_settings,
 )

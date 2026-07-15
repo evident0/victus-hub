@@ -6,7 +6,7 @@ from PySide6.QtCore import Qt, Signal
 from hp_helper.widgets.app_button import AppButton
 from hp_helper.widgets.gpu_mux_control import GpuMuxControl
 from hp_helper.widgets.segmented_control import SegmentedControl
-from hp_helper.theme import COLORS
+from hp_helper.app.theme import COLORS
 
 
 PROFILES = [

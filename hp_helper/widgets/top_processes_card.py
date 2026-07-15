@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (
     QSizePolicy, QTreeWidget, QTreeWidgetItem,
 )
 
-from hp_helper.theme import COLORS
+from hp_helper.app.theme import COLORS
 
 # Scrollable list — enough slots for mid-size apps, not only browsers.
 _TOP_GROUPS = 30

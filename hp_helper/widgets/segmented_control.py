@@ -4,8 +4,8 @@ from PySide6.QtWidgets import QFrame, QHBoxLayout, QPushButton, QWidget
 from PySide6.QtCore import Qt, Signal, QSize
 from PySide6.QtGui import QFont
 
-from hp_helper.icon_utils import load_icon
-from hp_helper.theme import COLORS
+from hp_helper.app.icon_utils import load_icon
+from hp_helper.app.theme import COLORS
 
 
 class SegmentedControl(QFrame):

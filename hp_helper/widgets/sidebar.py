@@ -3,7 +3,7 @@
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QPushButton
 from PySide6.QtCore import Signal, Qt, QSize
 
-from hp_helper.icon_utils import load_icon
+from hp_helper.app.icon_utils import load_icon
 TABS = [
     ("NewIcons/laptop.png", "Home"),
     ("NewIcons/fan.png", "Fans & Power"),

@@ -8,7 +8,7 @@ from PySide6.QtGui import (
     QPainter, QPen, QColor, QFont, QPainterPath, QMouseEvent,
 )
 
-from hp_helper.theme import COLORS
+from hp_helper.app.theme import COLORS
 
 
 class SensorLineGraph(QWidget):

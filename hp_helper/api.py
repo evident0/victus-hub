@@ -19,7 +19,7 @@ from hp_helper.backend.types import (
     FanProfileConfig,
     FanConfig,
 )
-from hp_helper.keyboard_shortcut import KeyEvent
+from hp_helper.features.keyboard.shortcut import KeyEvent
 
 # Re-export dataclasses for backward compatibility
 __all__ = [

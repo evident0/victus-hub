@@ -7,9 +7,9 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt
 
 from hp_helper import api
-from hp_helper.theme import COLORS
+from hp_helper.app.theme import COLORS
 from hp_helper.backend.types import FanConfig
-from hp_helper.keyboard_shortcut import (
+from hp_helper.features.keyboard.shortcut import (
     KeybindSettings,
     keybind_from_event,
     keybind_label,

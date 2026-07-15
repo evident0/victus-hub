@@ -2,7 +2,7 @@
 
 from PySide6.QtWidgets import QWidget, QHBoxLayout, QLabel
 
-from hp_helper.theme import COLORS
+from hp_helper.app.theme import COLORS
 
 
 class Footer(QWidget):
