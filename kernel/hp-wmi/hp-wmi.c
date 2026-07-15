@@ -228,6 +228,15 @@ static const struct dmi_system_id victus_s_thermal_profile_boards[] __initconst 
 		.driver_data = (void *)&omen_v1_legacy_thermal_params,
 	},
 	{
+		/*
+		 * 8BAC: HP Omen 16-wf0xxx. ACPI tables have a broken GETB
+		 * helper (CreateField with zero length) that aborts WMID
+		 * methods. Use no-EC params to skip EC thermal profile reads.
+		 */
+		.matches = { DMI_MATCH(DMI_BOARD_NAME, "8BAC") },
+		.driver_data = (void *)&omen_v1_no_ec_thermal_params,
+	},
+	{
 		.matches = { DMI_MATCH(DMI_BOARD_NAME, "8BBE") },
 		.driver_data = (void *)&victus_s_thermal_params,
 	},
