@@ -281,6 +281,14 @@ def _make_dispatch(sampler: RaplPowerSampler, sampler_lock: threading.Lock | Non
         except RuntimeError as e:
             return protocol.format_status_response((False, str(e)))
 
+    def _fan_max(_body: str) -> str:
+        logger.info("[fan-control] daemon request: fan-max (pwm1_enable=0)")
+        try:
+            result = sysfs.write_pwm_max()
+            return protocol.format_status_response((True, result))
+        except RuntimeError as e:
+            return protocol.format_status_response((False, str(e)))
+
     def _fan_manual(_body: str) -> str:
         logger.info("[fan-control] daemon request: fan-manual")
         try:
@@ -356,6 +364,7 @@ def _make_dispatch(sampler: RaplPowerSampler, sampler_lock: threading.Lock | Non
         ("cpu-power", _cpu_power),
         ("gpu-mux-mode\t", _gpu_mux_mode),
         ("fan-auto", _fan_auto),
+        ("fan-max", _fan_max),
         ("fan-pwm\t", _fan_pwm),
         ("fan-manual", _fan_manual),
         ("keyboard-color\t", _keyboard_color),

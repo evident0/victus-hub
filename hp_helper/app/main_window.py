@@ -265,7 +265,8 @@ class MainWindow(QMainWindow):
         Suspend cleanup leaves the EC in fan-auto. Custom is re-claimed by
         the fan-control thread (ownership is cleared while suspended, so the
         next poll re-runs enter-custom: fan-manual + force first PWM write).
-        Max is applied here because the control loop does not drive max mode.
+        Max is re-applied here (pwm1_enable=0) because the control loop does
+        not drive max mode.
         """
         self._lighting.resume()
         set_suspended(False)
@@ -273,9 +274,8 @@ class MainWindow(QMainWindow):
             _cfg = api.get_fan_config()
             if _cfg.manual_preset == "max":
                 try:
-                    api.set_fan_manual()
-                    api.set_fan_pwm(255)
-                    logger.info("resume: restored fan max")
+                    api.set_fan_max()
+                    logger.info("resume: restored fan max (pwm1_enable=0)")
                 except Exception:
                     logger.exception("resume fan max restore failed")
         except Exception:
@@ -386,6 +386,7 @@ class MainWindow(QMainWindow):
             logger.exception("set fan auto failed")
 
     def _set_fan_max(self):
+        """Engage BIOS/EC max-fan mode (hp-wmi: pwm1_enable=0)."""
         try:
             api.set_manual_preset("max")
         except Exception:
@@ -395,13 +396,9 @@ class MainWindow(QMainWindow):
         except Exception:
             logger.exception("set custom fan enabled (max) failed")
         try:
-            api.set_fan_manual()
+            api.set_fan_max()
         except Exception:
-            logger.exception("set fan manual (max) failed")
-        try:
-            api.set_fan_pwm(255)
-        except Exception:
-            logger.exception("set fan pwm failed")
+            logger.exception("set fan max failed")
 
     def _set_fan_custom(self):
         try:

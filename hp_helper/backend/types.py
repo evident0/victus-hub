@@ -76,7 +76,7 @@ class FanConfig:
     custom_enabled: bool
     # Non-None when the user has clicked a preset button (auto / max).
     # The fan-control loop backs off while a preset is active so the
-    # manual pwm1 / pwm1_enable state survives.
+    # hardware fan mode (max flag or manual pwm) survives.
     manual_preset: str | None = None
     # Seconds to wait before ramping fan speed down after target drops.
     # 0 = immediate ramp-down. Default 10s (matches the original Rust impl).

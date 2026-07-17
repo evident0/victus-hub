@@ -34,6 +34,8 @@ __all__ = [
     "get_current_profile",
     "set_system_profile",
     "set_fan_auto",
+    "set_fan_max",
+    "set_fan_manual",
     "set_fan_pwm",
     "get_keyboard_idle_elapsed",
     "get_keyboard_last_event",
@@ -121,8 +123,14 @@ def set_gpu_mux_mode(mode: int) -> str:
 def set_fan_auto() -> str:
     return daemon_client.request_fan_auto()
 
+
+def set_fan_max() -> str:
+    """Set pwm_enable=0 — BIOS/EC max-fan mode (hp-wmi PWM_MODE_MAX)."""
+    return daemon_client.request_fan_max()
+
+
 def set_fan_manual() -> str:
-    """Set pwm_enable=1 — call immediately when switching to custom or max mode."""
+    """Set pwm_enable=1 — call when switching to custom (manual PWM) mode."""
     return daemon_client.request_fan_manual()
 
 
@@ -195,7 +203,8 @@ def set_manual_preset(preset: str | None) -> FanConfig:
     """Record which preset the user clicked (auto / max) or clear it.
 
     When set to 'max' or 'auto', the fan-control background loop backs
-    off and will not override the manual pwm1 / pwm1_enable state.
+    off and will not override the hardware fan mode (max flag or
+    pwm1 / pwm1_enable).
     """
     return fan_config.save_manual_preset(preset)
 

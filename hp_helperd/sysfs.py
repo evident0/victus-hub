@@ -43,12 +43,21 @@ def write_gpu_mux_mode(mode: int) -> str:
 
 
 def write_pwm_enable(mode: int) -> str:
-    """Set fan PWM mode (0=Max, 1=Manual, 2=Automatic)."""
+    """Set fan PWM mode (0=Max, 1=Manual, 2=Automatic).
+
+    Mode 0 is the BIOS/EC max-fan path (hp-wmi PWM_MODE_MAX /
+    HPWMI_FAN_SPEED_MAX_SET_QUERY). Manual duty is mode 1 + pwm1.
+    """
     hwmon = hp_hwmon()
     if hwmon is None:
         raise RuntimeError("hp hwmon not found")
     logger.info("[fan-control] daemon setting pwm1_enable=%d", mode)
     return write_sysfs(hwmon / "pwm1_enable", mode)
+
+
+def write_pwm_max() -> str:
+    """Engage BIOS max-fan mode (pwm1_enable=0)."""
+    return write_pwm_enable(0)
 
 
 def write_pwm(pwm: int) -> str:

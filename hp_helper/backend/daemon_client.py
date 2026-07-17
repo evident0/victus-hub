@@ -59,6 +59,14 @@ def request_fan_auto() -> str:
     response = _request_daemon("fan-auto\n")
     return protocol.parse_status_response(response)
 
+
+def request_fan_max() -> str:
+    """Set pwm_enable=0 — BIOS/EC max-fan mode (hp-wmi PWM_MODE_MAX)."""
+    logger.info("\u2192 daemon: fan-max")
+    response = _request_daemon("fan-max\n")
+    return protocol.parse_status_response(response)
+
+
 def request_fan_manual() -> str:
     """Set pwm_enable=1 without writing a PWM value — use when entering manual mode."""
     logger.info("\u2192 daemon: fan-manual")
