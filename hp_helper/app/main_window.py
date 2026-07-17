@@ -36,7 +36,6 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("Victus Hub")
         self.resize(960, 640)
-        self.setMinimumSize(930, 680)
 
         # App icon — logoV.png with native colors (no tint, no solid background)
         from hp_helper.app.icon_utils import load_icon
