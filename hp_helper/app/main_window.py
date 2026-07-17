@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
 from hp_helper.app.theme import COLORS
 from hp_helper.widgets.sidebar import Sidebar
 from hp_helper.pages.home_page import HomePage
+from hp_helper.pages.processes_page import ProcessesPage
 from hp_helper.pages.fans_power_page import FansPowerPage
 from hp_helper.pages.sensors_page import SensorsPage
 from hp_helper.pages.keyboard_page import KeyboardPage
@@ -59,6 +60,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(self._stack, 1)
 
         self._home_page = HomePage()
+        self._processes_page = ProcessesPage()
         self._fans_page = FansPowerPage()
         self._sensors_page = SensorsPage()
         self._keyboard_page = KeyboardPage()
@@ -66,6 +68,7 @@ class MainWindow(QMainWindow):
 
         self._pages = [
             self._home_page,
+            self._processes_page,
             self._fans_page,
             self._sensors_page,
             self._keyboard_page,
@@ -324,6 +327,9 @@ class MainWindow(QMainWindow):
 
         # Update Home page
         self._home_page.update_sensor_data(snapshot)
+
+        # Update Processes page
+        self._processes_page.refresh()
 
         # Update Sensors page rows
         rows = build_rows(snapshot, self._stats_by_key)

@@ -33,7 +33,7 @@ with Fedora. Other HP Omen/Victus laptops should work.
 Settings persist under `~/.config/hp-helper/`.
 
 ## Requirements
-- nvidia-smi
+- NVIDIA driver + libnvidia-ml (NVML; used only when the dGPU is already active — never wakes a suspended laptop GPU)
 - Linux with systemd (specifically `systemd-logind`)
 - Python 3.9+ with PySide6 (6.8 or newer; `pip install -e .` pulls it)
 - An AMD Ryzen CPU for the power-limit stuff `ryzenadj` is skipped

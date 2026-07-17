@@ -71,7 +71,7 @@ def next_fan_percent(
 
 
 def is_gpu_p0(pstate: str | None) -> bool:
-    """True when nvidia-smi reports performance state P0."""
+    """True when NVML reports performance state P0."""
     return pstate is not None and pstate.strip().upper() == "P0"
 
 
@@ -182,25 +182,53 @@ def _should_write(
     return abs(next_pct - last_written_pct) >= min_delta_pct
 
 
+def compute_ema(samples: list[float], period: int) -> float | None:
+    """Single exponential moving average (oldest first, newest last).
+
+    Matches CoolerControl's plain EMA (not triple EMA):
+    ``alpha = 2 / (period + 1)`` — the standard smoothing factor for an
+    equivalent SMA window of ``period`` samples. Seeded with the first
+    sample, then iteratively updated. Returns ``None`` if samples is empty.
+    """
+    if not samples:
+        return None
+    period = max(int(period), 1)
+    alpha = 2.0 / (period + 1.0)
+    ema = float(samples[0])
+    for value in samples[1:]:
+        # ema = ema + alpha * (value - ema)
+        ema = (float(value) - ema) * alpha + ema
+    return ema
+
+
 def _curve_target(
     history: collections.deque,
     profile: FanProfileConfig,
 ) -> tuple[float | None, float | None, float | None]:
-    """Window averages → CPU/GPU curve speeds; target is max of both."""
-    cpu_temps = [int(t) for t, _ in history if t is not None]
-    gpu_temps = [int(t) for _, t in history if t is not None]
+    """EMA of temp window → CPU/GPU curve speeds; target is max of both.
+
+    Uses a single exponential moving average over the temperature history
+    (newest samples weighted more). ``period`` is the configured window
+    size (deque maxlen), which sets EMA alpha independently of how many
+    samples are currently filled.
+    """
+    period = history.maxlen if history.maxlen is not None else max(len(history), 1)
+    cpu_temps = [float(t) for t, _ in history if t is not None]
+    gpu_temps = [float(t) for _, t in history if t is not None]
     cpu_avg = gpu_avg = target = None
     if cpu_temps:
-        cpu_avg = sum(cpu_temps) / len(cpu_temps)
-        target = _fan_config.interpolate_fan(
-            profile.cpu_points, int(math.floor(cpu_avg + 0.5)),
-        )
+        cpu_avg = compute_ema(cpu_temps, period)
+        if cpu_avg is not None:
+            target = _fan_config.interpolate_fan(
+                profile.cpu_points, int(math.floor(cpu_avg + 0.5)),
+            )
     if gpu_temps:
-        gpu_avg = sum(gpu_temps) / len(gpu_temps)
-        gpu_s = _fan_config.interpolate_fan(
-            profile.gpu_points, int(math.floor(gpu_avg + 0.5)),
-        )
-        target = max(target, gpu_s) if target is not None else gpu_s
+        gpu_avg = compute_ema(gpu_temps, period)
+        if gpu_avg is not None:
+            gpu_s = _fan_config.interpolate_fan(
+                profile.gpu_points, int(math.floor(gpu_avg + 0.5)),
+            )
+            target = max(target, gpu_s) if target is not None else gpu_s
     return cpu_avg, gpu_avg, target
 
 

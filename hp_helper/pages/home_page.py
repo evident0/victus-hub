@@ -11,12 +11,11 @@ from hp_helper.widgets.profile_section import ProfileSection
 from hp_helper.widgets.footer import Footer
 from hp_helper.widgets.utilization_card import UtilizationCard
 from hp_helper.widgets.storage_card import StorageCard
-from hp_helper.widgets.top_processes_card import TopProcessesCard
 from hp_helper.app.theme import COLORS
 
 
 class HomePage(QWidget):
-    """Home tab with profile/fan controls, process/storage cards, and footer."""
+    """Home tab with profile/fan controls, storage, and footer."""
 
     profile_selected = Signal(int)
     fan_mode_selected = Signal(str)
@@ -43,19 +42,11 @@ class HomePage(QWidget):
 
         layout.addLayout(cards_row, 0)
 
-        # ── Top processes (2 cols) + storage (1 col) ──
-        lower_row = QHBoxLayout()
-        lower_row.setSpacing(12)
-
-        self._top_processes = TopProcessesCard()
+        # ── Storage (top processes live on the Processes tab) ──
         self._storage_card = StorageCard()
         self._storage_card.setMinimumHeight(110)
         self._storage_card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-
-        # Stretch 2 + 1 ≈ double-width top-processes next to storage
-        lower_row.addWidget(self._top_processes, 2)
-        lower_row.addWidget(self._storage_card, 1)
-        layout.addLayout(lower_row, 1)
+        layout.addWidget(self._storage_card, 1)
 
         # Profile section
         self._profile_section = ProfileSection(hide_title=True)
@@ -70,7 +61,7 @@ class HomePage(QWidget):
         layout.addWidget(self._footer, 0)
 
     def update_sensor_data(self, snapshot):
-        """Refresh utilization/storage/process cards from a sensor snapshot."""
+        """Refresh utilization and storage cards from a sensor snapshot."""
         # CPU: usage + temp left, fan RPM right
         cpu_pct = snapshot.cpu_usage_pct or 0.0
         cpu_temp = f"{snapshot.cpu_temp_c:.0f}°C" if snapshot.cpu_temp_c is not None else "— °C"
@@ -99,9 +90,6 @@ class HomePage(QWidget):
         else:
             ram_usage = "— GB"
         self._ram_card.update_data(ram_pct, ram_temp, COLORS["accent_red"], "RAM Utilization", ram_usage)
-
-        # Top processes by RAM
-        self._top_processes.refresh()
 
         # Storage
         self._storage_card.update_disks(getattr(snapshot, "disks", []) or [])

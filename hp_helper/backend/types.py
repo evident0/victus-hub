@@ -44,7 +44,7 @@ class SensorSnapshot:
     gpu_temp_c: float | None = None
     gpu_usage: SensorReading = field(default_factory=lambda: SensorReading("0 %"))
     gpu_usage_pct: float | None = None
-    gpu_pstate: str | None = None  # e.g. "P0" from nvidia-smi; None if unavailable
+    gpu_pstate: str | None = None  # e.g. "P0" from NVML; None if unavailable/suspended
     cpu_power: SensorReading = field(default_factory=lambda: SensorReading("0 W"))
     gpu_power: SensorReading = field(default_factory=lambda: SensorReading("0 W"))
     pwm_mode: SensorReading = field(default_factory=lambda: SensorReading("Automatic"))

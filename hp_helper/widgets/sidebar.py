@@ -6,6 +6,7 @@ from PySide6.QtCore import Signal, Qt, QSize
 from hp_helper.app.icon_utils import load_icon
 TABS = [
     ("NewIcons/laptop.png", "Home"),
+    ("icons8-show-right-side-panel-48-white.png", "Processes"),  # temporary icon
     ("NewIcons/fan.png", "Fans & Power"),
     ("NewIcons/temperature.png", "Sensors"),
     ("NewIcons/keyboard.png", "Keyboard"),

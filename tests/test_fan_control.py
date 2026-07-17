@@ -14,6 +14,7 @@ from hp_helper.services.fan_control import (
     P0_RELEASE_S,
     P0FloorState,
     apply_p0_floor,
+    compute_ema,
     is_gpu_p0,
     next_fan_percent,
     update_p0_debounce,
@@ -301,6 +302,53 @@ class TestLoopHelpers(unittest.TestCase):
         self.assertIsNotNone(target)
         # CPU at 65: (65-30)/(100-30)*100 ≈ 50; GPU at 60: (60-30)/(90-30)*100 = 50
         self.assertAlmostEqual(target, 50.0, places=0)
+
+    def test_curve_target_ema_weights_recent_temps(self):
+        # Rising temps: EMA should sit above a simple mean (recency bias).
+        profile = FanProfileConfig(
+            cpu_points=[FanPoint(30, 0), FanPoint(100, 100)],
+            gpu_points=[FanPoint(30, 0), FanPoint(90, 100)],
+        )
+        temps = [(float(t), None) for t in (40, 45, 50, 55, 70)]
+        hist = collections.deque(temps, maxlen=5)
+        cpu_ema, _, _ = _curve_target(hist, profile)
+        simple_mean = sum(t for t, _ in temps) / len(temps)
+        self.assertIsNotNone(cpu_ema)
+        self.assertGreater(cpu_ema, simple_mean)
+
+
+class TestComputeEma(unittest.TestCase):
+    """Plain single-EMA (CoolerControl-style), not triple EMA."""
+
+    def test_empty_returns_none(self):
+        self.assertIsNone(compute_ema([], 8))
+
+    def test_single_sample(self):
+        self.assertEqual(compute_ema([42.0], 8), 42.0)
+
+    def test_constant_input_returns_constant(self):
+        self.assertEqual(compute_ema([50.0] * 20, 10), 50.0)
+
+    def test_period_one_is_latest_sample(self):
+        # period=1 => alpha=1.0 => identity on the latest sample
+        self.assertEqual(compute_ema([10.0, 20.0, 30.0, 40.0], 1), 40.0)
+
+    def test_step_input_converges_below_target(self):
+        samples = [0.0] * 50 + [100.0] * 50
+        result = compute_ema(samples, 5)
+        self.assertIsNotNone(result)
+        self.assertGreater(result, 95.0)
+        self.assertLess(result, 100.0)
+
+    def test_order_dependent(self):
+        ascending = [10.0, 20.0, 30.0, 40.0, 50.0]
+        descending = list(reversed(ascending))
+        ema_up = compute_ema(ascending, 5)
+        ema_down = compute_ema(descending, 5)
+        self.assertIsNotNone(ema_up)
+        self.assertIsNotNone(ema_down)
+        self.assertGreater(abs(ema_up - ema_down), 1.0)
+        self.assertGreater(ema_up, ema_down)
 
 
 if __name__ == "__main__":

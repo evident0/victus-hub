@@ -74,7 +74,7 @@ class SettingsPage(QWidget):
         )
         layout.addLayout(self._ramp_delay)
         self._temp_window = self._make_spin(
-            "Temperature window", "samples",
+            "EMA temp window", "samples",
             cfg.temp_window, 5, 60,
         )
         layout.addLayout(self._temp_window)
