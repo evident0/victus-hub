@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QMessageBox, QFrame, QSizePolicy,
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QMessageBox, QFrame,
 )
 from PySide6.QtCore import Qt, Signal
 
@@ -97,16 +97,14 @@ class ProfileSection(QWidget):
         root.addWidget(_section_title("Fan Mode"))
         root.addSpacing(10)
         fan_row = QHBoxLayout()
-        fan_row.setSpacing(0)
-        fan_row.addStretch(1)
+        fan_row.setSpacing(8)
+        fan_row.addStretch()
         self._fan_segments = SegmentedControl(FAN_MODES)
-        self._fan_segments.setMinimumWidth(340)
-        self._fan_segments.setMaximumWidth(460)
-        self._fan_segments.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self._fan_segments.setFixedWidth(360)
         self._fan_segments.segment_selected.connect(self._on_fan_select)
         self._fan_segments.action_requested.connect(self._on_fan_action)
-        fan_row.addWidget(self._fan_segments, 1)
-        fan_row.addStretch(1)
+        fan_row.addWidget(self._fan_segments)
+        fan_row.addStretch()
         root.addLayout(fan_row)
 
         # ── GPU MUX ──
