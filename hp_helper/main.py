@@ -22,7 +22,7 @@ def main():
     app.setOrganizationName("hp-helper")
     # App-wide window icon (logoV) so every top-level window (main, sensor graphs, fan curves, etc.) gets it
     from hp_helper.app.icon_utils import load_icon
-    app_icon = load_icon("logoV.png", color=None, size=48)
+    app_icon = load_icon("logoV.png", size=48)
     app.setWindowIcon(app_icon)
 
 

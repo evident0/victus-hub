@@ -39,7 +39,7 @@ class MainWindow(QMainWindow):
 
         # App icon — logoV.png with native colors (no tint, no solid background)
         from hp_helper.app.icon_utils import load_icon
-        self._app_icon = load_icon("logoV.png", color=None, size=48)
+        self._app_icon = load_icon("logoV.png", size=48)
         self.setWindowIcon(self._app_icon)
 
         # Central widget

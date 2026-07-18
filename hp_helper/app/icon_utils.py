@@ -1,7 +1,7 @@
-"""Icon loader optimized for white monochrome UI assets.
+"""Icon loader for white monochrome UI assets (and native multi-color logos).
 
-Assets are assumed monochrome white (or native multi-color logos). We never
-recolor, decode at the target size when possible, and cache by (path, size).
+Decodes at the target size when possible and caches by (path, size).
+No recoloring.
 """
 
 from __future__ import annotations
@@ -20,15 +20,11 @@ _pixmap_cache: dict[tuple[str, int], QPixmap] = {}
 _icon_cache: dict[tuple[str, int], QIcon] = {}
 
 
-def load_icon(filename: str, color: str | None = None, size: int = 24) -> QIcon:
+def load_icon(filename: str, size: int = 24) -> QIcon:
     """Return a QIcon from *filename* (relative to ``resources/icons/``).
-
-    *color* is accepted for call-site compatibility but ignored — icons are
-    white monochrome (or native logos) and are not recolored.
 
     Only the requested size (plus a 2× HiDPI variant) is decoded and cached.
     """
-    del color  # unused — white monochrome assets need no recolor
     size = max(1, int(size))
     key = (filename, size)
     cached = _icon_cache.get(key)
@@ -52,9 +48,8 @@ def load_icon(filename: str, color: str | None = None, size: int = 24) -> QIcon:
     return icon
 
 
-def load_pixmap(filename: str, color: str | None = None, size: int = 24) -> QPixmap:
-    """Return a pixmap scaled to *size*. *color* is ignored (see ``load_icon``)."""
-    del color
+def load_pixmap(filename: str, size: int = 24) -> QPixmap:
+    """Return a pixmap scaled to *size*."""
     size = max(1, int(size))
     return _load_scaled(filename, size)
 
@@ -95,7 +90,6 @@ def _read_raster_scaled(path: Path, size: int) -> QPixmap:
     # Prefer decoding at target size — PNG readers honor setScaledSize.
     orig = reader.size()
     if orig.isValid() and (orig.width() > size or orig.height() > size):
-        # Keep aspect ratio inside size×size box
         target = QSize(size, size)
         scaled = orig.scaled(target, Qt.KeepAspectRatio)
         reader.setScaledSize(scaled)

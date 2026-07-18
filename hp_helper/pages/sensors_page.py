@@ -1,50 +1,23 @@
 """Sensors page with collapsible grouped table (Top Processes visual style)."""
 
 from PySide6.QtWidgets import (
-    QAbstractItemView, QFrame, QHeaderView, QPushButton,
+    QAbstractItemView, QFrame, QHeaderView, QMenu,
     QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget,
 )
-from PySide6.QtCore import QSize, Qt, Signal, QTimer
-from PySide6.QtGui import QColor, QIcon
+from PySide6.QtCore import Qt, Signal, QTimer
+from PySide6.QtGui import QColor, QAction
 
 from hp_helper.app.theme import COLORS
-from hp_helper.app.icon_utils import load_pixmap
-
-# Lazily built so QApplication exists before QPixmap allocation
-_graph_icon: QIcon | None = None
 
 _COL_SENSOR = 0
 _COL_CURRENT = 1
 _COL_MAX = 2
 _COL_MIN = 3
 _COL_AVG = 4
-_COL_GRAPH = 5
 
-_GRAPH_BTN_STYLE = f"""
-    QPushButton {{
-        background: transparent;
-        border: none;
-        border-radius: 3px;
-    }}
-    QPushButton:hover {{
-        background-color: {COLORS['surface_raised']};
-    }}
-    QPushButton:pressed {{
-        background-color: {COLORS['border']};
-    }}
-    QPushButton:disabled {{
-        background: transparent;
-    }}
-"""
-
-
-def _get_graph_icon() -> QIcon:
-    """Return the graph button icon, building it on first call."""
-    global _graph_icon
-    if _graph_icon is None:
-        pm = load_pixmap("sensor_graph_button.png", size=18)
-        _graph_icon = QIcon(pm)
-    return _graph_icon
+# Per-item data roles
+_ROLE_KEY = int(Qt.UserRole)
+_ROLE_GRAPHABLE = int(Qt.UserRole) + 1
 
 
 class SensorsPage(QWidget):
@@ -77,9 +50,9 @@ class SensorsPage(QWidget):
 
         self._tree = QTreeWidget()
         self._tree.setObjectName("sensorsTree")
-        self._tree.setColumnCount(6)
+        self._tree.setColumnCount(5)
         self._tree.setHeaderLabels([
-            "Sensor", "Current", "Maximum", "Minimum", "Average", "Graph",
+            "Sensor", "Current", "Maximum", "Minimum", "Average",
         ])
         self._tree.setRootIsDecorated(True)
         self._tree.setIndentation(16)
@@ -93,6 +66,8 @@ class SensorsPage(QWidget):
         self._tree.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
         # Expand/collapse only via the branch arrow (match Top Processes)
         self._tree.setExpandsOnDoubleClick(False)
+        self._tree.setContextMenuPolicy(Qt.CustomContextMenu)
+        self._tree.customContextMenuRequested.connect(self._on_context_menu)
 
         self._tree.setStyleSheet(f"""
             QTreeWidget#sensorsTree {{
@@ -138,11 +113,6 @@ class SensorsPage(QWidget):
             self._tree.headerItem().setTextAlignment(
                 col, int(Qt.AlignRight | Qt.AlignVCenter),
             )
-        header.setSectionResizeMode(_COL_GRAPH, QHeaderView.Fixed)
-        self._tree.setColumnWidth(_COL_GRAPH, 56)
-        self._tree.headerItem().setTextAlignment(
-            _COL_GRAPH, int(Qt.AlignHCenter | Qt.AlignVCenter),
-        )
 
         card_layout.addWidget(self._tree)
         layout.addWidget(card)
@@ -150,6 +120,28 @@ class SensorsPage(QWidget):
         # Tracking for in-place updates (avoids destroying item widgets on every poll)
         self._sensor_items: dict[str, QTreeWidgetItem] = {}
         self._group_items: dict[str, QTreeWidgetItem] = {}
+
+    def _on_context_menu(self, pos):
+        item = self._tree.itemAt(pos)
+        if item is None:
+            return
+        # Group rows have no sensor key
+        key = item.data(_COL_SENSOR, _ROLE_KEY)
+        graphable = bool(item.data(_COL_SENSOR, _ROLE_GRAPHABLE))
+        if not key:
+            return
+
+        menu = QMenu(self)
+        graph_action = QAction("Graph", menu)
+        graph_action.setEnabled(graphable)
+        if graphable:
+            graph_action.triggered.connect(
+                lambda checked=False, k=key: self.open_graph_requested.emit(k)
+            )
+        else:
+            graph_action.setToolTip("Not graphable")
+        menu.addAction(graph_action)
+        menu.exec(self._tree.viewport().mapToGlobal(pos))
 
     def update_rows(self, rows: list):
         """Refresh sensor values in-place when structure is stable; rebuild only on change."""
@@ -228,6 +220,8 @@ class SensorsPage(QWidget):
                 item = QTreeWidgetItem(group_item)
                 item.setText(_COL_SENSOR, d.name)
                 item.setToolTip(_COL_SENSOR, stats.get("current", {}).get("source", ""))
+                item.setData(_COL_SENSOR, _ROLE_KEY, d.key)
+                item.setData(_COL_SENSOR, _ROLE_GRAPHABLE, bool(d.graphable))
 
                 current_val = stats.get("current", {}).get("value", "—")
                 item.setText(_COL_CURRENT, str(current_val))
@@ -236,23 +230,6 @@ class SensorsPage(QWidget):
                 item.setText(_COL_AVG, str(stats.get("average", "—")))
                 for col in (_COL_CURRENT, _COL_MAX, _COL_MIN, _COL_AVG):
                     item.setTextAlignment(col, int(Qt.AlignRight | Qt.AlignVCenter))
-
-                # Graph button — icon-only, flat
-                btn = QPushButton()
-                btn.setIcon(_get_graph_icon())
-                btn.setIconSize(QSize(18, 18))
-                btn.setFixedSize(24, 24)
-                btn.setStyleSheet(_GRAPH_BTN_STYLE)
-                if d.graphable:
-                    btn.setCursor(Qt.PointingHandCursor)
-                    btn.setToolTip(f"Open {d.name} graph")
-                    btn.clicked.connect(
-                        lambda checked=False, k=d.key: self.open_graph_requested.emit(k)
-                    )
-                else:
-                    btn.setEnabled(False)
-                    btn.setToolTip("Not graphable")
-                self._tree.setItemWidget(item, _COL_GRAPH, btn)
 
                 # Temp coloring
                 if d.unit == "\u00B0C":

@@ -36,7 +36,6 @@ class AppButton(QToolButton):
 
         image_exts = (".png", ".ico", ".svg", ".bmp", ".jpg", ".jpeg")
         if icon and any(icon.lower().endswith(ext) for ext in image_exts):
-            # White monochrome assets — load at display size only (no recolor)
             ico = load_icon(icon, size=32)
             if not ico.isNull():
                 self.setIcon(ico)

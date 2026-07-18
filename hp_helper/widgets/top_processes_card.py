@@ -1,4 +1,4 @@
-"""Top processes card — grouped instances, icon, CPU, RAM, and Stop."""
+"""Top processes card — grouped instances, icon, CPU, RAM, and force stop."""
 
 from __future__ import annotations
 
@@ -1091,17 +1091,12 @@ class TopProcessesCard(QFrame):
 
         menu = QMenu(self)
         multi = len(pids) > 1
-        stop_label = "Stop all" if multi else "Stop"
         force_label = "Force stop all" if multi else "Force stop"
-        act_stop = menu.addAction(stop_label)
         act_force = menu.addAction(force_label)
 
         chosen = menu.exec(self._tree.viewport().mapToGlobal(pos))
-        if chosen is None:
-            return
-        force = chosen is act_force
-        if chosen is act_stop or chosen is act_force:
-            stop_processes(pids, force=force)
+        if chosen is act_force:
+            stop_processes(pids, force=True)
             self.refresh()
 
     def _pids_for_item(self, item: QTreeWidgetItem) -> list[int]:
