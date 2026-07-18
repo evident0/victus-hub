@@ -18,9 +18,9 @@ from hp_helper.app.theme import COLORS
 logger = logging.getLogger(__name__)
 
 PROFILES = [
-    ("Power Saver", None, COLORS["accent_green"]),
-    ("Balanced", None, COLORS["accent_blue"]),
-    ("Performance", None, COLORS["accent_red"]),
+    ("Power Saver", "NewIcons/leaf.png", COLORS["accent_green"]),
+    ("Balanced", "NewIcons/balance.png", COLORS["accent_blue"]),
+    ("Performance", "NewIcons/rocket.png", COLORS["accent_red"]),
 ]
 
 FAN_MODES = [
@@ -35,6 +35,12 @@ _MUX_ACCENTS = (
     COLORS["accent_red"],
     COLORS["accent_blue"],
 )
+
+# Icon-above-label tiles for known MUX modes (white monochrome assets)
+_MUX_ICONS: dict[str, str] = {
+    "hybrid": "NewIcons/hybrid.png",
+    "discrete": "NewIcons/discrete.png",
+}
 
 
 def _section_title(title: str) -> QLabel:
@@ -149,9 +155,10 @@ class ProfileSection(QWidget):
         self._mux_selected = state.current_index
         for i, mode in enumerate(self._mux_modes):
             accent = _MUX_ACCENTS[i % len(_MUX_ACCENTS)]
+            icon = _MUX_ICONS.get(mode.name.lower())
             btn = AppButton(
                 mode.label,
-                None,
+                icon,
                 accent,
                 selected=(mode.index == self._mux_selected),
             )
