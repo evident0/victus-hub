@@ -1,11 +1,15 @@
 """SensorReader — reads all hardware sensors.
 
 Ports sensors.rs plus sub-modules:
-hwmon.rs, hp.rs, temperature.rs, cpu_usage.rs, nvidia (NVML), power.rs, lm.rs, profile.rs
+hwmon.rs, hp.rs, temperature.rs, cpu_usage.rs, nvidia, power.rs, lm.rs, profile.rs
 
-NVIDIA dGPU metrics come from in-process NVML only when the PCI device is
-already runtime-active. A suspended laptop dGPU is never woken for polling
-(spawning nvidia-smi every second was ~2s + multi-watt).
+NVIDIA dGPU metrics follow g-helper-linux layering (see backend/nvidia.py)::
+
+  1. sysfs hwmon (nvidia)
+  2. in-process NVML
+  3. nvidia-smi
+
+A runtime-suspended dGPU is not woken for telemetry. There is no idle-disarm.
 """
 
 import json
@@ -201,6 +205,7 @@ class SensorReader:
     # ── GPU temp (temperature.rs) ──
 
     def _read_gpu_temp(self, nvidia: NvidiaMetrics | None) -> tuple[SensorReading, float | None]:
+        # NVIDIA path: NvidiaReader already layered hwmon → NVML → nvidia-smi.
         if nvidia is not None:
             try:
                 temp_c = float(nvidia.temperature)
@@ -208,9 +213,15 @@ class SensorReader:
                 temp_c = None
             return reading(f"{nvidia.temperature} C", nvidia.source), temp_c
 
+        if self._nvidia.has_nvidia():
+            if self._nvidia.is_runtime_suspended():
+                return reading("Suspended", "dGPU runtime PM (not woken)"), None
+            return reading("Unavailable", "no NVIDIA temp (hwmon/NVML/smi)"), None
+
+        # AMD / Nouveau only (no NVIDIA device) — iGPU / discrete AMD.
         for hwmon in iter_hwmon_dirs():
             name = (read_text(hwmon / "name") or "").lower()
-            if name not in {"amdgpu", "nouveau", "nvidia"}:
+            if name not in {"amdgpu", "nouveau"}:
                 continue
             temps = []
             try:
@@ -232,8 +243,6 @@ class SensorReader:
                 temp_c = value / 1000.0
                 return reading(f"{temp_c:.1f} C", f"{label}: {str(source)}"), temp_c
 
-        if self._nvidia.has_nvidia() and self._nvidia.is_runtime_suspended():
-            return reading("Suspended", "dGPU runtime PM (not woken)"), None
         return reading("Unavailable", "no GPU temp sensor"), None
 
     # ── CPU usage (cpu_usage.rs) ──
@@ -271,11 +280,19 @@ class SensorReader:
     # ── GPU power (power.rs) ──
 
     def _read_gpu_power(self, nvidia: NvidiaMetrics | None) -> SensorReading:
-        if nvidia is not None:
+        if nvidia is not None and nvidia.power is not None:
             return reading(f"{nvidia.power:.1f} W", nvidia.source)
 
+        if self._nvidia.has_nvidia():
+            if self._nvidia.is_runtime_suspended():
+                return reading("Suspended", "dGPU runtime PM (not woken)")
+            if nvidia is not None:
+                return reading("Unavailable", f"no power sensor ({nvidia.source})")
+            return reading("Unavailable", "no NVIDIA power (hwmon/NVML/smi)")
+
+        # AMD / Nouveau only — never used as dGPU power when NVIDIA is present.
         for hwmon in iter_hwmon_dirs():
-            if (read_text(hwmon / "name") or "").lower() not in {"amdgpu", "nouveau", "nvidia"}:
+            if (read_text(hwmon / "name") or "").lower() not in {"amdgpu", "nouveau"}:
                 continue
             try:
                 entries = list(hwmon.iterdir())
@@ -291,8 +308,6 @@ class SensorReader:
                             str(path),
                         )
 
-        if self._nvidia.has_nvidia() and self._nvidia.is_runtime_suspended():
-            return reading("Suspended", "dGPU runtime PM (not woken)")
         return reading("Unavailable", "no GPU power sensor")
 
     # ── Profile (profile.rs) ──
@@ -439,7 +454,7 @@ class SensorReader:
 
     def read_all(self) -> SensorSnapshot:
         hp_hwmon = find_hwmon_by_name("hp", "hp_wmi", "hp-wmi")
-        # NVML only when dGPU already active; never spawn nvidia-smi.
+        # hwmon → NVML → nvidia-smi; skipped while dGPU runtime-suspended.
         nvidia = self._nvidia.read()
 
         cpu_fan, gpu_fan = self._read_hp_fans(hp_hwmon)
@@ -461,7 +476,7 @@ class SensorReader:
         elif self._nvidia.has_nvidia() and self._nvidia.is_runtime_suspended():
             gpu_usage = reading("Suspended", "dGPU runtime PM (not woken)")
         else:
-            gpu_usage = reading("N/A", "dGPU off or idle-quiet")
+            gpu_usage = reading("N/A", "dGPU off or unavailable")
         gpu_pstate = nvidia.pstate if nvidia else None
 
         ram_usage, ram_usage_pct, ram_used_gb, ram_total_gb = self._read_ram()
