@@ -42,7 +42,7 @@ def _get_graph_icon() -> QIcon:
     """Return the graph button icon, building it on first call."""
     global _graph_icon
     if _graph_icon is None:
-        pm = load_pixmap("sensor_graph_button.png", None, 18)
+        pm = load_pixmap("sensor_graph_button.png", size=18)
         _graph_icon = QIcon(pm)
     return _graph_icon
 

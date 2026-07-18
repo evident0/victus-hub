@@ -46,7 +46,7 @@ class Sidebar(QWidget):
 
         for i, (icon_file, label) in enumerate(TABS):
             btn = QPushButton(f"  {label}")
-            btn.setIcon(load_icon(icon_file, color=None, size=self._ICON))
+            btn.setIcon(load_icon(icon_file, size=self._ICON))
             btn.setIconSize(QSize(self._ICON, self._ICON))
             btn.setToolTip(label)
             btn.setCursor(Qt.PointingHandCursor)
