@@ -1,10 +1,12 @@
-"""Profile selection, fan mode segmented control, and GPU MUX mode tiles."""
+"""Profile selection, fan mode, and GPU MUX — labeled control sections."""
 
 from __future__ import annotations
 
 import logging
 
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QMessageBox
+from PySide6.QtWidgets import (
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QMessageBox, QFrame, QSizePolicy,
+)
 from PySide6.QtCore import Qt, Signal
 
 from hp_helper import api
@@ -27,7 +29,6 @@ FAN_MODES = [
     ("custom", "Custom", True),
 ]
 
-# Accents for MUX tiles (same family as performance buttons)
 _MUX_ACCENTS = (
     COLORS["accent_green"],
     COLORS["accent_blue"],
@@ -36,8 +37,28 @@ _MUX_ACCENTS = (
 )
 
 
+def _section_title(title: str) -> QLabel:
+    """Short section label only (no description body text)."""
+    lbl = QLabel(title)
+    lbl.setStyleSheet(f"""
+        color: {COLORS['text']};
+        font-size: 13px;
+        font-weight: 600;
+        background: transparent;
+    """)
+    return lbl
+
+
+def _section_divider() -> QFrame:
+    line = QFrame()
+    line.setFrameShape(QFrame.HLine)
+    line.setFixedHeight(1)
+    line.setStyleSheet(f"background-color: {COLORS['border']}; border: none;")
+    return line
+
+
 class ProfileSection(QWidget):
-    """Performance buttons, fan mode control, then GPU MUX as AppButtons."""
+    """Separated control groups: performance, fans, GPU MUX."""
 
     profile_selected = Signal(int)
     fan_mode_selected = Signal(str)
@@ -47,7 +68,7 @@ class ProfileSection(QWidget):
         super().__init__(parent)
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 4, 0, 4)
-        root.setSpacing(12)
+        root.setSpacing(0)
 
         self._selected_profile = 1
         self._selected_fan_mode = "auto"
@@ -55,9 +76,11 @@ class ProfileSection(QWidget):
         self._mux_buttons: dict[int, AppButton] = {}
         self._mux_selected: int | None = None
 
-        # ── Performance profile buttons ──
+        # ── Performance profile ──
+        root.addWidget(_section_title("Performance Mode"))
+        root.addSpacing(10)
         profile_row = QHBoxLayout()
-        profile_row.setSpacing(9)
+        profile_row.setSpacing(10)
         self._profile_buttons: list[AppButton] = []
         for i, (label, icon, accent) in enumerate(PROFILES):
             btn = AppButton(label, icon, accent, selected=(i == self._selected_profile))
@@ -66,23 +89,47 @@ class ProfileSection(QWidget):
             self._profile_buttons.append(btn)
         root.addLayout(profile_row)
 
-        # ── Fan mode (unchanged segmented control) ──
+        root.addSpacing(18)
+        root.addWidget(_section_divider())
+        root.addSpacing(18)
+
+        # ── Fan mode ──
+        root.addWidget(_section_title("Fan Mode"))
+        root.addSpacing(10)
         fan_row = QHBoxLayout()
-        fan_row.setSpacing(8)
-        fan_row.addStretch()
-        fan_row.addWidget(self._segment_label("Fan mode"))
+        fan_row.setSpacing(0)
+        fan_row.addStretch(1)
         self._fan_segments = SegmentedControl(FAN_MODES)
-        self._fan_segments.setFixedWidth(360)
+        self._fan_segments.setMinimumWidth(340)
+        self._fan_segments.setMaximumWidth(460)
+        self._fan_segments.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self._fan_segments.segment_selected.connect(self._on_fan_select)
         self._fan_segments.action_requested.connect(self._on_fan_action)
-        fan_row.addWidget(self._fan_segments)
-        fan_row.addStretch()
+        fan_row.addWidget(self._fan_segments, 1)
+        fan_row.addStretch(1)
         root.addLayout(fan_row)
 
-        # ── GPU MUX as performance-style buttons ──
+        # ── GPU MUX ──
+        self._mux_block = QWidget()
+        self._mux_block.setStyleSheet("background: transparent;")
+        mux_outer = QVBoxLayout(self._mux_block)
+        mux_outer.setContentsMargins(0, 0, 0, 0)
+        mux_outer.setSpacing(0)
+
+        mux_outer.addSpacing(18)
+        mux_outer.addWidget(_section_divider())
+        mux_outer.addSpacing(18)
+
+        mux_outer.addWidget(_section_title("MUX Switch"))
+        mux_outer.addSpacing(10)
+
         self._mux_row = QHBoxLayout()
-        self._mux_row.setSpacing(9)
-        root.addLayout(self._mux_row)
+        self._mux_row.setSpacing(10)
+        mux_outer.addLayout(self._mux_row)
+
+        self._mux_block.hide()
+        root.addWidget(self._mux_block)
+
         self._build_mux_buttons()
 
     def _build_mux_buttons(self) -> None:
@@ -94,6 +141,7 @@ class ProfileSection(QWidget):
         self._mux_buttons.clear()
         self._mux_modes = ()
         self._mux_selected = None
+        self._mux_block.hide()
 
         state = read_gpu_mux_state()
         if state is None or not state.modes:
@@ -112,16 +160,7 @@ class ProfileSection(QWidget):
             btn.clicked.connect(lambda _, m=mode: self._on_mux_click(m))
             self._mux_row.addWidget(btn, 1)
             self._mux_buttons[mode.index] = btn
-
-    @staticmethod
-    def _segment_label(text: str) -> QLabel:
-        label = QLabel(text)
-        label.setAlignment(Qt.AlignVCenter | Qt.AlignRight)
-        label.setStyleSheet(
-            f"color: {COLORS['text_secondary']}; font-size: 12px; font-weight: 600;"
-            " background: transparent;"
-        )
-        return label
+        self._mux_block.show()
 
     # ── Profile selection ──
 
@@ -154,10 +193,10 @@ class ProfileSection(QWidget):
 
         box = QMessageBox(self)
         box.setIcon(QMessageBox.Question)
-        box.setWindowTitle("GPU MUX")
+        box.setWindowTitle("MUX Switch")
         box.setText(
-            f"Do you want to change to {mode.label}? "
-            "You must restart to apply changes."
+            f"Switch to {mode.label}?\n\n"
+            "You must restart for this change to take effect."
         )
         cancel_btn = box.addButton("Cancel", QMessageBox.RejectRole)
         apply_btn = box.addButton("Apply", QMessageBox.AcceptRole)
@@ -173,7 +212,7 @@ class ProfileSection(QWidget):
             logger.exception("set gpu mux mode failed")
             QMessageBox.warning(
                 self,
-                "GPU MUX",
+                "MUX Switch",
                 f"Failed to set GPU MUX mode: {exc}",
             )
             return

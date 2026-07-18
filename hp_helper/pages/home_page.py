@@ -36,8 +36,8 @@ class HomePage(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(12, 12, 12, 12)
-        layout.setSpacing(12)
+        layout.setContentsMargins(20, 16, 20, 12)
+        layout.setSpacing(16)
 
         # ── Utilization cards ──
         cards_row = QHBoxLayout()
@@ -54,7 +54,7 @@ class HomePage(QWidget):
 
         layout.addLayout(cards_row, 0)
 
-        # Performance buttons + fan mode (segmented) + GPU MUX tiles
+        # Labeled control sections (performance / fans / MUX)
         self._profile_section = ProfileSection(hide_title=True)
         self._profile_section.profile_selected.connect(self.profile_selected.emit)
         self._profile_section.fan_mode_selected.connect(self.fan_mode_selected.emit)
