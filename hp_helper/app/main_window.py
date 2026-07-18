@@ -67,10 +67,10 @@ class MainWindow(QMainWindow):
 
         self._pages = [
             self._home_page,
-            self._processes_page,
             self._fans_page,
-            self._sensors_page,
             self._keyboard_page,
+            self._sensors_page,
+            self._processes_page,
             self._settings_page,
         ]
         for page in self._pages:

@@ -9,10 +9,10 @@ from hp_helper.app.theme import COLORS
 # (icon file, short label shown in the rail)
 TABS = [
     ("NewIcons/laptop.png", "Home"),
-    ("icons8-show-right-side-panel-48-white.png", "Processes"),
     ("NewIcons/fan.png", "Fans"),
-    ("NewIcons/temperature.png", "Sensors"),
     ("NewIcons/keyboard.png", "Keyboard"),
+    ("NewIcons/temperature.png", "Sensors"),
+    ("icons8-show-right-side-panel-48-white.png", "Processes"),
     ("NewIcons/settings.png", "Settings"),
 ]
 
