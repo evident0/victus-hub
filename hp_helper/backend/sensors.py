@@ -477,7 +477,6 @@ class SensorReader:
             gpu_usage = reading("Suspended", "dGPU runtime PM (not woken)")
         else:
             gpu_usage = reading("N/A", "dGPU off or unavailable")
-        gpu_pstate = nvidia.pstate if nvidia else None
 
         ram_usage, ram_usage_pct, ram_used_gb, ram_total_gb = self._read_ram()
 
@@ -493,7 +492,6 @@ class SensorReader:
             gpu_temp_c=gpu_temp_c,
             gpu_usage=gpu_usage,
             gpu_usage_pct=gpu_usage_pct,
-            gpu_pstate=gpu_pstate,
             cpu_power=self._read_cpu_power(),
             gpu_power=self._read_gpu_power(nvidia),
             pwm_mode=pwm_mode,

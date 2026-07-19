@@ -3,7 +3,7 @@
 Layering (same idea as g-helper GetGpuTemp / GetCurrentTemp + nvml-temp)::
 
   1. sysfs hwmon name=``nvidia``  (temp only, when exported)
-  2. in-process NVML              (temp + power + util + pstate; like gpu-helper
+  2. in-process NVML              (temp + power + util; like gpu-helper
                                    ``nvml-temp``, without a privileged helper)
   3. ``nvidia-smi``               (last resort, 1.2 s timeout)
 
@@ -35,7 +35,6 @@ class NvidiaMetrics:
     temperature: str
     power: float | None
     utilization: float | None
-    pstate: str | None
     source: str
 
 
@@ -194,7 +193,6 @@ class NvidiaReader:
         temp_c: int | None = None
         power_w: float | None = None
         util: float | None = None
-        pstate: str | None = None
 
         temp = ctypes.c_uint()
         fn = lib.nvmlDeviceGetTemperature
@@ -220,20 +218,13 @@ class NvidiaReader:
         if fn(handle, ctypes.byref(util_s)) == _NVML_SUCCESS:
             util = float(util_s.gpu)
 
-        ps = ctypes.c_uint()
-        fn = lib.nvmlDeviceGetPerformanceState
-        fn.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_uint)]
-        fn.restype = ctypes.c_int
-        if fn(handle, ctypes.byref(ps)) == _NVML_SUCCESS:
-            pstate = f"P{int(ps.value)}"
-
         if temp_c is None:
             return None
-        return NvidiaMetrics(str(temp_c), power_w, util, pstate, "nvml")
+        return NvidiaMetrics(str(temp_c), power_w, util, "nvml")
 
     def _query_smi(self) -> NvidiaMetrics | None:
-        """Layer 3: one multi-field nvidia-smi query (g-helper GetLiveStatus style)."""
-        raw = _smi("temperature.gpu,utilization.gpu,power.draw,pstate")
+        """Layer 3: one multi-field nvidia-smi query."""
+        raw = _smi("temperature.gpu,utilization.gpu,power.draw")
         if raw is None:
             return None
         parts = [p.strip() for p in raw.split(",")]
@@ -253,12 +244,9 @@ class NvidiaReader:
             except ValueError:
                 return None
 
-        util = f(1)
-        power = f(2)
-        pstate = None
-        if len(parts) > 3 and parts[3] and parts[3].upper() not in {"N/A", "[N/A]"}:
-            pstate = parts[3] if parts[3].upper().startswith("P") else f"P{parts[3]}"
-        return NvidiaMetrics(str(int(round(temp))), power, util, pstate, "nvidia-smi")
+        return NvidiaMetrics(
+            str(int(round(temp))), f(2), f(1), "nvidia-smi",
+        )
 
     def read(self) -> NvidiaMetrics | None:
         """Return metrics, or None if no driver / dGPU is runtime-suspended."""
@@ -270,7 +258,7 @@ class NvidiaReader:
             self._shutdown_nvml()
             return None
 
-        # Layer 2 then 3 for full metrics (util/power/pstate need NVML or smi)
+        # Layer 2 then 3 for full metrics (util/power need NVML or smi)
         metrics = self._query_nvml() or self._query_smi()
 
         # Layer 1: prefer nvidia hwmon for temperature when present
@@ -279,14 +267,13 @@ class NvidiaReader:
         if metrics is None:
             if hwmon_t is None:
                 return None
-            return NvidiaMetrics(str(hwmon_t), None, None, None, "hwmon:nvidia")
+            return NvidiaMetrics(str(hwmon_t), None, None, "hwmon:nvidia")
 
         if hwmon_t is not None:
             return NvidiaMetrics(
                 str(hwmon_t),
                 metrics.power,
                 metrics.utilization,
-                metrics.pstate,
                 "hwmon:nvidia",
             )
         return metrics

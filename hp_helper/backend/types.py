@@ -44,7 +44,6 @@ class SensorSnapshot:
     gpu_temp_c: float | None = None
     gpu_usage: SensorReading = field(default_factory=lambda: SensorReading("0 %"))
     gpu_usage_pct: float | None = None
-    gpu_pstate: str | None = None  # e.g. "P0" from NVML; None if unavailable/suspended
     cpu_power: SensorReading = field(default_factory=lambda: SensorReading("0 W"))
     gpu_power: SensorReading = field(default_factory=lambda: SensorReading("0 W"))
     pwm_mode: SensorReading = field(default_factory=lambda: SensorReading("Automatic"))
@@ -86,11 +85,6 @@ class FanConfig:
     write_min_delta_pct: float = 5.0
     ramp_up_pct: float = 30.0
     ramp_down_pct: float = 15.0
-    # When the GPU holds P0 long enough, the override ramps the fan toward
-    # p0_min_pct and blocks the curve from dropping below it until the
-    # debounce releases the floor after ~25s of non-P0 (fan_control).
-    p0_min_pct_enabled: bool = False
-    p0_min_pct: int = 80
 
 # Re-export list for api.py convenience
 __all__ = [

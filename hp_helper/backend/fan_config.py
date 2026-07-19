@@ -83,8 +83,6 @@ def load() -> FanConfig:
     write_min_delta_pct = float(stored.get("write_min_delta_pct", 5.0))
     ramp_up_pct = float(stored.get("ramp_up_pct", 30.0))
     ramp_down_pct = float(stored.get("ramp_down_pct", 15.0))
-    p0_min_pct_enabled = bool(stored.get("p0_min_pct_enabled", False))
-    p0_min_pct = max(0, min(int(stored.get("p0_min_pct", 80)), 100))
 
     profiles = []
     for key in PROFILE_KEYS:
@@ -110,8 +108,6 @@ def load() -> FanConfig:
         write_min_delta_pct=write_min_delta_pct,
         ramp_up_pct=ramp_up_pct,
         ramp_down_pct=ramp_down_pct,
-        p0_min_pct_enabled=p0_min_pct_enabled,
-        p0_min_pct=p0_min_pct,
     )
 
 
@@ -174,8 +170,6 @@ def save_all(config: FanConfig) -> None:
         "write_min_delta_pct": config.write_min_delta_pct,
         "ramp_up_pct": config.ramp_up_pct,
         "ramp_down_pct": config.ramp_down_pct,
-        "p0_min_pct_enabled": config.p0_min_pct_enabled,
-        "p0_min_pct": config.p0_min_pct,
         "curve_points_by_profile": cpu_map,
         "gpu_curve_points_by_profile": gpu_map,
     }
