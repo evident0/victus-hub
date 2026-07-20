@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
-    QCheckBox, QPushButton, QColorDialog, QSlider,
+    QPushButton, QColorDialog, QSlider,
 )
 from PySide6.QtCore import Qt, Signal, QRectF
 from PySide6.QtGui import QPainter, QColor, QFont
@@ -16,6 +16,7 @@ from PySide6.QtGui import QPainter, QColor, QFont
 from hp_helper import api
 from hp_helper.app.theme import COLORS
 from hp_helper.pages.settings_page import make_spin
+from hp_helper.widgets.toggle_switch import ToggleSwitch
 from hp_helper.features.keyboard.lighting import (
     ZONE_NAMES,
     normalize_zone_colors,
@@ -262,7 +263,7 @@ class KeyboardPage(QWidget):
         ctrl_layout.setSpacing(12)
 
         # Enable
-        self._enable_check = QCheckBox("RGB enabled")
+        self._enable_check = ToggleSwitch("RGB enabled")
         self._enable_check.setChecked(s.enabled)
         self._enable_check.toggled.connect(self._on_enabled_changed)
         ctrl_layout.addWidget(self._enable_check)
@@ -308,16 +309,12 @@ class KeyboardPage(QWidget):
                 self._zone_btns.append(btn)
                 ctrl_layout.addLayout(zone_box)
 
-        # Brightness slider
-        brightness_box = QVBoxLayout()
-        brightness_box.setContentsMargins(0, 0, 0, 0)
-        brightness_box.setSpacing(2)
+        # Brightness
         brightness_label = QLabel("Brightness")
         brightness_label.setStyleSheet(
             f"color: {COLORS['text_secondary']}; font-size: 11px;"
         )
-        brightness_label.setAlignment(Qt.AlignCenter)
-        brightness_box.addWidget(brightness_label)
+        ctrl_layout.addWidget(brightness_label)
 
         self._brightness_slider = QSlider(Qt.Horizontal)
         self._brightness_slider.setRange(0, 255)
@@ -325,8 +322,7 @@ class KeyboardPage(QWidget):
         self._brightness_slider.setFixedWidth(120)
         self._brightness_slider.setToolTip(f"Backlight brightness: {s.brightness}/255")
         self._brightness_slider.valueChanged.connect(self._on_brightness_changed)
-        brightness_box.addWidget(self._brightness_slider)
-        ctrl_layout.addLayout(brightness_box)
+        ctrl_layout.addWidget(self._brightness_slider)
 
         # Idle timeout
         self._idle_timeout = make_spin(

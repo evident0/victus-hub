@@ -4,13 +4,14 @@ import threading
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
-    QPushButton, QCheckBox,
+    QPushButton,
 )
 from PySide6.QtCore import Qt, Signal, QTimer
 from PySide6.QtGui import QColor
 
 from hp_helper.widgets.fan_chart import FanChart
 from hp_helper.app.theme import COLORS
+from hp_helper.widgets.toggle_switch import ToggleSwitch
 from hp_helper.pages.settings_page import make_spin
 from hp_helper.features.power.limits import (
     POWER_MIN_MW, POWER_MAX_MW,
@@ -148,7 +149,7 @@ class FansPowerPage(QWidget):
         self._apply_btn.clicked.connect(self._on_apply_power)
         power_layout.addWidget(self._apply_btn)
 
-        self._power_check = QCheckBox("Enable power limits")
+        self._power_check = ToggleSwitch("Enable power limits")
         self._power_check.setChecked(self._power_enabled)
         self._power_check.toggled.connect(self._on_power_enabled_changed)
         power_layout.addWidget(self._power_check)
