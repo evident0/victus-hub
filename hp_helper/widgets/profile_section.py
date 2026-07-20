@@ -140,18 +140,20 @@ class ProfileSection(QWidget):
 
         mux_title_row = QHBoxLayout()
         mux_title_row.setContentsMargins(0, 0, 0, 0)
+        mux_title_row.setSpacing(8)
         mux_title_row.addWidget(_section_title("MUX Switch"))
-        mux_title_row.addStretch()
         gpu_name = get_gpu_name()
         if gpu_name:
-            gpu_label = QLabel(gpu_name)
+            short = gpu_name.removeprefix("NVIDIA GeForce ")
+            gpu_label = QLabel(short)
             gpu_label.setStyleSheet(f"""
                 color: {COLORS['text_secondary']};
                 font-size: 12px;
                 font-weight: 400;
                 background: transparent;
             """)
-            mux_title_row.addWidget(gpu_label, alignment=Qt.AlignRight | Qt.AlignVCenter)
+            mux_title_row.addWidget(gpu_label)
+        mux_title_row.addStretch()
         mux_text, mux_color = mux_module()
         mux_title_row.addSpacing(8)
         mux_title_row.addWidget(StatusBadge(mux_text, mux_color))
