@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
-    QCheckBox, QPushButton, QColorDialog,
+    QCheckBox, QPushButton, QColorDialog, QSlider,
 )
 from PySide6.QtCore import Qt, Signal, QRectF
 from PySide6.QtGui import QPainter, QColor, QFont
@@ -225,6 +225,7 @@ class KeyboardPage(QWidget):
     color_changed = Signal(str)           # single-zone color
     zone_color_changed = Signal(int, str)  # multi-zone: (zone_index, hex)
     idle_timeout_changed = Signal(int)
+    brightness_changed = Signal(int)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -307,6 +308,26 @@ class KeyboardPage(QWidget):
                 self._zone_btns.append(btn)
                 ctrl_layout.addLayout(zone_box)
 
+        # Brightness slider
+        brightness_box = QVBoxLayout()
+        brightness_box.setContentsMargins(0, 0, 0, 0)
+        brightness_box.setSpacing(2)
+        brightness_label = QLabel("Brightness")
+        brightness_label.setStyleSheet(
+            f"color: {COLORS['text_secondary']}; font-size: 11px;"
+        )
+        brightness_label.setAlignment(Qt.AlignCenter)
+        brightness_box.addWidget(brightness_label)
+
+        self._brightness_slider = QSlider(Qt.Horizontal)
+        self._brightness_slider.setRange(0, 255)
+        self._brightness_slider.setValue(s.brightness)
+        self._brightness_slider.setFixedWidth(120)
+        self._brightness_slider.setToolTip(f"Backlight brightness: {s.brightness}/255")
+        self._brightness_slider.valueChanged.connect(self._on_brightness_changed)
+        brightness_box.addWidget(self._brightness_slider)
+        ctrl_layout.addLayout(brightness_box)
+
         # Idle timeout
         self._idle_timeout = make_spin(
             "Idle timeout", "s",
@@ -376,6 +397,12 @@ class KeyboardPage(QWidget):
         self._settings.idle_timeout = max(0, value)
         self._persist()
         self.idle_timeout_changed.emit(self._settings.idle_timeout)
+
+    def _on_brightness_changed(self, value: int):
+        self._settings.brightness = max(0, min(255, value))
+        self._brightness_slider.setToolTip(f"Backlight brightness: {value}/255")
+        self._persist()
+        self.brightness_changed.emit(value)
 
     # ── Animation frame update ──
     def apply_frame(self, frame):

@@ -40,6 +40,14 @@ class LightingController(QObject):
         self._backlight_on: bool | None = None  # None = unknown hardware state
         self._last_idle_poll = 0.0
         self._dimmed = False
+        self._last_sent_brightness: int | None = None
+        # Sync the user-preferred brightness to the daemon before any color
+        # write so _write_led_color applies it atomically (no 100% flash).
+        try:
+            api.set_keyboard_user_brightness(self._settings.brightness)
+            self._last_sent_brightness = self._settings.brightness
+        except Exception:
+            pass
         self._timer = QTimer(self)
         self._timer.setInterval(50)
         self._timer.timeout.connect(self._tick)
@@ -99,6 +107,20 @@ class LightingController(QObject):
         if timeout == 0 and self._dimmed:
             self._dimmed = False
             self._invalidate_sent()
+
+    def set_brightness(self, level: int) -> None:
+        """Set the user-preferred backlight brightness (0-255).
+
+        Sends the level to the daemon immediately so that subsequent color
+        writes apply it atomically (no 100% flash on enable / idle wake).
+        """
+        level = max(0, min(255, level))
+        self._update(brightness=level)
+        try:
+            api.set_keyboard_user_brightness(level)
+            self._last_sent_brightness = level
+        except Exception:
+            self._last_sent_brightness = None
 
     def _update(self, **kwargs) -> None:
         for key, value in kwargs.items():
@@ -164,6 +186,7 @@ class LightingController(QObject):
                     # only logs once instead of spamming every tick.
                     self._backlight_on = False
                     self._last_send = now
+                    self._last_sent_brightness = 0
                     self._invalidate_sent()
             self.frame_changed.emit([RgbColor(0, 0, 0)] * self._zone_count)
             return
@@ -175,6 +198,9 @@ class LightingController(QObject):
         else:
             self._tick_multi_zone(now, frames)
 
+        # Brightness is applied atomically by the daemon's _write_led_color
+        # (using the user-brightness synced via set_keyboard_user_brightness),
+        # so no separate brightness write is needed here.
         # Always update visual keyboard (responsive UI)
         self.frame_changed.emit(frames)
 

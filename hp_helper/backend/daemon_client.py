@@ -103,6 +103,12 @@ def request_keyboard_brightness(level: int) -> str:
     response = _request_daemon(f"keyboard-brightness\t{level}\n")
     return protocol.parse_status_response(response)
 
+def request_keyboard_user_brightness(level: int) -> str:
+    """Set the user-preferred brightness (stored in the daemon for atomic color writes)."""
+    logger.info("\u2192 daemon: keyboard-user-brightness %d/255", level)
+    response = _request_daemon(f"keyboard-user-brightness\t{level}\n")
+    return protocol.parse_status_response(response)
+
 
 def request_keyboard_last_input() -> float:
     """Return seconds since the last physical keypress on the laptop keyboard.

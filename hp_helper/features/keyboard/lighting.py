@@ -47,6 +47,7 @@ class LightingSettings:
     # all zones fall back to ``color`` (single-zone and legacy settings).
     zone_colors: list[str] = field(default_factory=list)
     idle_timeout: int = 0  # seconds, 0 = disabled
+    brightness: int = 255  # 0-255 backlight intensity
 
 
 DEFAULT_LIGHTING_SETTINGS = LightingSettings()
@@ -92,6 +93,7 @@ def normalize_lighting_settings(
         color=primary if zone_count <= 1 else zones[0],
         zone_colors=zones if zone_count > 1 else [],
         idle_timeout=max(0, min(settings.idle_timeout, 3600)),
+        brightness=max(0, min(settings.brightness, 255)),
     )
 
 
@@ -131,6 +133,7 @@ def read_lighting_settings() -> LightingSettings:
             color=str(primary),
             zone_colors=zone_colors,
             idle_timeout=int(raw.get("idle_timeout", 0)),
+            brightness=int(raw.get("brightness", 255)),
         )
     except Exception:
         return DEFAULT_LIGHTING_SETTINGS
@@ -142,6 +145,7 @@ def write_lighting_settings(settings: LightingSettings):
         "enabled": settings.enabled,
         "color": settings.color,
         "idle_timeout": settings.idle_timeout,
+        "brightness": settings.brightness,
     }
     if settings.zone_colors:
         payload["zone_colors"] = list(settings.zone_colors)

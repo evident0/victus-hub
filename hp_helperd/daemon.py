@@ -340,6 +340,15 @@ def _make_dispatch(sampler: RaplPowerSampler, sampler_lock: threading.Lock | Non
         except RuntimeError as e:
             return protocol.format_status_response((False, str(e)))
 
+    def _keyboard_user_brightness(body: str) -> str:
+        level = _parse_int(body, "user-brightness")
+        logger.info("[keyboard-rgb] daemon request: user-brightness %d/255", level)
+        try:
+            result = sysfs.set_keyboard_user_brightness(level)
+            return protocol.format_status_response((True, result))
+        except RuntimeError as e:
+            return protocol.format_status_response((False, str(e)))
+
     def _keyboard_last_event(_body: str) -> str:
         logger.info("[keyboard] daemon request: keyboard-last-event")
         mods, key, seq = kbd_last_event()
@@ -370,6 +379,7 @@ def _make_dispatch(sampler: RaplPowerSampler, sampler_lock: threading.Lock | Non
         ("keyboard-color\t", _keyboard_color),
         ("power-limits\t", _power_limits),
         ("keyboard-brightness\t", _keyboard_brightness),
+        ("keyboard-user-brightness\t", _keyboard_user_brightness),
         ("keyboard-last-input", _keyboard_last_input),
         ("keyboard-last-event", _keyboard_last_event),
     ]

@@ -127,6 +127,7 @@ class MainWindow(QMainWindow):
         self._keyboard_page.color_changed.connect(self._lighting.set_color)
         self._keyboard_page.zone_color_changed.connect(self._lighting.set_zone_color)
         self._keyboard_page.idle_timeout_changed.connect(self._lighting.set_idle_timeout)
+        self._keyboard_page.brightness_changed.connect(self._lighting.set_brightness)
 
         self._power = PowerLimitController(self)
 

@@ -14,6 +14,7 @@ from hp_helper.widgets.app_button import AppButton
 from hp_helper.widgets.segmented_control import SegmentedControl
 from hp_helper.features.gpu.mux import GpuMuxMode, read_gpu_mux_state
 from hp_helper.app.theme import COLORS
+from hp_helper.backend.nvidia import get_gpu_name
 
 logger = logging.getLogger(__name__)
 
@@ -124,7 +125,22 @@ class ProfileSection(QWidget):
         mux_outer.addWidget(_section_divider())
         mux_outer.addSpacing(18)
 
-        mux_outer.addWidget(_section_title("MUX Switch"))
+
+        mux_title_row = QHBoxLayout()
+        mux_title_row.setContentsMargins(0, 0, 0, 0)
+        mux_title_row.addWidget(_section_title("MUX Switch"))
+        mux_title_row.addStretch()
+        gpu_name = get_gpu_name()
+        if gpu_name:
+            gpu_label = QLabel(gpu_name)
+            gpu_label.setStyleSheet(f"""
+                color: {COLORS['text_secondary']};
+                font-size: 12px;
+                font-weight: 400;
+                background: transparent;
+            """)
+            mux_title_row.addWidget(gpu_label, alignment=Qt.AlignRight | Qt.AlignVCenter)
+        mux_outer.addLayout(mux_title_row)
         mux_outer.addSpacing(10)
 
         self._mux_row = QHBoxLayout()
