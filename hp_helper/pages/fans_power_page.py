@@ -178,8 +178,6 @@ class FansPowerPage(QWidget):
         self._profile_label = QLabel("")
         self._profile_label.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 13px; background: transparent;")
         header_row.addWidget(self._profile_label)
-
-
         header_row.addStretch()
 
         # Pop-out button

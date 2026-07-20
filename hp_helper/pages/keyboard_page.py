@@ -17,6 +17,8 @@ from hp_helper import api
 from hp_helper.app.theme import COLORS
 from hp_helper.pages.settings_page import make_spin
 from hp_helper.widgets.toggle_switch import ToggleSwitch
+from hp_helper.widgets.status_badge import StatusBadge
+from hp_helper.backend.modules import keyboard_rgb_module
 from hp_helper.features.keyboard.lighting import (
     ZONE_NAMES,
     normalize_zone_colors,
@@ -243,12 +245,16 @@ class KeyboardPage(QWidget):
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(16, 12, 16, 12)
-        layout.setSpacing(8)
-
-        # Title (same style as Power on Fans & Power page)
+        # Title row
+        title_row = QHBoxLayout()
+        title_row.setContentsMargins(0, 0, 0, 0)
         title = QLabel("Keyboard Lighting")
         title.setStyleSheet("font-size: 18px; font-weight: 800; color: #ffffff;")
-        layout.addWidget(title)
+        title_row.addWidget(title)
+        title_row.addStretch()
+        kbd_text, kbd_color = keyboard_rgb_module()
+        title_row.addWidget(StatusBadge(kbd_text, kbd_color))
+        layout.addLayout(title_row)
 
         # Visual keyboard
         self._visual = KeyboardVisual(zone_count=self._zone_count)

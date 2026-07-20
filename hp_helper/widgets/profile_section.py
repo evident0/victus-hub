@@ -15,6 +15,8 @@ from hp_helper.widgets.segmented_control import SegmentedControl
 from hp_helper.features.gpu.mux import GpuMuxMode, read_gpu_mux_state
 from hp_helper.app.theme import COLORS
 from hp_helper.backend.nvidia import get_gpu_name
+from hp_helper.widgets.status_badge import StatusBadge
+from hp_helper.backend.modules import platform_profile_backend, mux_module, fan_control_module
 
 logger = logging.getLogger(__name__)
 
@@ -81,10 +83,14 @@ class ProfileSection(QWidget):
         self._selected_fan_mode = "auto"
         self._mux_modes: tuple[GpuMuxMode, ...] = ()
         self._mux_buttons: dict[int, AppButton] = {}
-        self._mux_selected: int | None = None
-
         # ── Performance profile ──
-        root.addWidget(_section_title("Performance Mode"))
+        perf_title_row = QHBoxLayout()
+        perf_title_row.setContentsMargins(0, 0, 0, 0)
+        perf_title_row.addWidget(_section_title("Performance Mode"))
+        perf_title_row.addStretch()
+        pp_text, pp_color = platform_profile_backend()
+        perf_title_row.addWidget(StatusBadge(pp_text, pp_color))
+        root.addLayout(perf_title_row)
         root.addSpacing(10)
         profile_row = QHBoxLayout()
         profile_row.setSpacing(10)
@@ -101,7 +107,13 @@ class ProfileSection(QWidget):
         root.addSpacing(18)
 
         # ── Fan mode ──
-        root.addWidget(_section_title("Fan Mode"))
+        fan_title_row = QHBoxLayout()
+        fan_title_row.setContentsMargins(0, 0, 0, 0)
+        fan_title_row.addWidget(_section_title("Fan Mode"))
+        fan_title_row.addStretch()
+        fan_text, fan_color = fan_control_module()
+        fan_title_row.addWidget(StatusBadge(fan_text, fan_color))
+        root.addLayout(fan_title_row)
         root.addSpacing(10)
         fan_row = QHBoxLayout()
         fan_row.setSpacing(8)
@@ -140,6 +152,9 @@ class ProfileSection(QWidget):
                 background: transparent;
             """)
             mux_title_row.addWidget(gpu_label, alignment=Qt.AlignRight | Qt.AlignVCenter)
+        mux_text, mux_color = mux_module()
+        mux_title_row.addSpacing(8)
+        mux_title_row.addWidget(StatusBadge(mux_text, mux_color))
         mux_outer.addLayout(mux_title_row)
         mux_outer.addSpacing(10)
 
