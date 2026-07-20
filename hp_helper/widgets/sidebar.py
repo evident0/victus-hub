@@ -23,7 +23,7 @@ class Sidebar(QWidget):
     tab_changed = Signal(int)
 
     _WIDTH = 168
-    _ICON = 20
+    _ICON = 24
 
     def __init__(self, parent=None):
         super().__init__(parent)

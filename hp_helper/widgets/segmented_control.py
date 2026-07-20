@@ -61,9 +61,9 @@ class SegmentedControl(QFrame):
         if has_action:
             cog = QPushButton()
             cog.setObjectName("cogBtn")
-            cog.setIcon(load_icon("NewIcons/settings.png", size=16))
-            cog.setIconSize(QSize(16, 16))
-            cog.setFixedSize(22, 22)
+            cog.setIcon(load_icon("NewIcons/settings.png", size=20))
+            cog.setIconSize(QSize(20, 20))
+            cog.setFixedSize(28, 28)
             cog.setCursor(Qt.PointingHandCursor)
             cog.setToolTip("Open fan curves editor")
             cog.clicked.connect(lambda _, k=key: self.action_requested.emit(k))
@@ -112,7 +112,7 @@ class SegmentedControl(QFrame):
             #cogBtn {{
                 background: transparent;
                 border: none;
-                border-radius: 11px;
+                border-radius: 14px;
             }}
             #cogBtn:hover {{
                 background-color: {COLORS['surface_raised']};
