@@ -12,6 +12,8 @@ from PySide6.QtGui import QColor
 from hp_helper.widgets.fan_chart import FanChart
 from hp_helper.app.theme import COLORS
 from hp_helper.widgets.toggle_switch import ToggleSwitch
+from hp_helper.widgets.status_badge import StatusBadge
+from hp_helper.backend.modules import ryzenadj_available
 from hp_helper.pages.settings_page import make_spin
 from hp_helper.features.power.limits import (
     POWER_MIN_MW, POWER_MAX_MW,
@@ -76,10 +78,16 @@ class FansPowerPage(QWidget):
         power_layout.setContentsMargins(14, 14, 14, 14)
         power_layout.setSpacing(14)
 
-        # Power title
+        # Power title row
+        power_title_row = QHBoxLayout()
+        power_title_row.setContentsMargins(0, 0, 0, 0)
         power_title = QLabel("Power")
         power_title.setStyleSheet("font-size: 18px; font-weight: 800; color: #ffffff;")
-        power_layout.addWidget(power_title)
+        power_title_row.addWidget(power_title)
+        power_title_row.addStretch()
+        ry_text, ry_color = ryzenadj_available()
+        power_title_row.addWidget(StatusBadge(ry_text, ry_color))
+        power_layout.addLayout(power_title_row)
 
         # Power limit steppers (watts / °C)
         power_min_w = POWER_MIN_MW // 1000

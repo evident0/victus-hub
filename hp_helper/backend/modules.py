@@ -5,8 +5,10 @@ Each function returns ``(text, color)`` suitable for a ``StatusBadge``.
 
 from pathlib import Path
 
-from hp_helper.app.theme import COLORS
+import os
+
 from hp_helper.backend.sysfs_read import find_hwmon_by_name
+from hp_helper.app.theme import COLORS
 
 GREEN = COLORS["accent_green"]
 ORANGE = "#f0a030"
@@ -63,3 +65,24 @@ def keyboard_rgb_module() -> tuple[str, str]:
     if Path("/sys/devices/platform/hp-kbd-rgb").is_dir():
         return ("hp-kbd-rgb", GREEN)
     return ("no kbd", RED)
+
+
+def ryzenadj_available() -> tuple[str, str]:
+    """Detect whether the ``ryzenadj`` binary is available for APU power limits.
+
+    - Green ``"ryzenadj"`` if the binary is found
+    - Red ``"none"`` otherwise
+    """
+    # RYZENADJ_PATH env var
+    env = os.environ.get("RYZENADJ_PATH")
+    if env and Path(env).is_file():
+        return ("ryzenadj", GREEN)
+    # Standard install paths
+    for candidate in ["/usr/local/bin/ryzenadj", "/usr/bin/ryzenadj"]:
+        if Path(candidate).is_file():
+            return ("ryzenadj", GREEN)
+    # PATH search
+    from hp_helper.backend.util import command_path
+    if command_path("ryzenadj") is not None:
+        return ("ryzenadj", GREEN)
+    return ("none", RED)
