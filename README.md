@@ -5,7 +5,7 @@ Sensors Panel            |  Settings Panel
 :-------------------------:|:-------------------------:
 ![](showcase_sensors.png)  |  ![](showcase_settings.png)
 
-A control panel for HP Victus (and maybe Omen laptops) on Linux. 
+A control panel for HP Victus and Omen laptops on Linux. 
 
 It was built and tested on 8BD4 (HP Victus 16-s0001nv) 
 with Fedora. Other HP Omen/Victus laptops should work.
@@ -17,7 +17,7 @@ with Fedora. Other HP Omen/Victus laptops should work.
 - **Custom fan control** — Three modes:
   *auto* (hands control back to the EC), *max* (100%), and *custom* (your
   temperature curves with ramp-up/down).
-- **Mux switch** Mux switch support for Victus Laptops ,OMEN should also work (untested).  PRIME laptops can also try [envycontrol](https://github.com/bayasdev/envycontrol) (not included).  
+- **Mux switch** Hardware Mux switch support for Victus Laptops, OMEN Laptops should also work (untested).  PRIME laptops can also try [envycontrol](https://github.com/bayasdev/envycontrol) (not included yet).  
 - **Keyboard RGB** — static color and brightness via a custom
   `hp-kbd-rgb` kernel module (a companion to the upstream hp-wmi RGB
   patch series; it doesn't claim the HP WMI GUID, so the stock `hp-wmi`
@@ -31,23 +31,22 @@ with Fedora. Other HP Omen/Victus laptops should work.
 
 Settings persist under `~/.config/victus-hub/`.
 
-## Requirements
-- NVIDIA driver + libnvidia-ml (metrics: nvidia hwmon → NVML → nvidia-smi; never wakes a runtime-suspended laptop dGPU)
-- Linux with systemd (specifically `systemd-logind`)
-- Python 3.9+ with PySide6 (6.8 or newer; `pip install -e .` pulls it)
-- An AMD Ryzen CPU for the power-limit stuff `ryzenadj` is skipped
-  automatically on Intel (sorry intel users but I can't test Intel for now).
-- `tuned-adm` or `power-profilesctl` for system profile management
-- Kernel headers matching your running kernel, to build the module
+## Install (One-Liner)
+```
+curl -sL https://raw.githubusercontent.com/evident0/victus-hub/master/install.sh | sudo bash
+```
+## Uninstall (One-Liner)
+```
+curl -sL https://raw.githubusercontent.com/evident0/victus-hub/master/uninstall.sh | sudo bash
+```
+## Installing (manual)
 
-## Installing
-
-One command installs everything:
+After cloning the repository run:
 
 ```
 ./scripts/install
 ```
-For dev work:
+For dev work (no .desktop entry etc. Run uninstall when done testing to remove just the daemon):
 
 ```
 ./scripts/dev-run
@@ -79,15 +78,10 @@ The app logs to the terminal it was launched from (so run it from a
 terminal or check the desktop entry's output). The daemon logs via
 `journalctl -u victus-hubd`.
 
-## Limitations
-
-- **RGB effects** My hp victus has no effects in OGH. I could spam the acpi with color commands to create "effects" but the thing is fragile enough as is.
-- **ACPI Module** Not needed for most laptops and most distros have it disabled by default.
-
 ## Project Structure
 
 - **`victus_hub/`** — the Qt GUI. The user runs this unprivileged. It
   talks to the daemon over a Unix socket for anything requiring root.
 - **`victus_hubd/`** — the root daemon. Runs as a systemd service
   (`victus-hubd.service`), listens on `/run/victus-hubd/victus-hub.sock`,
-- **`kernel/hp-kbd-rgb/`** — keyboard RGB module.
+- **`kernel/`** — All custom kernel modules.
