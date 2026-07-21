@@ -3,7 +3,7 @@ requires = ["setuptools>=69"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "hp-helper"
+name = "victus-hub"
 version = "0.1.0"
 description = "HP Laptop Control Panel"
 requires-python = ">=3.9"
@@ -12,7 +12,7 @@ dependencies = [
 ]
 
 [project.scripts]
-hp-helper = "hp_helper.main:main"
+victus-hub = "victus_hub.main:main"
 
 [tool.setuptools.packages.find]
-include = ["hp_helper*", "hp_helperd*"]
+include = ["victus_hub*", "victus_hubd*"]

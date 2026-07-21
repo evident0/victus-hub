@@ -8,8 +8,8 @@ from __future__ import annotations
 import collections
 import unittest
 
-from hp_helper.backend.types import FanPoint, FanProfileConfig
-from hp_helper.services.fan_control import (
+from victus_hub.backend.types import FanPoint, FanProfileConfig
+from victus_hub.services.fan_control import (
     compute_ema,
     next_fan_percent,
     _curve_target,

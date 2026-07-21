@@ -29,7 +29,7 @@ with Fedora. Other HP Omen/Victus laptops should work.
   utilization. Included "task manager"+right click to stop processes, tracks cpu and ram (PSS).
 - **Suspend/shutdown cleanup** — send suspend and shutdown commands before and after.
 
-Settings persist under `~/.config/hp-helper/`.
+Settings persist under `~/.config/victus-hub/`.
 
 ## Requirements
 - NVIDIA driver + libnvidia-ml (metrics: nvidia hwmon → NVML → nvidia-smi; never wakes a runtime-suspended laptop dGPU)
@@ -58,14 +58,14 @@ For dev work:
 ```
 ./scripts/uninstall
 ```
-Your settings under `~/.config/hp-helper/` are left in place. Removes everything else
+Your settings under `~/.config/victus-hub/` are left in place. Removes everything else
 
 ## Running
 
-From the application menu (look for "HP Helper"), or:
+From the application menu (look for "Victus Hub"), or:
 
 ```
-hp-helper
+victus-hub
 ```
 
 It runs as a tray app — closing the window hides it to the system tray.
@@ -77,7 +77,7 @@ instance rather than starting a new one.
 
 The app logs to the terminal it was launched from (so run it from a
 terminal or check the desktop entry's output). The daemon logs via
-`journalctl -u hp-helperd`.
+`journalctl -u victus-hubd`.
 
 ## Limitations
 
@@ -86,8 +86,8 @@ terminal or check the desktop entry's output). The daemon logs via
 
 ## Project Structure
 
-- **`hp_helper/`** — the Qt GUI. The user runs this unprivileged. It
+- **`victus_hub/`** — the Qt GUI. The user runs this unprivileged. It
   talks to the daemon over a Unix socket for anything requiring root.
-- **`hp_helperd/`** — the root daemon. Runs as a systemd service
-  (`hp-helperd.service`), listens on `/run/hp-helperd/hp-helper-rs.sock`,
+- **`victus_hubd/`** — the root daemon. Runs as a systemd service
+  (`victus-hubd.service`), listens on `/run/victus-hubd/victus-hub.sock`,
 - **`kernel/hp-kbd-rgb/`** — keyboard RGB module.

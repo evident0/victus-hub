@@ -1,0 +1,25 @@
+[Unit]
+Description=Victus Hub privileged hardware read daemon (Python)
+After=systemd-udevd.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 -m victus_hubd
+WorkingDirectory=@ROOT_DIR@
+Environment=PYTHONPATH=@ROOT_DIR@
+Restart=on-failure
+RestartSec=1
+RuntimeDirectory=victus-hubd
+RuntimeDirectoryMode=0755
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/run/victus-hubd -/sys/class/hwmon -/sys/class/leds -/sys/devices/platform/hp-wmi -/sys/devices/platform/hp-kbd-rgb -/sys/devices/platform/hp-gpu-mux
+ReadOnlyPaths=/sys/class/powercap /usr/local/bin/ryzenadj
+RestrictAddressFamilies=AF_UNIX
+DeviceAllow=/dev/mem r
+DeviceAllow=char-input r
+
+[Install]
+WantedBy=multi-user.target

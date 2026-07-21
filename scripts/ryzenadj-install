@@ -3,7 +3,7 @@
 #
 # Clones https://github.com/FlyGoat/RyzenAdj into ~/RyzenAdj, builds it with
 # the libpci /dev/mem backend (NOT ryzen_smu), and installs the binary to
-# /usr/local/bin/ryzenadj — the path the hp-helperd daemon looks up first.
+# /usr/local/bin/ryzenadj — the path the victus-hubd daemon looks up first.
 #
 # Without ryzen_smu, ryzenadj falls back to /dev/mem. If your kernel restricts
 # /dev/mem (strictkaufman), add `iomem=relaxed` to your kernel cmdline.

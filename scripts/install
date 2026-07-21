@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Install (or reinstall) all HP Helper components:
+# Install (or reinstall) all Victus Hub components:
 #   1. Optional: custom hp-wmi, hp-kbd-rgb, hp-gpu-mux, ryzenadj  (prompted)
-#   2. hp-helperd daemon         (pip editable + systemd service)
-#   3. hp-helper program         (pip entry point, same install as daemon)
+#   2. victus-hubd daemon         (pip editable + systemd service)
+#   3. victus-hub program         (pip entry point, same install as daemon)
 #   4. .desktop entry + icon     (app-menu integration)
 set -euo pipefail
 
@@ -10,13 +10,13 @@ ROOT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 # shellcheck source=kmod-prompts.sh
 source "$ROOT_DIR/scripts/kmod-prompts.sh"
 
-SERVICE_NAME=hp-helperd.service
-SERVICE_SRC="$ROOT_DIR/data/hp-helperd.service"
+SERVICE_NAME=victus-hubd.service
+SERVICE_SRC="$ROOT_DIR/data/victus-hubd.service"
 SERVICE_DST="/etc/systemd/system/$SERVICE_NAME"
-SOCKET_PATH="/run/hp-helperd/hp-helper-rs.sock"
-ICON_SRC="$ROOT_DIR/hp_helper/resources/icons/logoV.png"
-ICON_DST="/usr/share/icons/hicolor/1024x1024/apps/hp-helper.png"
-DESKTOP_DST="/usr/share/applications/hp-helper.desktop"
+SOCKET_PATH="/run/victus-hubd/victus-hub.sock"
+ICON_SRC="$ROOT_DIR/victus_hub/resources/icons/logoV.png"
+ICON_DST="/usr/share/icons/hicolor/1024x1024/apps/victus-hub.png"
+DESKTOP_DST="/usr/share/applications/victus-hub.desktop"
 
 if [ "$(id -u)" -eq 0 ]; then
 	SUDO=()
@@ -27,9 +27,9 @@ fi
 # ── 1. Optional kernel modules / tools (prompted) ──
 prompt_optional_components
 
-# ── 2. Daemon + program (editable pip install brings both hp_helper* and
-#        hp_helperd* plus the hp-helper console-script entry point) ──
-printf '\033[1;34m── Installing hp-helperd daemon + hp-helper program ──\033[0m\n'
+# ── 2. Daemon + program (editable pip install brings both victus_hub* and
+#        victus_hubd* plus the victus-hub console-script entry point) ──
+printf '\033[1;34m── Installing victus-hubd daemon + victus-hub program ──\033[0m\n'
 cd "$ROOT_DIR"
 python3 -m pip install -e . --quiet 2>/dev/null || true
 
@@ -67,15 +67,15 @@ done
 printf '\033[1;34m── Installing desktop entry ──\033[0m\n'
 if [ -f "$ICON_SRC" ]; then
 	# Install the program's own icon (logoV) at standard hicolor sizes so the
-	# .desktop Icon=hp-helper resolves crisply at every DPI/menu size.
+	# .desktop Icon=victus-hub resolves crisply at every DPI/menu size.
 	if command -v convert >/dev/null 2>&1; then
 		for size in 16 22 24 32 48 64 128 256 512 1024; do
-			dst="/usr/share/icons/hicolor/${size}x${size}/apps/hp-helper.png"
+			dst="/usr/share/icons/hicolor/${size}x${size}/apps/victus-hub.png"
 			printf 'Installing %sx%s icon to %s\n' "$size" "$size" "$dst"
 			"${SUDO[@]}" install -d "/usr/share/icons/hicolor/${size}x${size}/apps"
-			convert "$ICON_SRC" -resize "${size}x${size}" "png32:${TMPDIR:-/tmp}/hp-helper-${size}.png" 2>/dev/null
-			"${SUDO[@]}" install -Dm644 "${TMPDIR:-/tmp}/hp-helper-${size}.png" "$dst"
-			rm -f "${TMPDIR:-/tmp}/hp-helper-${size}.png"
+			convert "$ICON_SRC" -resize "${size}x${size}" "png32:${TMPDIR:-/tmp}/victus-hub-${size}.png" 2>/dev/null
+			"${SUDO[@]}" install -Dm644 "${TMPDIR:-/tmp}/victus-hub-${size}.png" "$dst"
+			rm -f "${TMPDIR:-/tmp}/victus-hub-${size}.png"
 		done
 	else
 		# No ImageMagick — fall back to the single source size.
@@ -85,27 +85,27 @@ if [ -f "$ICON_SRC" ]; then
 	"${SUDO[@]}" gtk-update-icon-cache -f /usr/share/icons/hicolor 2>/dev/null || true
 fi
 
-HP_HELPER_BIN="$(command -v hp-helper || true)"
-if [ -z "$HP_HELPER_BIN" ]; then
+VICTUS_HUB_BIN="$(command -v victus-hub || true)"
+if [ -z "$VICTUS_HUB_BIN" ]; then
 	# ~/.local/bin may not be on PATH when pip installs to --user
-	HP_HELPER_BIN="$HOME/.local/bin/hp-helper"
+	VICTUS_HUB_BIN="$HOME/.local/bin/victus-hub"
 fi
-if [ ! -x "$HP_HELPER_BIN" ]; then
-	printf 'hp-helper entry point not found — cannot write desktop Exec line.\n' >&2
-	printf 'Run pip install again or verify hp-helper is on PATH.\n' >&2
+if [ ! -x "$VICTUS_HUB_BIN" ]; then
+	printf 'victus-hub entry point not found — cannot write desktop Exec line.\n' >&2
+	printf 'Run pip install again or verify victus-hub is on PATH.\n' >&2
 	exit 1
 fi
-HP_HELPER_BIN="$(readlink -f "$HP_HELPER_BIN")"
-printf 'Resolved hp-helper to %s\n' "$HP_HELPER_BIN"
+VICTUS_HUB_BIN="$(readlink -f "$VICTUS_HUB_BIN")"
+printf 'Resolved victus-hub to %s\n' "$VICTUS_HUB_BIN"
 
 printf 'Installing desktop entry to %s\n' "$DESKTOP_DST"
 "${SUDO[@]}" tee "$DESKTOP_DST" >/dev/null <<DESKTOP
 [Desktop Entry]
 Type=Application
-Name=HP Helper
+Name=Victus Hub
 Comment=HP Laptop Control Panel
-Exec=env QT_QPA_PLATFORM=xcb $HP_HELPER_BIN
-Icon=hp-helper
+Exec=env QT_QPA_PLATFORM=xcb $VICTUS_HUB_BIN
+Icon=victus-hub
 Terminal=false
 Categories=System;Utility;
 DESKTOP
@@ -115,4 +115,4 @@ DESKTOP
 printf '\033[32m── Install complete ──\033[0m\n'
 printf '  • Optional modules/tools were prompted (hp-wmi, hp-kbd-rgb, hp-gpu-mux, ryzenadj)\n'
 printf '  • Daemon:        %s (running)\n' "$SERVICE_NAME"
-printf '  • Program:       hp-helper   (app menu or: hp-helper)\n'
+printf '  • Program:       victus-hub   (app menu or: victus-hub)\n'

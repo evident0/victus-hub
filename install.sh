@@ -6,8 +6,8 @@
 # `pip install -e .` (editable) and templates the systemd unit's
 # WorkingDirectory/PYTHONPATH to this path, so the source must survive this
 # script. A tmpdir + EXIT `rm -rf` leaves the editable install pointing at
-# deleted files → `hp-helper` fails with ModuleNotFoundError: No module named
-# 'hp_helper' and the daemon's unit points at a gone directory.
+# deleted files → `victus-hub` fails with ModuleNotFoundError: No module named
+# 'victus_hub' and the daemon's unit points at a gone directory.
 set -euo pipefail
 
 REPO_URL="https://github.com/evident0/victus-hub.git"

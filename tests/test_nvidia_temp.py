@@ -10,7 +10,7 @@ import subprocess
 import unittest
 from pathlib import Path
 
-from hp_helper.backend.nvidia import NVML_TEMPERATURE_GPU, NvidiaReader
+from victus_hub.backend.nvidia import NVML_TEMPERATURE_GPU, NvidiaReader
 
 
 def _has_nvidia() -> bool:

@@ -5,10 +5,10 @@ set -euo pipefail
 
 ROOT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 
-SERVICE_NAME=hp-helperd.service
+SERVICE_NAME=victus-hubd.service
 SERVICE_DST="/etc/systemd/system/$SERVICE_NAME"
-SOCKET_PATH="/run/hp-helperd/hp-helper-rs.sock"
-SOCKET_RUNTIME_DIR="/run/hp-helperd"
+SOCKET_PATH="/run/victus-hubd/victus-hub.sock"
+SOCKET_RUNTIME_DIR="/run/victus-hubd"
 
 if [ "$(id -u)" -eq 0 ]; then
 	SUDO=()
@@ -17,7 +17,7 @@ else
 fi
 
 # ── Uninstall daemon if present ──
-printf '\033[1;34m── Uninstalling hp-helperd daemon (if present) ──\033[0m\n'
+printf '\033[1;34m── Uninstalling victus-hubd daemon (if present) ──\033[0m\n'
 
 if command -v systemctl >/dev/null 2>&1; then
 	if systemctl is-active --quiet "$SERVICE_NAME" 2>/dev/null; then
@@ -46,11 +46,11 @@ fi
 printf '\033[32mDaemon uninstalled (or was not present)\033[0m\n'
 
 # ── Editable pip install (app only, no daemon needed for UI test) ──
-printf '\033[1;34m── Installing hp-helper (editable) ──\033[0m\n'
+printf '\033[1;34m── Installing victus-hub (editable) ──\033[0m\n'
 cd "$ROOT_DIR"
 python3 -m pip install -e . --quiet 2>/dev/null || true
 
 # ── Run Qt app ──
-printf '\033[1;34m── Starting HP Helper (UI-only) ──\033[0m\n'
+printf '\033[1;34m── Starting Victus Hub (UI-only) ──\033[0m\n'
 cd "$ROOT_DIR"
-exec env QT_QPA_PLATFORM=xcb python3 -m hp_helper
+exec env QT_QPA_PLATFORM=xcb python3 -m victus_hub
