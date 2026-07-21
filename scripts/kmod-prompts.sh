@@ -43,7 +43,16 @@ prompt_yes_no() {
 	local prompt=$1
 	local reply
 	printf '%s' "$prompt"
-	read -r reply
+	# Read from the controlling terminal, not stdin. Under a curl|bash
+	# one-liner, stdin is the script itself (already consumed by bash), so a
+	# plain `read` hits EOF and every prompt silently defaults to "no".
+	# /dev/tty is the user's terminal; sudo preserves it (with or without
+	# use_pty). Falls back to stdin when no controlling tty exists.
+	if [ -r /dev/tty ]; then
+		read -r reply </dev/tty
+	else
+		read -r reply
+	fi
 	[[ "$reply" =~ ^[Yy]$ ]]
 }
 
