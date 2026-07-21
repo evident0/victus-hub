@@ -49,9 +49,13 @@ class LightingController(QObject):
         except Exception:
             pass
         self._timer = QTimer(self)
-        self._timer.setInterval(50)
+        self._timer.setInterval(200)
         self._timer.timeout.connect(self._tick)
         self._timer.start()
+        # Gate the on-screen keyboard-preview repaint only (NOT hardware
+        # writes): stop repainting a hidden/irrelevant UI. Defaults active
+        # until MainWindow flips it on visibility changes.
+        self._ui_active = True
 
     @property
     def zone_count(self) -> int:
@@ -78,6 +82,10 @@ class LightingController(QObject):
         self._last_sent_color = None
         self._last_sent_zone_colors = [None] * self._zone_count
         self._timer.start()
+
+    def set_ui_active(self, active: bool) -> None:
+        """Gate the preview frame signal (NOT hardware writes)."""
+        self._ui_active = active
 
     # ── Settings mutators (called from KeyboardPage signal handlers) ──
 
@@ -188,7 +196,8 @@ class LightingController(QObject):
                     self._last_send = now
                     self._last_sent_brightness = 0
                     self._invalidate_sent()
-            self.frame_changed.emit([RgbColor(0, 0, 0)] * self._zone_count)
+            if self._ui_active:
+                self.frame_changed.emit([RgbColor(0, 0, 0)] * self._zone_count)
             return
 
         frames = self._zone_rgb_list(settings)
@@ -202,7 +211,8 @@ class LightingController(QObject):
         # (using the user-brightness synced via set_keyboard_user_brightness),
         # so no separate brightness write is needed here.
         # Always update visual keyboard (responsive UI)
-        self.frame_changed.emit(frames)
+        if self._ui_active:
+            self.frame_changed.emit(frames)
 
     def _tick_single_zone(self, now: float, frame: RgbColor) -> None:
         """Original single-zone write path (unchanged behavior)."""

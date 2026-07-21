@@ -43,7 +43,7 @@ class ShortcutController(QObject):
             logger.debug("shortcut: daemon unreachable at init")
 
         self._timer = QTimer(self)
-        self._timer.setInterval(100)
+        self._timer.setInterval(200)
         self._timer.timeout.connect(self._tick)
         self._timer.start()
 

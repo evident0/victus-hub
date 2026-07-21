@@ -4,7 +4,7 @@ from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
 )
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QColor, QFont
+from PySide6.QtGui import QColor, QFont, QHideEvent, QShowEvent
 
 from victus_hub.widgets.sensor_line_graph import SensorLineGraph
 from victus_hub.app.theme import COLORS
@@ -164,3 +164,13 @@ class SensorGraphWindow(QMainWindow):
         self._poll_timer.stop()
         self._started = False
         super().closeEvent(event)
+
+    def showEvent(self, event: QShowEvent):
+        super().showEvent(event)
+        if self._started:
+            self._poll_timer.start()
+            self._poll()
+
+    def hideEvent(self, event: QHideEvent):
+        super().hideEvent(event)
+        self._poll_timer.stop()

@@ -2,8 +2,8 @@
 
 import logging
 
-from PySide6.QtCore import Qt, QSettings, QTimer
-from PySide6.QtGui import QAction, QCloseEvent, QIcon
+from PySide6.QtCore import Qt, QSettings, QTimer, QEvent
+from PySide6.QtGui import QAction, QCloseEvent, QIcon, QHideEvent, QShowEvent
 from PySide6.QtWidgets import (
     QApplication, QHBoxLayout, QMainWindow, QMenu, QScrollArea,
     QStackedWidget, QSystemTrayIcon, QWidget,
@@ -85,6 +85,13 @@ class MainWindow(QMainWindow):
         for page in self._pages:
             self._stack.addWidget(page)
 
+        # Processes page poll — only runs while visible AND on the Processes
+        # tab (see _update_processes_timer). Decoupled from the sensor poll so
+        # the /proc scan never fires for a hidden window or another tab.
+        self._processes_timer = QTimer(self)
+        self._processes_timer.setInterval(2000)
+        self._processes_timer.timeout.connect(self._processes_page.refresh)
+
         # Update the scroll area's minimum height when the page changes so
         # each page gets exactly the vertical space it needs (no squishing).
         self._stack.currentChanged.connect(self._update_min_height)
@@ -164,6 +171,12 @@ class MainWindow(QMainWindow):
         self._profile_timer.timeout.connect(self._poll_profile)
         self._profile_timer.start()
 
+        # UI-active gate (visibility). When False (hidden to tray /
+        # minimized) the sensor + profile timers stop, the keyboard preview
+        # repaint is gated, the lm-sensors subprocess is skipped, and the
+        # processes /proc scan stops. Hardware control threads keep running.
+        self._ui_active = True
+
         # Fan-control background thread
         start_fan_control()
         # Sync fan mode segmented control from persisted config and apply
@@ -202,6 +215,16 @@ class MainWindow(QMainWindow):
 
     def _on_tab_changed(self, index: int):
         self._stack.setCurrentIndex(index)
+        # Gate per-tab work: the Processes /proc scan only runs when the
+        # Processes tab is current + the UI is visible.
+        self._update_processes_timer()
+        if (self._ui_active
+                and self._stack.currentWidget() is self._processes_page):
+            self._processes_page.refresh()  # instant fresh list on tab entry
+        # Gate the keyboard-preview repaint on the Keyboard tab (hardware
+        # writes are unaffected — they run regardless of the active tab).
+        self._lighting.set_ui_active(
+            self._ui_active and self._is_keyboard_tab_current())
 
     def _update_min_height(self, index: int) -> None:
         """Set the stack's minimum height to the current page's minimum
@@ -210,6 +233,51 @@ class MainWindow(QMainWindow):
         if page is not None:
             self._stack.setMinimumHeight(page.minimumSizeHint().height())
 
+
+    def _is_keyboard_tab_current(self) -> bool:
+        return self._stack.currentWidget() is self._keyboard_page
+
+    def _update_processes_timer(self) -> None:
+        """Run the Processes /proc scan only while visible + on that tab."""
+        want = self._ui_active and (self._stack.currentWidget() is self._processes_page)
+        if want:
+            self._processes_timer.start()
+        else:
+            self._processes_timer.stop()
+
+    def _update_ui_active(self) -> None:
+        """Central visibility switch. Pauses UI-only work when the window is
+        hidden to tray or minimized; hardware control (fan-control thread,
+        power-limit reapply, shortcut hotkey poll, keyboard-backlight
+        hardware writes) keeps running in all states."""
+        active = self.isVisible() and not self.isMinimized()
+        if active == self._ui_active:
+            return
+        self._ui_active = active
+        if active:
+            self._sensor_timer.start()
+            self._profile_timer.start()
+        else:
+            self._sensor_timer.stop()
+            self._profile_timer.stop()
+        self._lighting.set_ui_active(active and self._is_keyboard_tab_current())
+        api.set_ui_active(active)
+        self._update_processes_timer()
+        if active:
+            self._poll_sensors()  # immediate fresh refresh on restore
+
+    def showEvent(self, event: QShowEvent):
+        super().showEvent(event)
+        self._update_ui_active()
+
+    def hideEvent(self, event: QHideEvent):
+        super().hideEvent(event)
+        self._update_ui_active()
+
+    def changeEvent(self, event):
+        super().changeEvent(event)
+        if event.type() == QEvent.Type.WindowStateChange:
+            self._update_ui_active()
     # ── Tray ──
     def _on_tray_activated(self, reason):
         if reason in (QSystemTrayIcon.Trigger, QSystemTrayIcon.DoubleClick):
@@ -228,6 +296,7 @@ class MainWindow(QMainWindow):
         if self._fan_curves_window is not None:
             self._fan_curves_window.hide()
         self.hide()
+        self._update_ui_active()
 
     def _show_all_windows(self):
         """Show/restore main + all registered child windows.
@@ -242,6 +311,7 @@ class MainWindow(QMainWindow):
         self.showNormal()
         self.raise_()
         self.activateWindow()
+        self._update_ui_active()
     def _quit_app(self):
         """Restore fan hardware to auto and turn off the keyboard backlight,
         then quit.  The user's last mode choice survives in config so the
@@ -351,8 +421,6 @@ class MainWindow(QMainWindow):
         # Update Home page
         self._home_page.update_sensor_data(snapshot)
 
-        # Update Processes page
-        self._processes_page.refresh()
 
         # Update Sensors page rows
         rows = build_rows(snapshot, self._stats_by_key)

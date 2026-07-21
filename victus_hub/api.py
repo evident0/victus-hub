@@ -45,6 +45,7 @@ __all__ = [
     "set_manual_preset",
     "apply_power_limits",
     "set_gpu_mux_mode",
+    "set_ui_active",
 ]
 
 
@@ -56,6 +57,17 @@ _profile_cache: int | None = None
 _snapshot_lock = threading.Lock()
 _profile_lock = threading.Lock()
 _snapshot_running = True
+# When False, the sensor-poll thread skips the heavy `sensors -j`
+# subprocess (lm-sensors extras); cheap temps/fans/usage still run so
+# the fan-control thread always has fresh CPU/GPU temps. Flipped by the
+# GUI on visibility changes (api.set_ui_active).
+_ui_active = True
+
+
+def set_ui_active(active: bool) -> None:
+    """Tell the background sensor loop whether the UI is being looked at."""
+    global _ui_active
+    _ui_active = active
 
 _bg_logger = logging.getLogger("sensor-bg")
 
@@ -65,7 +77,7 @@ def _sensor_loop():
     global _snapshot, _profile_cache
     while _snapshot_running:
         try:
-            snap = _reader.read_all()
+            snap = _reader.read_all(full=_ui_active)
         except Exception as e:
             _bg_logger.warning("read_all failed: %s", e)
             time.sleep(1.0)
