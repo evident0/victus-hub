@@ -10,7 +10,7 @@ class StatusBadge(QLabel):
     Usage::
 
         badge = StatusBadge("hp-wmi", "#06b48a")
-        badge = StatusBadge("no kbd", "#ff2020")
+        badge = StatusBadge("not supported", "#ff2020")
     """
 
     def __init__(self, text: str, color: str | QColor, parent=None):
