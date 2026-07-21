@@ -4,13 +4,16 @@ import threading
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
-    QPushButton, QCheckBox,
+    QPushButton,
 )
 from PySide6.QtCore import Qt, Signal, QTimer
 from PySide6.QtGui import QColor
 
 from hp_helper.widgets.fan_chart import FanChart
 from hp_helper.app.theme import COLORS
+from hp_helper.widgets.toggle_switch import ToggleSwitch
+from hp_helper.widgets.status_badge import StatusBadge
+from hp_helper.backend.modules import ryzenadj_available
 from hp_helper.pages.settings_page import make_spin
 from hp_helper.features.power.limits import (
     POWER_MIN_MW, POWER_MAX_MW,
@@ -75,10 +78,16 @@ class FansPowerPage(QWidget):
         power_layout.setContentsMargins(14, 14, 14, 14)
         power_layout.setSpacing(14)
 
-        # Power title
+        # Power title row
+        power_title_row = QHBoxLayout()
+        power_title_row.setContentsMargins(0, 0, 0, 0)
         power_title = QLabel("Power")
         power_title.setStyleSheet("font-size: 18px; font-weight: 800; color: #ffffff;")
-        power_layout.addWidget(power_title)
+        power_title_row.addWidget(power_title)
+        power_title_row.addStretch()
+        ry_text, ry_color = ryzenadj_available()
+        power_title_row.addWidget(StatusBadge(ry_text, ry_color))
+        power_layout.addLayout(power_title_row)
 
         # Power limit steppers (watts / °C)
         power_min_w = POWER_MIN_MW // 1000
@@ -148,7 +157,7 @@ class FansPowerPage(QWidget):
         self._apply_btn.clicked.connect(self._on_apply_power)
         power_layout.addWidget(self._apply_btn)
 
-        self._power_check = QCheckBox("Enable power limits")
+        self._power_check = ToggleSwitch("Enable power limits")
         self._power_check.setChecked(self._power_enabled)
         self._power_check.toggled.connect(self._on_power_enabled_changed)
         power_layout.addWidget(self._power_check)
@@ -177,8 +186,6 @@ class FansPowerPage(QWidget):
         self._profile_label = QLabel("")
         self._profile_label.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 13px; background: transparent;")
         header_row.addWidget(self._profile_label)
-
-
         header_row.addStretch()
 
         # Pop-out button

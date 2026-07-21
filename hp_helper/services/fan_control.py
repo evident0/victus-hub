@@ -1,12 +1,10 @@
 """Custom fan-control background loop.
 
-Ported from hp_tauri src-tauri/src/lib.rs:85-224 (start_fan_control +
-next_fan_percent).
+Ported from hp_tauri src-tauri/src/lib.rs (start_fan_control + next_fan_percent).
 
-Pure helpers (``next_fan_percent``, ``P0FloorState``, ``update_p0_debounce``,
-``apply_p0_floor``) are unit-testable without the background thread.
-The poll/control loop lives in ``FanController``; ownership resets are on
-``LoopState``.
+Pure helpers (``next_fan_percent``, ``compute_ema``, curve targeting) are
+unit-testable without the background thread. The poll/control loop lives
+in ``FanController``; ownership resets are on ``LoopState``.
 """
 
 from __future__ import annotations
@@ -16,7 +14,7 @@ import logging
 import math
 import threading
 import time
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 
 from hp_helper import api
 from hp_helper.backend import daemon_client as _daemon_client
@@ -26,8 +24,6 @@ from hp_helper.backend.types import FanProfileConfig
 
 POLL_INTERVAL = 1.0
 CONTROL_INTERVAL = 3.0
-P0_ENGAGE_S = 10.0
-P0_RELEASE_S = 25.0
 
 # When set, skip sysfs writes and drop custom ownership so resume re-enters
 # custom (fan-manual + force first write). Pre-suspend cleanup sets fans auto.
@@ -70,96 +66,6 @@ def next_fan_percent(
     return target, None
 
 
-def is_gpu_p0(pstate: str | None) -> bool:
-    """True when nvidia-smi reports performance state P0."""
-    return pstate is not None and pstate.strip().upper() == "P0"
-
-
-@dataclass(frozen=True)
-class P0FloorState:
-    """Debounce + override floor state for the GPU P0 fan-floor feature."""
-
-    p0_since: float | None = None
-    non_p0_since: float | None = None
-    floor_active: bool = False
-    floor_pwm_min: float | None = None
-
-    def reset(self) -> P0FloorState:
-        return P0FloorState()
-
-
-def update_p0_debounce(
-    state: P0FloorState,
-    *,
-    enabled: bool,
-    is_p0: bool,
-    now: float,
-    last_written_pct: float | None,
-    engage_s: float = P0_ENGAGE_S,
-    release_s: float = P0_RELEASE_S,
-) -> tuple[P0FloorState, str | None]:
-    """Update P0 engage/release debounce.
-
-    Returns ``(new_state, event)`` with event in
-    ``engage`` / ``release`` / ``disabled`` / ``None``.
-
-    Continuous P0 for ``engage_s`` engages (seed floor from last write).
-    Continuous non-P0 for ``release_s`` while active releases. Brief gaps
-    do not release; brief non-P0 blips reset the engage timer.
-    """
-    if not enabled:
-        if state.floor_active or state.p0_since is not None or state.non_p0_since is not None:
-            return state.reset(), "disabled"
-        return state, None
-
-    if is_p0:
-        p0_since = state.p0_since if state.p0_since is not None else now
-        floor_active, floor_pwm_min, event = state.floor_active, state.floor_pwm_min, None
-        if not floor_active and (now - p0_since) >= engage_s:
-            floor_active, floor_pwm_min, event = True, last_written_pct, "engage"
-        return P0FloorState(p0_since, None, floor_active, floor_pwm_min), event
-
-    if not state.floor_active:
-        return P0FloorState(), None
-
-    non_p0_since = state.non_p0_since if state.non_p0_since is not None else now
-    if (now - non_p0_since) >= release_s:
-        return state.reset(), "release"
-    return P0FloorState(None, non_p0_since, True, state.floor_pwm_min), None
-
-
-def apply_p0_floor(
-    state: P0FloorState,
-    *,
-    enabled: bool,
-    curve_pct: float,
-    last_written_pct: float | None,
-    min_pct: float,
-    ramp_up_pct: float = 30.0,
-) -> tuple[float, P0FloorState, str | None]:
-    """Override curve with a rising floor while P0 floor is active.
-
-    Ramps floor toward ``min_pct`` by ``ramp_up_pct`` per tick; output is
-    ``max(curve_pct, floor)``. Event is ``"raise"`` when floor advances.
-    """
-    if not enabled or not state.floor_active:
-        return curve_pct, state, None
-
-    ramp_up = max(float(ramp_up_pct), 0.0)
-    floor = state.floor_pwm_min
-    if floor is None:
-        floor = last_written_pct if last_written_pct is not None else curve_pct
-
-    if ramp_up > 0 and floor < min_pct:
-        floor = min(floor + ramp_up, float(min_pct))
-    elif floor < min_pct:
-        floor = float(min_pct)
-
-    floor = float(int(round(floor)))
-    advanced = state.floor_pwm_min is None or floor > state.floor_pwm_min
-    return max(curve_pct, floor), replace(state, floor_pwm_min=floor), ("raise" if advanced else None)
-
-
 # ── Loop helpers ──────────────────────────────────────────────────────────────
 
 
@@ -182,39 +88,57 @@ def _should_write(
     return abs(next_pct - last_written_pct) >= min_delta_pct
 
 
+def compute_ema(samples: list[float], period: int) -> float | None:
+    """Single exponential moving average (oldest first, newest last).
+
+    Matches CoolerControl's plain EMA (not triple EMA):
+    ``alpha = 2 / (period + 1)`` — the standard smoothing factor for an
+    equivalent SMA window of ``period`` samples. Seeded with the first
+    sample, then iteratively updated. Returns ``None`` if samples is empty.
+    """
+    if not samples:
+        return None
+    period = max(int(period), 1)
+    alpha = 2.0 / (period + 1.0)
+    ema = float(samples[0])
+    for value in samples[1:]:
+        ema = (float(value) - ema) * alpha + ema
+    return ema
+
+
 def _curve_target(
     history: collections.deque,
     profile: FanProfileConfig,
 ) -> tuple[float | None, float | None, float | None]:
-    """Window averages → CPU/GPU curve speeds; target is max of both."""
-    cpu_temps = [int(t) for t, _ in history if t is not None]
-    gpu_temps = [int(t) for _, t in history if t is not None]
+    """EMA of temp window → CPU/GPU curve speeds; target is max of both.
+
+    Uses a single exponential moving average over the temperature history
+    (newest samples weighted more). ``period`` is the configured window
+    size (deque maxlen), which sets EMA alpha independently of how many
+    samples are currently filled.
+    """
+    period = history.maxlen if history.maxlen is not None else max(len(history), 1)
+    cpu_temps = [float(t) for t, _ in history if t is not None]
+    gpu_temps = [float(t) for _, t in history if t is not None]
     cpu_avg = gpu_avg = target = None
     if cpu_temps:
-        cpu_avg = sum(cpu_temps) / len(cpu_temps)
-        target = _fan_config.interpolate_fan(
-            profile.cpu_points, int(math.floor(cpu_avg + 0.5)),
-        )
+        cpu_avg = compute_ema(cpu_temps, period)
+        if cpu_avg is not None:
+            target = _fan_config.interpolate_fan(
+                profile.cpu_points, int(math.floor(cpu_avg + 0.5)),
+            )
     if gpu_temps:
-        gpu_avg = sum(gpu_temps) / len(gpu_temps)
-        gpu_s = _fan_config.interpolate_fan(
-            profile.gpu_points, int(math.floor(gpu_avg + 0.5)),
-        )
-        target = max(target, gpu_s) if target is not None else gpu_s
+        gpu_avg = compute_ema(gpu_temps, period)
+        if gpu_avg is not None:
+            gpu_s = _fan_config.interpolate_fan(
+                profile.gpu_points, int(math.floor(gpu_avg + 0.5)),
+            )
+            target = max(target, gpu_s) if target is not None else gpu_s
     return cpu_avg, gpu_avg, target
 
 
 def _gpu_s(gpu_avg: float | None) -> str:
     return f"{gpu_avg:.0f}°C" if gpu_avg is not None else "N/A"
-
-
-def _log_p0_event(event: str | None, p0_min_pct: float) -> None:
-    if event == "engage":
-        _fan_logger.info("P0 floor: engage (min %.0f%%) after %.0fs P0", p0_min_pct, P0_ENGAGE_S)
-    elif event == "release":
-        _fan_logger.info("P0 floor: release after %.0fs non-P0", P0_RELEASE_S)
-    elif event == "disabled":
-        _fan_logger.info("P0 floor: disabled by settings")
 
 
 # ── Loop state + controller ───────────────────────────────────────────────────
@@ -229,7 +153,6 @@ class LoopState:
     next_control: float = 0.0
     was_custom: bool = False
     force_write: bool = False
-    p0_state: P0FloorState = field(default_factory=P0FloorState)
     first_tick: bool = True
     temp_window: int = 15
     temp_history: collections.deque = field(
@@ -242,14 +165,12 @@ class LoopState:
         self.force_write = False
         self.last_written_pct = None
         self.ramp_down_since = None
-        self.p0_state = self.p0_state.reset()
         self.next_control = 0.0
 
     def on_manual_preset(self) -> None:
         """Idle under auto/max; keep last/ramp for a later custom re-entry."""
         self.was_custom = False
         self.force_write = False
-        self.p0_state = self.p0_state.reset()
 
     def on_leave_custom(self) -> None:
         """Clear after handing hardware back to auto."""
@@ -257,13 +178,11 @@ class LoopState:
         self.ramp_down_since = None
         self.was_custom = False
         self.force_write = False
-        self.p0_state = self.p0_state.reset()
 
     def on_enter_custom(self, seeded_pct: float | None) -> None:
         """Seed duty, force first write, skip control-interval wait."""
         self.last_written_pct = seeded_pct
         self.ramp_down_since = None
-        self.p0_state = self.p0_state.reset()
         self.force_write = True
         self.next_control = 0.0
 
@@ -337,19 +256,10 @@ class FanController:
             st.next_control = now
             st.first_tick = False
 
-        st.p0_state, p0_event = update_p0_debounce(
-            st.p0_state,
-            enabled=cfg.p0_min_pct_enabled,
-            is_p0=is_gpu_p0(snap.gpu_pstate),
-            now=now,
-            last_written_pct=st.last_written_pct,
-        )
-        _log_p0_event(p0_event, cfg.p0_min_pct)
-
         if now >= st.next_control:
-            self._control_tick(cfg, profile, snap.gpu_pstate, now)
+            self._control_tick(cfg, profile, now)
 
-    def _control_tick(self, cfg, profile: FanProfileConfig, gpu_pstate: str | None, now: float) -> None:
+    def _control_tick(self, cfg, profile: FanProfileConfig, now: float) -> None:
         st = self._st
         if cfg.temp_window != st.temp_window:
             st.temp_window = cfg.temp_window
@@ -362,27 +272,6 @@ class FanController:
                 target, current, st.ramp_down_since, now,
                 cfg.ramp_up_pct, cfg.ramp_down_pct, cfg.ramp_down_delay,
             )
-            curve_pct = next_pct
-            next_pct, st.p0_state, floor_event = apply_p0_floor(
-                st.p0_state,
-                enabled=cfg.p0_min_pct_enabled,
-                curve_pct=curve_pct,
-                last_written_pct=st.last_written_pct,
-                min_pct=cfg.p0_min_pct,
-                ramp_up_pct=cfg.ramp_up_pct,
-            )
-            if floor_event == "raise":
-                _fan_logger.info(
-                    "P0 floor: raise floor to %.0f%% (min %.0f%%)",
-                    st.p0_state.floor_pwm_min if st.p0_state.floor_pwm_min is not None else 0.0,
-                    cfg.p0_min_pct,
-                )
-
-            floor_holds = (
-                st.p0_state.floor_active
-                and st.p0_state.floor_pwm_min is not None
-                and next_pct > curve_pct + 0.01
-            )
             delta = abs(next_pct - (st.last_written_pct if st.last_written_pct is not None else 0.0))
             enter = st.force_write
             cpu_s = cpu_avg if cpu_avg is not None else 0.0
@@ -392,10 +281,8 @@ class FanController:
                 pwm = _pct_to_pwm(next_pct)
                 reason = " (enter custom)" if enter else ""
                 _fan_logger.info(
-                    "cpu=%.0f°C gpu=%s pstate=%s target=%.0f%% cur=%.0f%% → next=%.0f%% delta=%.1f → pwm=%d WRITE%s%s",
-                    cpu_s, g, gpu_pstate or "N/A",
-                    target, current, next_pct, delta, pwm,
-                    " (P0 floor)" if floor_holds else "", reason,
+                    "cpu=%.0f°C gpu=%s target=%.0f%% cur=%.0f%% → next=%.0f%% delta=%.1f → pwm=%d WRITE%s",
+                    cpu_s, g, target, current, next_pct, delta, pwm, reason,
                 )
                 try:
                     _daemon_client.request_fan_pwm(pwm)
@@ -403,11 +290,6 @@ class FanController:
                     pass
                 st.last_written_pct = next_pct
                 st.force_write = False
-            elif floor_holds:
-                _fan_logger.info(
-                    "cpu=%.0f°C gpu=%s pstate=%s target=%.0f%% cur=%.0f%% → next=%.0f%% (P0 floor hold)",
-                    cpu_s, g, gpu_pstate or "N/A", target, current, next_pct,
-                )
             elif target < current and next_pct == current:
                 _fan_logger.info(
                     "cpu=%.0f°C gpu=%s target=%.0f%% cur=%.0f%% → next=%.0f%% (ramp-down delay %.0fs)",

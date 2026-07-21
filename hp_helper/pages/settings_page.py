@@ -74,7 +74,7 @@ class SettingsPage(QWidget):
         )
         layout.addLayout(self._ramp_delay)
         self._temp_window = self._make_spin(
-            "Temperature window", "samples",
+            "EMA temp window", "samples",
             cfg.temp_window, 5, 60,
         )
         layout.addLayout(self._temp_window)
@@ -179,44 +179,6 @@ class SettingsPage(QWidget):
         self._kb_enable.toggled.connect(self._on_shortcut_enabled)
         layout.addWidget(self._kb_enable)
 
-        # ── GPU P0 min RPM floor ──
-        layout.addSpacing(16)
-        sep2 = QFrame()
-        sep2.setFrameShape(QFrame.HLine)
-        sep2.setStyleSheet(f"color: {COLORS['border']};")
-        layout.addWidget(sep2)
-        layout.addSpacing(12)
-
-        p0_label = QLabel("GPU P0 fan floor")
-        p0_label.setStyleSheet(
-            f"color: {COLORS['text']}; font-size: 13px; font-weight: bold;"
-        )
-        layout.addWidget(p0_label)
-
-        p0_hint = QLabel(
-            "Engages after ~10s continuous P0; holds ~25s after P0 ends. "
-            "Custom fan mode only. The override ramps the fan up to the "
-            "minimum % and blocks the curve below it until ~25s of non-P0."
-        )
-        p0_hint.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 11px;")
-        p0_hint.setWordWrap(True)
-        layout.addWidget(p0_hint)
-
-        self._p0_enable = QCheckBox(
-            "Override fan curve minimums when gpu perf is P0"
-        )
-        self._p0_enable.setChecked(cfg.p0_min_pct_enabled)
-        self._p0_enable.toggled.connect(self._on_p0_changed)
-        layout.addWidget(self._p0_enable)
-
-        self._p0_min_pct = make_spin(
-            "Minimum fan speed", "%",
-            cfg.p0_min_pct, 0, 100,
-        )
-        self._p0_min_pct._spin.setFixedWidth(90)
-        self._p0_min_pct._spin.valueChanged.connect(self._on_p0_changed)
-        layout.addLayout(self._p0_min_pct)
-
         layout.addStretch()
 
     def _make_spin(self, label: str, suffix: str, value: int,
@@ -238,16 +200,6 @@ class SettingsPage(QWidget):
 
         from hp_helper.backend import fan_config
         fan_config.save_all(cfg)
-
-    def _on_p0_changed(self, *_args):
-        """Persist P0 floor settings immediately (not gated by Apply)."""
-        cfg = api.get_fan_config()
-        cfg.p0_min_pct_enabled = self._p0_enable.isChecked()
-        cfg.p0_min_pct = self._p0_min_pct._spin.value()
-
-        from hp_helper.backend import fan_config
-        fan_config.save_all(cfg)
-
 
     # ── Program Shortcut ──
 

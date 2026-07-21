@@ -5,13 +5,14 @@ import logging
 from PySide6.QtCore import Qt, QSettings, QTimer
 from PySide6.QtGui import QAction, QCloseEvent, QIcon
 from PySide6.QtWidgets import (
-    QApplication, QHBoxLayout, QMainWindow, QMenu, QStackedWidget,
-    QSystemTrayIcon, QWidget,
+    QApplication, QHBoxLayout, QMainWindow, QMenu, QScrollArea,
+    QStackedWidget, QSystemTrayIcon, QWidget,
 )
 
 from hp_helper.app.theme import COLORS
 from hp_helper.widgets.sidebar import Sidebar
 from hp_helper.pages.home_page import HomePage
+from hp_helper.pages.processes_page import ProcessesPage
 from hp_helper.pages.fans_power_page import FansPowerPage
 from hp_helper.pages.sensors_page import SensorsPage
 from hp_helper.pages.keyboard_page import KeyboardPage
@@ -35,11 +36,10 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("Victus Hub")
         self.resize(960, 640)
-        self.setMinimumSize(930, 680)
 
         # App icon — logoV.png with native colors (no tint, no solid background)
         from hp_helper.app.icon_utils import load_icon
-        self._app_icon = load_icon("logoV.png", color=None, size=48)
+        self._app_icon = load_icon("logoV.png", size=48)
         self.setWindowIcon(self._app_icon)
 
         # Central widget
@@ -54,11 +54,21 @@ class MainWindow(QMainWindow):
         self._sidebar = Sidebar()
         layout.addWidget(self._sidebar)
 
-        # Stacked pages
+        # Stacked pages — wrapped in a scroll area so corner-tiling (KDE)
+        # scrolls instead of squishing the content below its minimum size.
+        # The minimum height is updated per-page (see _update_min_height)
+        # so each page gets exactly the space it needs.
         self._stack = QStackedWidget()
-        layout.addWidget(self._stack, 1)
+        self._stack.setMinimumWidth(600)
+
+        self._scroll = QScrollArea()
+        self._scroll.setWidgetResizable(True)
+        self._scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        self._scroll.setWidget(self._stack)
+        layout.addWidget(self._scroll, 1)
 
         self._home_page = HomePage()
+        self._processes_page = ProcessesPage()
         self._fans_page = FansPowerPage()
         self._sensors_page = SensorsPage()
         self._keyboard_page = KeyboardPage()
@@ -67,12 +77,17 @@ class MainWindow(QMainWindow):
         self._pages = [
             self._home_page,
             self._fans_page,
-            self._sensors_page,
             self._keyboard_page,
+            self._sensors_page,
+            self._processes_page,
             self._settings_page,
         ]
         for page in self._pages:
             self._stack.addWidget(page)
+
+        # Update the scroll area's minimum height when the page changes so
+        # each page gets exactly the vertical space it needs (no squishing).
+        self._stack.currentChanged.connect(self._update_min_height)
 
         # Sidebar -> stack sync
         self._sidebar.tab_changed.connect(self._on_tab_changed)
@@ -125,6 +140,7 @@ class MainWindow(QMainWindow):
         self._keyboard_page.color_changed.connect(self._lighting.set_color)
         self._keyboard_page.zone_color_changed.connect(self._lighting.set_zone_color)
         self._keyboard_page.idle_timeout_changed.connect(self._lighting.set_idle_timeout)
+        self._keyboard_page.brightness_changed.connect(self._lighting.set_brightness)
 
         self._power = PowerLimitController(self)
 
@@ -174,6 +190,9 @@ class MainWindow(QMainWindow):
         self._power_state.suspending.connect(self._on_system_suspend)
         self._power_state.resuming.connect(self._on_system_resume)
         self._power_state.shutting_down.connect(self._on_system_shutdown)
+
+        # Set initial minimum height for the first page.
+        self._update_min_height(0)
     # ── Tab switching ──
 
     def set_active_tab(self, index: int):
@@ -183,6 +202,13 @@ class MainWindow(QMainWindow):
 
     def _on_tab_changed(self, index: int):
         self._stack.setCurrentIndex(index)
+
+    def _update_min_height(self, index: int) -> None:
+        """Set the stack's minimum height to the current page's minimum
+        height hint so the scroll area gives it enough vertical space."""
+        page = self._stack.widget(index)
+        if page is not None:
+            self._stack.setMinimumHeight(page.minimumSizeHint().height())
 
     # ── Tray ──
     def _on_tray_activated(self, reason):
@@ -324,6 +350,9 @@ class MainWindow(QMainWindow):
 
         # Update Home page
         self._home_page.update_sensor_data(snapshot)
+
+        # Update Processes page
+        self._processes_page.refresh()
 
         # Update Sensors page rows
         rows = build_rows(snapshot, self._stats_by_key)

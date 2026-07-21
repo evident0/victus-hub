@@ -104,11 +104,17 @@ def _kbd_rgb_led_names() -> list[str]:
     ][:zone_count]
 
 
+# User-preferred backlight brightness (0-255).  Set by the GUI via the
+# keyboard-user-brightness command; used by _write_led_color so that color
+# writes apply the correct brightness atomically instead of flashing to 255.
+_kbd_user_brightness: int = 255
+
+
 def _write_led_color(led: Path, red: int, green: int, blue: int) -> str:
-    """Write multi_intensity + full brightness for one LED class device."""
+    """Write multi_intensity + the user-preferred brightness for one LED."""
     value = f"{red} {green} {blue}"
     write_sysfs(led / "multi_intensity", value)
-    write_sysfs(led / "brightness", 255)
+    write_sysfs(led / "brightness", _kbd_user_brightness)
     return str(led)
 
 
@@ -140,6 +146,19 @@ def write_keyboard_zone_color(zone: int, red: int, green: int, blue: int) -> str
         zone, red, green, blue, label,
     )
     return label
+
+
+def set_keyboard_user_brightness(level: int) -> str:
+    """Update the user-preferred brightness and apply it to hardware.
+
+    Unlike ``write_keyboard_brightness`` (used for transient dim/off), this
+    stores *level* so that subsequent ``_write_led_color`` calls apply it
+    atomically instead of flashing to 255.
+    """
+    global _kbd_user_brightness
+    level = max(0, min(255, level))
+    _kbd_user_brightness = level
+    return write_keyboard_brightness(level)
 
 
 def write_keyboard_brightness(level: int) -> str:

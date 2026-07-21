@@ -164,6 +164,11 @@ def set_keyboard_color(
 def set_keyboard_brightness(level: int) -> str:
     return daemon_client.request_keyboard_brightness(level)
 
+def set_keyboard_user_brightness(level: int) -> str:
+    """Set the user-preferred brightness — stored by the daemon and applied
+    atomically on subsequent color writes (prevents the 100% flash)."""
+    return daemon_client.request_keyboard_user_brightness(level)
+
 def get_keyboard_idle_elapsed() -> float:
     """Return seconds since the last physical keypress on the laptop keyboard."""
     try:

@@ -1,76 +1,127 @@
-"""Icon loader — recolors source images (monochrome) to a target color for dark-mode UIs.
-Supports color=None to load assets with native colors (e.g. logos) without modification.
+"""Icon loader for white monochrome UI assets (and native multi-color logos).
+
+Decodes at the target size when possible and caches by (path, size).
+No recoloring.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor, QIcon, QPainter, QPixmap
+from PySide6.QtCore import Qt, QSize
+from PySide6.QtGui import QIcon, QImageReader, QPixmap
 from PySide6.QtSvg import QSvgRenderer
 
 
 _ICON_ROOT = Path(__file__).resolve().parent.parent / "resources" / "icons"
 
+# (filename, size) -> scaled pixmap / icon
+_pixmap_cache: dict[tuple[str, int], QPixmap] = {}
+_icon_cache: dict[tuple[str, int], QIcon] = {}
 
-def load_icon(filename: str, color: str | None = "#ffffff", size: int = 24) -> QIcon:
+
+def load_icon(filename: str, size: int = 24) -> QIcon:
     """Return a QIcon from *filename* (relative to ``resources/icons/``).
-    If *color* is provided, recolors the (monochrome) source to that color.
-    If *color* is None, loads the asset with its native colors unchanged.
-    Supports PNG, ICO, SVG.
+
+    Only the requested size (plus a 2× HiDPI variant) is decoded and cached.
     """
-    colored = _recolor(filename, color, size)
-    if colored.isNull():
+    size = max(1, int(size))
+    key = (filename, size)
+    cached = _icon_cache.get(key)
+    if cached is not None:
+        return cached
+
+    pm = _load_scaled(filename, size)
+    if pm.isNull():
         return QIcon()
+
     icon = QIcon()
-    # Supply common sizes plus the requested size for crisp rendering at different DPIs.
-    for s in sorted({16, 24, 32, 48, size}):
-        icon.addPixmap(colored.scaled(s, s, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+    icon.addPixmap(pm)
+    # One higher-res variant for fractional/HiDPI displays
+    hi = size * 2
+    if hi != size:
+        pm_hi = _load_scaled(filename, hi)
+        if not pm_hi.isNull():
+            icon.addPixmap(pm_hi)
+
+    _icon_cache[key] = icon
     return icon
 
 
-def load_pixmap(filename: str, color: str | None = "#ffffff", size: int = 24) -> QPixmap:
-    """Return a QPixmap. If color is None, no recoloring is applied."""
-    colored = _recolor(filename, color, size)
-    if colored.isNull():
-        return QPixmap()
-    return colored.scaled(size, size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+def load_pixmap(filename: str, size: int = 24) -> QPixmap:
+    """Return a pixmap scaled to *size*."""
+    size = max(1, int(size))
+    return _load_scaled(filename, size)
 
 
-def _recolor(filename: str, color: str | None, render_size: int) -> QPixmap:
-    """Load source (SVG/raster). If color, recolor via SourceIn; else return as-is."""
+def _load_scaled(filename: str, size: int) -> QPixmap:
+    """Decode at *size* and cache. Avoids retaining full source resolution."""
+    key = (filename, size)
+    cached = _pixmap_cache.get(key)
+    if cached is not None:
+        return cached
+
     path = _resolve(filename)
-    if path.suffix == ".svg":
-        src = _render_svg(path, max(render_size, 128))
-    else:
-        src = QPixmap(str(path))
-    if src.isNull():
+    if not path.exists() and not Path(filename).exists():
         return QPixmap()
-    if color is None:
-        return src
-    out = QPixmap(src.size())
-    out.fill(Qt.transparent)
-    p = QPainter(out)
-    p.setCompositionMode(QPainter.CompositionMode_SourceOver)
-    p.drawPixmap(0, 0, src)
-    p.setCompositionMode(QPainter.CompositionMode_SourceIn)
-    p.fillRect(out.rect(), QColor(color))
-    p.end()
-    return out
+
+    if path.suffix.lower() == ".svg":
+        pm = _render_svg(path, size)
+    else:
+        pm = _read_raster_scaled(path, size)
+
+    if not pm.isNull():
+        _pixmap_cache[key] = pm
+    return pm
+
+
+def _read_raster_scaled(path: Path, size: int) -> QPixmap:
+    """Decode a raster image directly to *size* when the reader supports it."""
+    reader = QImageReader(str(path))
+    if not reader.canRead():
+        # Fallback: full load + scale (still discard full-res after)
+        src = QPixmap(str(path))
+        if src.isNull():
+            return QPixmap()
+        if src.width() <= size and src.height() <= size:
+            return src
+        return src.scaled(size, size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+
+    # Prefer decoding at target size — PNG readers honor setScaledSize.
+    orig = reader.size()
+    if orig.isValid() and (orig.width() > size or orig.height() > size):
+        target = QSize(size, size)
+        scaled = orig.scaled(target, Qt.KeepAspectRatio)
+        reader.setScaledSize(scaled)
+
+    image = reader.read()
+    if image.isNull():
+        return QPixmap()
+    return QPixmap.fromImage(image)
 
 
 def _resolve(filename: str) -> Path:
     p = _ICON_ROOT / filename
     if p.exists():
         return p
-    # Fallback — try exact path
     return Path(filename)
 
 
 def _render_svg(path: Path, size: int) -> QPixmap:
+    from PySide6.QtGui import QPainter
+
     pm = QPixmap(size, size)
     pm.fill(Qt.transparent)
     renderer = QSvgRenderer(str(path))
-    renderer.render(QPainter(pm))
+    if not renderer.isValid():
+        return QPixmap()
+    p = QPainter(pm)
+    renderer.render(p)
+    p.end()
     return pm
+
+
+def clear_icon_caches() -> None:
+    """Drop cached icons/pixmaps (mainly for tests)."""
+    _pixmap_cache.clear()
+    _icon_cache.clear()

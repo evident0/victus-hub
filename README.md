@@ -16,8 +16,7 @@ with Fedora. Other HP Omen/Victus laptops should work.
    or `power-profilesctl` if available.
 - **Custom fan control** — Three modes:
   *auto* (hands control back to the EC), *max* (100%), and *custom* (your
-  curve). Fan floor override in settings when GPU hits P0 for 10 seconds.
-  GPU Usage changes in game a lot (going into menus) but P0 is more stable.
+  temperature curves with ramp-up/down).
 - **Mux switch** Mux switch support for Victus Laptops ,OMEN should also work (untested).  PRIME laptops can also try [envycontrol](https://github.com/bayasdev/envycontrol) (not included).  
 - **Keyboard RGB** — static color and brightness via a custom
   `hp-kbd-rgb` kernel module (a companion to the upstream hp-wmi RGB
@@ -33,7 +32,7 @@ with Fedora. Other HP Omen/Victus laptops should work.
 Settings persist under `~/.config/hp-helper/`.
 
 ## Requirements
-- nvidia-smi
+- NVIDIA driver + libnvidia-ml (metrics: nvidia hwmon → NVML → nvidia-smi; never wakes a runtime-suspended laptop dGPU)
 - Linux with systemd (specifically `systemd-logind`)
 - Python 3.9+ with PySide6 (6.8 or newer; `pip install -e .` pulls it)
 - An AMD Ryzen CPU for the power-limit stuff `ryzenadj` is skipped
