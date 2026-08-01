@@ -12,6 +12,7 @@ from victus_hub.widgets.top_processes_card import (
     _parse_proc_stat,
     ProcessGroup,
     ProcessInfo,
+    sort_process_groups,
 )
 
 
@@ -123,6 +124,40 @@ class TestRateFormatting(unittest.TestCase):
         )
         self.assertIsNone(group.read_bps)
         self.assertEqual(group.read_display, "—")
+
+
+class TestProcessSorting(unittest.TestCase):
+    def setUp(self):
+        self.alpha = ProcessGroup(
+            key="alpha", name="Alpha",
+            instances=[ProcessInfo(1, "Alpha", 200, cpu_pct=20.0, download_bps=5.0)],
+        )
+        self.beta = ProcessGroup(
+            key="beta", name="Beta",
+            instances=[ProcessInfo(2, "Beta", 100, cpu_pct=50.0, download_bps=None)],
+        )
+
+    def test_numeric_column_sorts_descending_then_ascending(self):
+        self.assertEqual(
+            [group.name for group in sort_process_groups([self.alpha, self.beta], "cpu")],
+            ["Beta", "Alpha"],
+        )
+        self.assertEqual(
+            [group.name for group in sort_process_groups([self.alpha, self.beta], "cpu", True)],
+            ["Alpha", "Beta"],
+        )
+
+    def test_unavailable_rates_remain_last(self):
+        self.assertEqual(
+            [group.name for group in sort_process_groups([self.alpha, self.beta], "download", True)],
+            ["Alpha", "Beta"],
+        )
+
+    def test_process_column_sorts_names(self):
+        self.assertEqual(
+            [group.name for group in sort_process_groups([self.beta, self.alpha], "process", True)],
+            ["Alpha", "Beta"],
+        )
 
 
 if __name__ == "__main__":

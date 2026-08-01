@@ -180,6 +180,37 @@ class ProcessGroup:
         return len(self.instances)
 
 
+def sort_process_groups(
+    groups: list[ProcessGroup], sort_key: str = "ram", ascending: bool = False,
+) -> list[ProcessGroup]:
+    """Order groups and their instances by a displayed process-table column."""
+    attributes = {
+        "cpu": "cpu_pct",
+        "ram": "rss_kb",
+        "download": "download_bps",
+        "upload": "upload_bps",
+        "read": "read_bps",
+        "write": "write_bps",
+    }
+    attribute = attributes.get(sort_key)
+    if attribute is None:
+        groups = sorted(groups, key=lambda group: group.name.lower(), reverse=not ascending)
+        for group in groups:
+            group.instances.sort(key=lambda process: process.detail.lower(), reverse=not ascending)
+        return groups
+
+    # Keep unavailable rates at the end in either direction.
+    def sort_entries(entries):
+        available = [entry for entry in entries if getattr(entry, attribute) is not None]
+        unavailable = [entry for entry in entries if getattr(entry, attribute) is None]
+        return sorted(available, key=lambda entry: getattr(entry, attribute), reverse=not ascending) + unavailable
+
+    groups = sort_entries(groups)
+    for group in groups:
+        group.instances[:] = sort_entries(group.instances)
+    return groups
+
+
 def _fmt_ram(rss_kb: int) -> str:
     mb = rss_kb / 1024.0
     if mb >= 1024.0:
@@ -959,8 +990,10 @@ def read_process_groups(
     limit: int = _TOP_GROUPS,
     cancelled=None,
     reset_rates: bool = False,
+    sort_key: str = "ram",
+    ascending: bool = False,
 ) -> list[ProcessGroup]:
-    """Scan /proc, group by app identity, return top groups by RAM.
+    """Scan /proc, group by app identity, and return the selected top groups.
 
     Thread-safe for a single concurrent scanner. Does **not** create QIcons
     (those are attached on the GUI thread via ``attach_group_icons``).
@@ -1052,10 +1085,7 @@ def read_process_groups(
             if _is_runtime_binary(g.name) and not _is_runtime_binary(p.name):
                 g.name = p.name
 
-    for g in groups.values():
-        g.instances.sort(key=lambda p: p.rss_kb, reverse=True)
-
-    ordered = sorted(groups.values(), key=lambda g: g.rss_kb, reverse=True)
+    ordered = sort_process_groups(list(groups.values()), sort_key, ascending)
     return ordered[:limit]
 
 
@@ -1113,6 +1143,15 @@ _VALUE_COLUMNS = (
 _ROLE_PID = Qt.UserRole
 _ROLE_GROUP_KEY = Qt.UserRole + 1
 _ROLE_KIND = Qt.UserRole + 2  # "group" | "instance"
+_SORT_KEYS = {
+    _COL_PROCESS: "process",
+    _COL_CPU: "cpu",
+    _COL_RAM: "ram",
+    _COL_DOWNLOAD: "download",
+    _COL_UPLOAD: "upload",
+    _COL_READ: "read",
+    _COL_WRITE: "write",
+}
 
 
 class TopProcessesCard(QFrame):
@@ -1200,7 +1239,8 @@ class TopProcessesCard(QFrame):
                 color: {COLORS['text_secondary']};
                 border: none;
                 border-bottom: 1px solid {COLORS['border']};
-                padding: 4px 8px;
+                /* Keep text clear of Qt's native KDE sort indicator. */
+                padding: 4px 24px 4px 8px;
                 font-weight: bold;
                 font-size: 11px;
             }}
@@ -1212,13 +1252,17 @@ class TopProcessesCard(QFrame):
         header = self._tree.header()
         header.setDefaultAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         header.setStretchLastSection(False)
+        header.setSectionsClickable(True)
+        header.setSortIndicatorShown(True)
+        header.setSortIndicator(_COL_RAM, Qt.DescendingOrder)
+        header.sectionClicked.connect(self._on_header_clicked)
         header.setSectionResizeMode(_COL_PROCESS, QHeaderView.Stretch)
         for column in _VALUE_COLUMNS:
             header.setSectionResizeMode(column, QHeaderView.Fixed)
-        self._tree.setColumnWidth(_COL_CPU, 64)
-        self._tree.setColumnWidth(_COL_RAM, 72)
+        self._tree.setColumnWidth(_COL_CPU, 80)
+        self._tree.setColumnWidth(_COL_RAM, 88)
         for column in (_COL_DOWNLOAD, _COL_UPLOAD, _COL_READ, _COL_WRITE):
-            self._tree.setColumnWidth(column, 84)
+            self._tree.setColumnWidth(column, 100)
 
         for column in _VALUE_COLUMNS:
             self._tree.headerItem().setTextAlignment(
@@ -1250,6 +1294,8 @@ class TopProcessesCard(QFrame):
         self._instance_items: dict[int, QTreeWidgetItem] = {}
         # Selection restore across refresh: ("group", key) or ("instance", pid)
         self._selected_ref: tuple[str, object] | None = None
+        self._sort_column = _COL_RAM
+        self._sort_ascending = False
         self._tree.itemSelectionChanged.connect(self._remember_selection)
 
     def set_active(self, active: bool) -> None:
@@ -1279,16 +1325,21 @@ class TopProcessesCard(QFrame):
             self._reset_rates = False
         threading.Thread(
             target=self._scan_worker,
-            args=(cancel, reset_rates),
+            args=(cancel, reset_rates, self._sort_key(), self._sort_ascending),
             daemon=True,
             name="proc-scan",
         ).start()
 
-    def _scan_worker(self, cancel: threading.Event, reset_rates: bool):
+    def _scan_worker(
+        self, cancel: threading.Event, reset_rates: bool,
+        sort_key: str, ascending: bool,
+    ):
         try:
             groups = read_process_groups(
                 cancelled=cancel.is_set,
                 reset_rates=reset_rates,
+                sort_key=sort_key,
+                ascending=ascending,
             )
         except Exception:
             groups = []
@@ -1324,6 +1375,7 @@ class TopProcessesCard(QFrame):
             self.refresh()
 
     def update_groups(self, groups: list[ProcessGroup]):
+        groups = sort_process_groups(groups, self._sort_key(), self._sort_ascending)
         self._groups_by_key = {g.key: g for g in groups}
         new_keys = [g.key for g in groups]
 
@@ -1373,6 +1425,7 @@ class TopProcessesCard(QFrame):
         finally:
             self._tree.setUpdatesEnabled(True)
             QTimer.singleShot(0, lambda: self._tree.verticalScrollBar().setValue(scroll))
+
     def _update_in_place(self, groups: list[ProcessGroup]):
         """Refresh values without rebuilding (keeps expand + selection)."""
         live_pids: set[int] = set()
@@ -1459,6 +1512,22 @@ class TopProcessesCard(QFrame):
             item.setTextAlignment(column, int(Qt.AlignRight | Qt.AlignVCenter))
         item.setToolTip(_COL_PROCESS, f"{proc.name}  (PID {proc.pid})")
         item.setIcon(_COL_PROCESS, QIcon())
+
+    def _sort_key(self) -> str:
+        return _SORT_KEYS[self._sort_column]
+
+    def _on_header_clicked(self, column: int) -> None:
+        if column not in _SORT_KEYS:
+            return
+        if column == self._sort_column:
+            self._sort_ascending = not self._sort_ascending
+        else:
+            self._sort_column = column
+            self._sort_ascending = column == _COL_PROCESS
+        order = Qt.AscendingOrder if self._sort_ascending else Qt.DescendingOrder
+        self._tree.header().setSortIndicator(column, order)
+        self.update_groups(list(self._groups_by_key.values()))
+        self.refresh()
 
     def _remember_selection(self):
         item = self._tree.currentItem()
