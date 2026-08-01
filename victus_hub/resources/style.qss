@@ -4,8 +4,14 @@ QMainWindow {
     background-color: #171717;
 }
 
-QWidget {
+QWidget#appCentral,
+QScrollArea#pageScroll,
+QWidget#pageViewport,
+QStackedWidget#pageStack {
     background-color: #171717;
+}
+
+QWidget {
     color: #ffffff;
     font-family: "Segoe UI", "Segoe UI Variable", system-ui, sans-serif;
     font-size: 13px;
@@ -123,65 +129,6 @@ QComboBox QAbstractItemView {
     outline: none;
 }
 
-/* ── SpinBox ── */
-QSpinBox, QDoubleSpinBox {
-    background-color: #2e2e2e;
-    color: #ffffff;
-    border: 1px solid #373737;
-    border-radius: 6px;
-    padding: 4px 28px 4px 8px;
-}
-
-QSpinBox:focus, QDoubleSpinBox:focus {
-    border-color: #555555;
-}
-
-QSpinBox::up-button, QDoubleSpinBox::up-button {
-    subcontrol-origin: border;
-    subcontrol-position: top right;
-    background-color: #363636;
-    border: none;
-    border-left: 1px solid #373737;
-    border-bottom: 1px solid #373737;
-    border-top-right-radius: 5px;
-    width: 20px;
-}
-
-QSpinBox::down-button, QDoubleSpinBox::down-button {
-    subcontrol-origin: border;
-    subcontrol-position: bottom right;
-    background-color: #363636;
-    border: none;
-    border-left: 1px solid #373737;
-    border-bottom-right-radius: 5px;
-    width: 20px;
-}
-
-QSpinBox::up-button:hover, QDoubleSpinBox::up-button:hover,
-QSpinBox::down-button:hover, QDoubleSpinBox::down-button:hover {
-    background-color: #3e3e3e;
-}
-
-QSpinBox::up-arrow, QDoubleSpinBox::up-arrow {
-    image: url(icons/arrow-up.png);
-    width: 10px;
-    height: 8px;
-}
-
-QSpinBox::down-arrow, QDoubleSpinBox::down-arrow {
-    image: url(icons/arrow-down.png);
-    width: 10px;
-    height: 8px;
-}
-
-QSpinBox::up-arrow:hover, QDoubleSpinBox::up-arrow:hover {
-    image: url(icons/arrow-up-hover.png);
-}
-
-QSpinBox::down-arrow:hover, QDoubleSpinBox::down-arrow:hover {
-    image: url(icons/arrow-down-hover.png);
-}
-
 /* ── ScrollBar ── */
 QScrollBar:vertical {
     background: #171717;
@@ -267,23 +214,6 @@ QHeaderView::section {
     padding: 6px 8px;
     font-weight: bold;
     text-transform: uppercase;
-}
-
-/* ── Menu ── */
-QMenu {
-    background-color: #2e2e2e;
-    color: #ffffff;
-    border: 1px solid #373737;
-    border-radius: 4px;
-    padding: 4px 0;
-}
-
-QMenu::item {
-    padding: 6px 24px;
-}
-
-QMenu::item:selected {
-    background-color: #3aaeef;
 }
 
 /* Sidebar button styles are set in widgets/sidebar.py for labeled nav. */

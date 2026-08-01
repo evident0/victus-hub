@@ -130,7 +130,7 @@ class FansPowerPage(QWidget):
         power_layout.addLayout(self._reapply_spin)
 
 
-        # Apply button + enable checkbox + status
+        # Apply button + enable switch
         self._apply_btn = QPushButton("Apply")
         self._apply_btn.setCursor(Qt.PointingHandCursor)
         self._apply_btn.setStyleSheet(f"""
@@ -162,11 +162,7 @@ class FansPowerPage(QWidget):
         self._power_check.toggled.connect(self._on_power_enabled_changed)
         power_layout.addWidget(self._power_check)
 
-        self._power_status = QLabel()
-        self._power_status.setWordWrap(True)
-        self._update_power_status()
         self._update_apply_enabled()
-        power_layout.addWidget(self._power_status)
 
         power_layout.addStretch()
         content_row.addWidget(power_panel, 1)
@@ -303,7 +299,6 @@ class FansPowerPage(QWidget):
     def _on_power_enabled_changed(self, checked: bool):
         self._power_enabled = checked
         write_power_enabled(checked)
-        self._update_power_status()
         self._update_apply_enabled()
 
     def _power_values_dirty(self) -> bool:
@@ -344,18 +339,6 @@ class FansPowerPage(QWidget):
                 pass
 
         threading.Thread(target=_apply, daemon=True, name="power-apply").start()
-
-    def _update_power_status(self):
-        if self._power_enabled:
-            self._power_status.setText("Power limits active")
-            self._power_status.setStyleSheet(
-                f"color: {COLORS['accent_green']}; font-size: 11px;"
-            )
-        else:
-            self._power_status.setText("Power limits not active")
-            self._power_status.setStyleSheet(
-                f"color: {COLORS['text_secondary']}; font-size: 11px;"
-            )
 
     def _make_power_settings(self):
         return PowerLimitSettings(
@@ -547,7 +530,6 @@ class FansPowerPage(QWidget):
         self._power_check.blockSignals(True)
         self._power_check.setChecked(self._power_enabled)
         self._power_check.blockSignals(False)
-        self._update_power_status()
         self._update_apply_enabled()
 
     def refresh_fan_curves(self):

@@ -107,7 +107,7 @@ class SegmentedControl(QFrame):
             }}
             #segBtn[selected="true"] {{
                 background-color: {COLORS['surface_raised']};
-                color: {COLORS['accent_blue']};
+                color: {COLORS['text']};
             }}
             #cogBtn {{
                 background: transparent;

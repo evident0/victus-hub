@@ -64,8 +64,8 @@ class Sidebar(QWidget):
         if active:
             return f"""
                 QPushButton#sidebarBtn {{
-                    background-color: rgba(58, 174, 239, 0.14);
-                    color: {COLORS['accent_blue']};
+                    background-color: {COLORS['surface_raised']};
+                    color: {COLORS['text']};
                     border: none;
                     border-radius: 10px;
                     text-align: left;
@@ -75,9 +75,9 @@ class Sidebar(QWidget):
                 }}
             """
         return f"""
-            QPushButton#sidebarBtn {{
-                background-color: transparent;
-                color: {COLORS['text_secondary']};
+                QPushButton#sidebarBtn {{
+                    background-color: transparent;
+                    color: {COLORS['text']};
                 border: none;
                 border-radius: 10px;
                 text-align: left;

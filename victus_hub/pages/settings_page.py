@@ -2,12 +2,14 @@
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QSpinBox, QDoubleSpinBox, QCheckBox,
+    QSpinBox, QDoubleSpinBox,
 )
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QColor, QPalette
 
 from victus_hub.app.theme import COLORS
 from victus_hub.backend import fan_config
+from victus_hub.widgets.toggle_switch import ToggleSwitch
 from victus_hub.features.keyboard.shortcut import (
     KeybindSettings,
     keybind_from_event,
@@ -15,6 +17,13 @@ from victus_hub.features.keyboard.shortcut import (
     read_keybind_settings,
     write_keybind_settings,
 )
+
+
+def _style_native_spinbox(spin: QSpinBox | QDoubleSpinBox) -> None:
+    palette = spin.palette()
+    palette.setColor(QPalette.ColorRole.Base, QColor(COLORS["surface_raised"]))
+    spin.setPalette(palette)
+    spin.setFixedHeight(40)
 
 
 def make_spin(label: str, suffix: str, value: int,
@@ -29,6 +38,7 @@ def make_spin(label: str, suffix: str, value: int,
     spin.setRange(vmin, vmax)
     spin.setValue(value)
     spin.setFixedWidth(90)
+    _style_native_spinbox(spin)
     row._spin = spin
     row.addWidget(spin)
     return row
@@ -47,6 +57,7 @@ def make_double_spin(label: str, suffix: str, value: float,
     spin.setDecimals(1)
     spin.setValue(value)
     spin.setFixedWidth(90)
+    _style_native_spinbox(spin)
     row._spin = spin
     row.addWidget(spin)
     return row
@@ -117,7 +128,7 @@ class SettingsPage(QWidget):
         layout.addLayout(kb_row)
 
         # Enable toggle
-        self._kb_enable = QCheckBox("Enabled")
+        self._kb_enable = ToggleSwitch("Enabled")
         self._kb_enable.setChecked(self._kb.enabled)
         self._kb_enable.setEnabled(self._kb.key != 0)
         self._kb_enable.toggled.connect(self._on_shortcut_enabled)

@@ -1308,7 +1308,6 @@ class TopProcessesCard(QFrame):
             self._scan_cancel.set()
             if active:
                 self._scan_cancel = threading.Event()
-                self._reset_rates = True
 
     def refresh(self):
         """Kick off a background /proc scan; UI updates when it completes."""

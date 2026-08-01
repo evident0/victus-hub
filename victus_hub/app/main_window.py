@@ -44,6 +44,7 @@ class MainWindow(QMainWindow):
 
         # Central widget
         central = QWidget()
+        central.setObjectName("appCentral")
         self.setCentralWidget(central)
 
         layout = QHBoxLayout(central)
@@ -59,11 +60,14 @@ class MainWindow(QMainWindow):
         # The minimum height is updated per-page (see _update_min_height)
         # so each page gets exactly the space it needs.
         self._stack = QStackedWidget()
+        self._stack.setObjectName("pageStack")
         self._stack.setMinimumWidth(600)
 
         self._scroll = QScrollArea()
+        self._scroll.setObjectName("pageScroll")
         self._scroll.setWidgetResizable(True)
         self._scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        self._scroll.viewport().setObjectName("pageViewport")
         self._scroll.setWidget(self._stack)
         layout.addWidget(self._scroll, 1)
 

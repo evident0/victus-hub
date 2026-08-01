@@ -263,7 +263,6 @@ class KeyboardPage(QWidget):
 
         # Controls grid
         controls = QWidget()
-        controls.setStyleSheet("background: transparent;")
         ctrl_layout = QHBoxLayout(controls)
         ctrl_layout.setContentsMargins(0, 0, 0, 0)
         ctrl_layout.setSpacing(12)
