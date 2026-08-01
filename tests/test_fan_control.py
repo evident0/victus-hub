@@ -185,6 +185,26 @@ class TestControllerWrites(unittest.TestCase):
         self.assertEqual(controller._st.last_written_pct, 20.0)
         self.assertTrue(controller._st.force_write)
 
+    def test_small_target_change_is_suppressed(self):
+        controller = FanController()
+        controller._st.last_written_pct = 40.0
+        with patch(
+            "victus_hub.services.fan_control._daemon_client.request_fan_pwm",
+        ) as write:
+            controller._control_tick(low_profile(42), 50.0, None, 0.0)
+        write.assert_not_called()
+        self.assertEqual(controller._st.last_written_pct, 40.0)
+
+    def test_target_change_above_threshold_is_written(self):
+        controller = FanController()
+        controller._st.last_written_pct = 40.0
+        with patch(
+            "victus_hub.services.fan_control._daemon_client.request_fan_pwm",
+        ) as write:
+            controller._control_tick(low_profile(43), 50.0, None, 0.0)
+        write.assert_called_once_with(109)
+        self.assertEqual(controller._st.last_written_pct, 43.0)
+
 
 class TestLoopState(unittest.TestCase):
     def test_suspend_resets_algorithm_and_ownership(self):

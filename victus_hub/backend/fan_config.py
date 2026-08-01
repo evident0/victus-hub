@@ -78,6 +78,7 @@ def load() -> FanConfig:
 
     custom_enabled = stored.get("custom_curve_enabled", False) or False
     manual_preset = stored.get("manual_preset") or None
+    min_fan_change_pct = max(float(stored.get("min_fan_change_pct", 2.0)), 0.0)
 
     profiles = []
     for key in PROFILE_KEYS:
@@ -98,6 +99,7 @@ def load() -> FanConfig:
         profiles=profiles,
         custom_enabled=custom_enabled,
         manual_preset=manual_preset,
+        min_fan_change_pct=min_fan_change_pct,
     )
 
 
@@ -148,6 +150,7 @@ def save_all(config: FanConfig) -> None:
         "custom_tuned_profile": "balanced",
         "custom_curve_enabled": config.custom_enabled,
         "manual_preset": config.manual_preset,
+        "min_fan_change_pct": config.min_fan_change_pct,
         "curve_points_by_profile": cpu_map,
         "gpu_curve_points_by_profile": gpu_map,
     }

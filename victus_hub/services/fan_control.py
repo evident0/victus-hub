@@ -321,6 +321,7 @@ class FanController:
             snapshot.cpu_temp_c,
             snapshot.gpu_temp_c,
             time.monotonic(),
+            config.min_fan_change_pct,
         )
 
     def _control_tick(
@@ -329,6 +330,7 @@ class FanController:
         cpu_sample: float | None,
         gpu_sample: float | None,
         now: float,
+        min_fan_change_pct: float = 2.0,
     ) -> None:
         state = self._st
         target = update_curve_target(
@@ -341,13 +343,20 @@ class FanController:
         if target is None:
             return
 
-        if not state.force_write and target == state.last_written_pct:
+        delta = abs(target - state.last_written_pct) if state.last_written_pct is not None else None
+        if (
+            not state.force_write
+            and delta is not None
+            and delta <= min_fan_change_pct
+        ):
             _fan_logger.info(
-                "cpu=%s gpu=%s target=%.0f%% overheat=%s (unchanged)",
+                "cpu=%s gpu=%s target=%.0f%% overheat=%s delta=%.1f%% (<=%.1f%%, unchanged)",
                 _temp_text(state.ema_cpu),
                 _temp_text(state.ema_gpu),
                 target,
                 state.overheat_active,
+                delta,
+                min_fan_change_pct,
             )
             return
 

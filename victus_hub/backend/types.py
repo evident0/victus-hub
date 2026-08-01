@@ -77,6 +77,8 @@ class FanConfig:
     # The fan-control loop backs off while a preset is active so the
     # hardware fan mode (max flag or manual pwm) survives.
     manual_preset: str | None = None
+    # Ignore non-forced PWM target changes at or below this percentage.
+    min_fan_change_pct: float = 2.0
 
 # Re-export list for api.py convenience
 __all__ = [

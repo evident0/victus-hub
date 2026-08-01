@@ -2,11 +2,12 @@
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QSpinBox, QCheckBox,
+    QSpinBox, QDoubleSpinBox, QCheckBox,
 )
 from PySide6.QtCore import Qt
 
 from victus_hub.app.theme import COLORS
+from victus_hub.backend import fan_config
 from victus_hub.features.keyboard.shortcut import (
     KeybindSettings,
     keybind_from_event,
@@ -33,6 +34,24 @@ def make_spin(label: str, suffix: str, value: int,
     return row
 
 
+def make_double_spin(label: str, suffix: str, value: float,
+                     vmin: float, vmax: float, step: float) -> QHBoxLayout:
+    row = QHBoxLayout()
+    lbl = QLabel(f"{label} ({suffix})")
+    lbl.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 12px;")
+    row.addWidget(lbl)
+    row.addStretch()
+    spin = QDoubleSpinBox()
+    spin.setRange(vmin, vmax)
+    spin.setSingleStep(step)
+    spin.setDecimals(1)
+    spin.setValue(value)
+    spin.setFixedWidth(90)
+    row._spin = spin
+    row.addWidget(spin)
+    return row
+
+
 class SettingsPage(QWidget):
     """Settings tab for the program shortcut."""
 
@@ -41,6 +60,19 @@ class SettingsPage(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(16, 16, 16, 16)
         layout.setSpacing(12)
+
+        cfg = fan_config.load()
+        fan_label = QLabel("Fan Control")
+        fan_label.setStyleSheet(
+            f"color: {COLORS['text']}; font-size: 13px; font-weight: bold;"
+        )
+        layout.addWidget(fan_label)
+        self._min_fan_change = make_double_spin(
+            "Minimum fan change", "%",
+            cfg.min_fan_change_pct, 0.0, 20.0, 0.5,
+        )
+        self._min_fan_change._spin.valueChanged.connect(self._save_min_fan_change)
+        layout.addLayout(self._min_fan_change)
 
         # ── Program Shortcut ──
         self._shortcut_ctrl = None  # set by MainWindow via set_shortcut_controller
@@ -94,6 +126,11 @@ class SettingsPage(QWidget):
         layout.addStretch()
 
     # ── Program Shortcut ──
+
+    def _save_min_fan_change(self, value: float) -> None:
+        cfg = fan_config.load()
+        cfg.min_fan_change_pct = max(float(value), 0.0)
+        fan_config.save_all(cfg)
 
     def set_shortcut_controller(self, ctrl) -> None:
         """Wire the shared ShortcutController (owned by MainWindow)."""
