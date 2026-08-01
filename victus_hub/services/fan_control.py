@@ -1,72 +1,105 @@
-"""Custom fan-control background loop.
+"""Omen-style custom fan-control background loop.
 
-Ported from hp_tauri src-tauri/src/lib.rs (start_fan_control + next_fan_percent).
-
-Pure helpers (``next_fan_percent``, ``compute_ema``, curve targeting) are
-unit-testable without the background thread. The poll/control loop lives
-in ``FanController``; ownership resets are on ``LoopState``.
+CPU and GPU temperatures are smoothed with the custom-curve EWMA, mapped
+through independent hysteretic curves, and merged into one platform PWM
+target. Idle-mode handling is intentionally not implemented.
 """
 
 from __future__ import annotations
 
-import collections
 import logging
 import math
 import threading
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from victus_hub import api
 from victus_hub.backend import daemon_client as _daemon_client
 from victus_hub.backend import fan_config as _fan_config
 from victus_hub.backend.sysfs_read import read_hp_pwm_pct
-from victus_hub.backend.types import FanProfileConfig
+from victus_hub.backend.types import FanPoint, FanProfileConfig
 
 POLL_INTERVAL = 1.0
-CONTROL_INTERVAL = 3.0
 
-# When set, skip sysfs writes and drop custom ownership so resume re-enters
-# custom (fan-manual + force first write). Pre-suspend cleanup sets fans auto.
+EWMA_LAMBDA_INCREASE = 0.1
+EWMA_LAMBDA_DECREASE = 0.1
+CURVE_HYSTERESIS_C = 5.0
+
+OVERHEAT_THRESHOLD_C = 90.0
+OVERHEAT_RELEASE_C = 85.0
+OVERHEAT_MIN_FAN_PCT = 50.0
+OVERHEAT_COOLDOWN_S = 10.0
+
+# Pre-suspend cleanup puts the hardware back in automatic mode. Dropping
+# ownership here makes custom mode reassert manual PWM after resume.
 _suspend = threading.Event()
 _fan_logger = logging.getLogger("fan-control")
 
 
 def set_suspended(state: bool) -> None:
-    """Pause/resume the fan-control loop without cancelling the thread."""
+    """Pause or resume the fan-control loop without cancelling its thread."""
     if state:
         _suspend.set()
     else:
         _suspend.clear()
 
 
-# ── Pure helpers ──────────────────────────────────────────────────────────────
+# -- Pure helpers ------------------------------------------------------------
 
 
-def next_fan_percent(
-    target: float,
-    current: float,
-    ramp_down_since: float | None,
-    now: float,
-    ramp_up: float,
-    ramp_down: float,
-    ramp_down_delay: float,
-) -> tuple[float, float | None]:
-    """Next fan % with ramp-up/down. Returns (next_pct, new_ramp_down_since)."""
-    if target > current:
-        return min(current + ramp_up, target), None
-    if target < current:
-        if ramp_down_since is None:
-            ramp_down_since = now
-            if ramp_down_delay == 0.0:
-                return max(current - ramp_down, target), ramp_down_since
-            return current, ramp_down_since
-        if now - ramp_down_since >= ramp_down_delay:
-            return max(current - ramp_down, target), ramp_down_since
-        return current, ramp_down_since
-    return target, None
+def compute_ewma(
+    previous: float | None,
+    sample: float,
+    lambda_increase: float = EWMA_LAMBDA_INCREASE,
+    lambda_decrease: float = EWMA_LAMBDA_DECREASE,
+) -> float:
+    """Update one Omen custom-curve EWMA sample."""
+    sample = float(sample)
+    if previous is None:
+        return sample
+    smoothing = lambda_increase if sample > previous else lambda_decrease
+    return previous + smoothing * (sample - previous)
 
 
-# ── Loop helpers ──────────────────────────────────────────────────────────────
+def _rounded_temp(temp: float) -> int:
+    return int(math.floor(temp + 0.5))
+
+
+def hysteretic_curve_target(
+    points: list[FanPoint],
+    ema: float,
+    previous_ema: float | None,
+    previous_demand: float | None,
+    hysteresis_c: float = CURVE_HYSTERESIS_C,
+) -> float:
+    """Map one EMA to a curve with a cooling-side temperature deadband.
+
+    Heating follows the normal curve. Cooling uses a curve shifted by the
+    hysteresis width and cannot increase the previous demand, so the target is
+    held until temperature has fallen far enough to cross the cooling bound.
+    """
+    normal = float(_fan_config.interpolate_fan(points, _rounded_temp(ema)))
+    if previous_ema is None or previous_demand is None:
+        return normal
+    if ema > previous_ema:
+        return max(previous_demand, normal)
+    if ema < previous_ema:
+        cooling = float(
+            _fan_config.interpolate_fan(
+                points,
+                _rounded_temp(ema + hysteresis_c),
+            )
+        )
+        return min(previous_demand, cooling)
+    return previous_demand
+
+
+def _profile_signature(profile_idx: int, profile: FanProfileConfig) -> tuple:
+    return (
+        profile_idx,
+        tuple((point.temp, point.speed) for point in profile.cpu_points),
+        tuple((point.temp, point.speed) for point in profile.gpu_points),
+    )
 
 
 def _profile_idx(raw: int | None) -> int:
@@ -77,125 +110,150 @@ def _pct_to_pwm(pct: float) -> int:
     return max(0, min(int(pct * 255.0 / 100.0), 255))
 
 
-def _should_write(
-    force_write: bool,
-    last_written_pct: float | None,
-    next_pct: float,
-    min_delta_pct: float,
-) -> bool:
-    if force_write or last_written_pct is None:
-        return True
-    return abs(next_pct - last_written_pct) >= min_delta_pct
-
-
-def compute_ema(samples: list[float], period: int) -> float | None:
-    """Single exponential moving average (oldest first, newest last).
-
-    Matches CoolerControl's plain EMA (not triple EMA):
-    ``alpha = 2 / (period + 1)`` — the standard smoothing factor for an
-    equivalent SMA window of ``period`` samples. Seeded with the first
-    sample, then iteratively updated. Returns ``None`` if samples is empty.
-    """
-    if not samples:
-        return None
-    period = max(int(period), 1)
-    alpha = 2.0 / (period + 1.0)
-    ema = float(samples[0])
-    for value in samples[1:]:
-        ema = (float(value) - ema) * alpha + ema
-    return ema
-
-
-def _curve_target(
-    history: collections.deque,
-    profile: FanProfileConfig,
-) -> tuple[float | None, float | None, float | None]:
-    """EMA of temp window → CPU/GPU curve speeds; target is max of both.
-
-    Uses a single exponential moving average over the temperature history
-    (newest samples weighted more). ``period`` is the configured window
-    size (deque maxlen), which sets EMA alpha independently of how many
-    samples are currently filled.
-    """
-    period = history.maxlen if history.maxlen is not None else max(len(history), 1)
-    cpu_temps = [float(t) for t, _ in history if t is not None]
-    gpu_temps = [float(t) for _, t in history if t is not None]
-    cpu_avg = gpu_avg = target = None
-    if cpu_temps:
-        cpu_avg = compute_ema(cpu_temps, period)
-        if cpu_avg is not None:
-            target = _fan_config.interpolate_fan(
-                profile.cpu_points, int(math.floor(cpu_avg + 0.5)),
-            )
-    if gpu_temps:
-        gpu_avg = compute_ema(gpu_temps, period)
-        if gpu_avg is not None:
-            gpu_s = _fan_config.interpolate_fan(
-                profile.gpu_points, int(math.floor(gpu_avg + 0.5)),
-            )
-            target = max(target, gpu_s) if target is not None else gpu_s
-    return cpu_avg, gpu_avg, target
-
-
-def _gpu_s(gpu_avg: float | None) -> str:
-    return f"{gpu_avg:.0f}°C" if gpu_avg is not None else "N/A"
-
-
-# ── Loop state + controller ───────────────────────────────────────────────────
+def _update_sensor_overheat(previous: bool, temp: float | None) -> bool:
+    if temp is None:
+        return previous
+    if not previous:
+        return temp >= OVERHEAT_THRESHOLD_C
+    return temp > OVERHEAT_RELEASE_C
 
 
 @dataclass
 class LoopState:
-    """Mutable ownership/control state for one fan-control thread."""
+    """Mutable ownership and algorithm state for one controller thread."""
 
     last_written_pct: float | None = None
-    ramp_down_since: float | None = None
-    next_control: float = 0.0
     was_custom: bool = False
     force_write: bool = False
-    first_tick: bool = True
-    temp_window: int = 15
-    temp_history: collections.deque = field(
-        default_factory=lambda: collections.deque(maxlen=15),
-    )
+
+    ema_cpu: float | None = None
+    ema_gpu: float | None = None
+    cpu_demand: float | None = None
+    gpu_demand: float | None = None
+    curve_signature: tuple | None = None
+
+    cpu_overheating: bool = False
+    gpu_overheating: bool = False
+    overheat_active: bool = False
+    overheat_clear_at: float | None = None
+
+    def reset_algorithm(self) -> None:
+        self.ema_cpu = None
+        self.ema_gpu = None
+        self.cpu_demand = None
+        self.gpu_demand = None
+        self.curve_signature = None
+        self.cpu_overheating = False
+        self.gpu_overheating = False
+        self.overheat_active = False
+        self.overheat_clear_at = None
+
+    def reset_curve_hysteresis(self, signature: tuple) -> None:
+        self.cpu_demand = None
+        self.gpu_demand = None
+        self.curve_signature = signature
 
     def on_suspend(self) -> None:
-        """Drop ownership so resume re-enters custom with force write."""
+        self.last_written_pct = None
         self.was_custom = False
         self.force_write = False
-        self.last_written_pct = None
-        self.ramp_down_since = None
-        self.next_control = 0.0
+        self.reset_algorithm()
 
     def on_manual_preset(self) -> None:
-        """Idle under auto/max; keep last/ramp for a later custom re-entry."""
+        self.last_written_pct = None
         self.was_custom = False
         self.force_write = False
+        self.reset_algorithm()
 
     def on_leave_custom(self) -> None:
-        """Clear after handing hardware back to auto."""
         self.last_written_pct = None
-        self.ramp_down_since = None
         self.was_custom = False
         self.force_write = False
+        self.reset_algorithm()
 
     def on_enter_custom(self, seeded_pct: float | None) -> None:
-        """Seed duty, force first write, skip control-interval wait."""
+        self.reset_algorithm()
         self.last_written_pct = seeded_pct
-        self.ramp_down_since = None
         self.force_write = True
-        self.next_control = 0.0
+
+
+def update_overheat(state: LoopState, now: float) -> bool:
+    """Update the 90/85 C trip state and 10-second cooldown."""
+    state.cpu_overheating = _update_sensor_overheat(
+        state.cpu_overheating, state.ema_cpu,
+    )
+    state.gpu_overheating = _update_sensor_overheat(
+        state.gpu_overheating, state.ema_gpu,
+    )
+    any_overheating = state.cpu_overheating or state.gpu_overheating
+
+    if any_overheating:
+        state.overheat_clear_at = None
+        state.overheat_active = True
+    elif state.overheat_active:
+        if state.overheat_clear_at is None:
+            state.overheat_clear_at = now + OVERHEAT_COOLDOWN_S
+        if now >= state.overheat_clear_at:
+            state.overheat_clear_at = None
+            state.overheat_active = False
+
+    return state.overheat_active
+
+
+def update_curve_target(
+    state: LoopState,
+    profile: FanProfileConfig,
+    cpu_sample: float | None,
+    gpu_sample: float | None,
+    now: float,
+) -> float | None:
+    """Update EWMAs and return the merged hysteretic target with safety floor."""
+    previous_cpu = state.ema_cpu
+    previous_gpu = state.ema_gpu
+
+    if cpu_sample is not None:
+        state.ema_cpu = compute_ewma(state.ema_cpu, cpu_sample)
+        state.cpu_demand = hysteretic_curve_target(
+            profile.cpu_points,
+            state.ema_cpu,
+            previous_cpu,
+            state.cpu_demand,
+        )
+    if gpu_sample is not None:
+        state.ema_gpu = compute_ewma(state.ema_gpu, gpu_sample)
+        state.gpu_demand = hysteretic_curve_target(
+            profile.gpu_points,
+            state.ema_gpu,
+            previous_gpu,
+            state.gpu_demand,
+        )
+
+    demands = [
+        demand
+        for demand in (state.cpu_demand, state.gpu_demand)
+        if demand is not None
+    ]
+    if not demands:
+        return None
+
+    target = max(demands)
+    if update_overheat(state, now):
+        target = max(target, OVERHEAT_MIN_FAN_PCT)
+    return target
+
+
+def _temp_text(temp: float | None) -> str:
+    return f"{temp:.1f}C" if temp is not None else "N/A"
+
+
+# -- Controller --------------------------------------------------------------
 
 
 class FanController:
-    """Poll sensors and drive custom fan PWM via the privileged daemon."""
+    """Poll sensors and drive custom fan PWM through the privileged daemon."""
 
     def __init__(self) -> None:
-        cfg = _fan_config.load()
-        self._st = LoopState(
-            temp_window=cfg.temp_window,
-            temp_history=collections.deque(maxlen=cfg.temp_window),
-        )
+        self._st = LoopState()
         self._logged_init = False
 
     def run_forever(self) -> None:
@@ -204,17 +262,16 @@ class FanController:
             time.sleep(POLL_INTERVAL)
 
     def _poll_once(self) -> None:
-        st = self._st
+        state = self._st
         if _suspend.is_set():
-            st.on_suspend()
+            state.on_suspend()
             return
 
         try:
-            snap = api.read_sensors()
+            snapshot = api.read_sensors()
         except Exception:
             return
 
-        st.temp_history.append((snap.cpu_temp_c, snap.gpu_temp_c))
         try:
             raw_profile = api.get_current_profile()
         except Exception:
@@ -222,90 +279,103 @@ class FanController:
         profile_idx = _profile_idx(raw_profile)
         if not self._logged_init:
             _fan_logger.info(
-                "fan-control init: api profile=%s → idx=%d", raw_profile, profile_idx,
+                "fan-control init: api profile=%s, idx=%d",
+                raw_profile,
+                profile_idx,
             )
             self._logged_init = True
 
-        cfg = _fan_config.load()
-        profile = cfg.profiles[profile_idx]
+        config = _fan_config.load()
+        profile = config.profiles[profile_idx]
 
-        if cfg.manual_preset is not None:
-            st.on_manual_preset()
+        if config.manual_preset is not None:
+            state.on_manual_preset()
             return
 
-        if not cfg.custom_enabled:
-            if st.was_custom:
+        if not config.custom_enabled:
+            if state.was_custom:
                 try:
                     _daemon_client.request_fan_auto()
                 except Exception:
                     pass
-                st.on_leave_custom()
+                state.on_leave_custom()
             return
 
-        if not st.was_custom:
-            st.on_enter_custom(read_hp_pwm_pct())
-            _fan_logger.info("fan-control: entering custom (fan-manual + force first write)")
+        if not state.was_custom:
+            state.on_enter_custom(read_hp_pwm_pct())
+            _fan_logger.info(
+                "fan-control: entering custom (fan-manual + force first write)",
+            )
             try:
                 _daemon_client.request_fan_manual()
             except Exception:
                 pass
-        st.was_custom = True
+        state.was_custom = True
 
-        now = time.monotonic()
-        if st.first_tick:
-            st.next_control = now
-            st.first_tick = False
+        signature = _profile_signature(profile_idx, profile)
+        if signature != state.curve_signature:
+            state.reset_curve_hysteresis(signature)
 
-        if now >= st.next_control:
-            self._control_tick(cfg, profile, now)
+        self._control_tick(
+            profile,
+            snapshot.cpu_temp_c,
+            snapshot.gpu_temp_c,
+            time.monotonic(),
+        )
 
-    def _control_tick(self, cfg, profile: FanProfileConfig, now: float) -> None:
-        st = self._st
-        if cfg.temp_window != st.temp_window:
-            st.temp_window = cfg.temp_window
-            st.temp_history = collections.deque(list(st.temp_history), maxlen=st.temp_window)
+    def _control_tick(
+        self,
+        profile: FanProfileConfig,
+        cpu_sample: float | None,
+        gpu_sample: float | None,
+        now: float,
+    ) -> None:
+        state = self._st
+        target = update_curve_target(
+            state,
+            profile,
+            cpu_sample,
+            gpu_sample,
+            now,
+        )
+        if target is None:
+            return
 
-        cpu_avg, gpu_avg, target = _curve_target(st.temp_history, profile)
-        if target is not None:
-            current = st.last_written_pct if st.last_written_pct is not None else target
-            next_pct, st.ramp_down_since = next_fan_percent(
-                target, current, st.ramp_down_since, now,
-                cfg.ramp_up_pct, cfg.ramp_down_pct, cfg.ramp_down_delay,
+        if not state.force_write and target == state.last_written_pct:
+            _fan_logger.info(
+                "cpu=%s gpu=%s target=%.0f%% overheat=%s (unchanged)",
+                _temp_text(state.ema_cpu),
+                _temp_text(state.ema_gpu),
+                target,
+                state.overheat_active,
             )
-            delta = abs(next_pct - (st.last_written_pct if st.last_written_pct is not None else 0.0))
-            enter = st.force_write
-            cpu_s = cpu_avg if cpu_avg is not None else 0.0
-            g = _gpu_s(gpu_avg)
+            return
 
-            if _should_write(st.force_write, st.last_written_pct, next_pct, cfg.write_min_delta_pct):
-                pwm = _pct_to_pwm(next_pct)
-                reason = " (enter custom)" if enter else ""
-                _fan_logger.info(
-                    "cpu=%.0f°C gpu=%s target=%.0f%% cur=%.0f%% → next=%.0f%% delta=%.1f → pwm=%d WRITE%s",
-                    cpu_s, g, target, current, next_pct, delta, pwm, reason,
-                )
-                try:
-                    _daemon_client.request_fan_pwm(pwm)
-                except Exception:
-                    pass
-                st.last_written_pct = next_pct
-                st.force_write = False
-            elif target < current and next_pct == current:
-                _fan_logger.info(
-                    "cpu=%.0f°C gpu=%s target=%.0f%% cur=%.0f%% → next=%.0f%% (ramp-down delay %.0fs)",
-                    cpu_s, g, target, current, next_pct, cfg.ramp_down_delay,
-                )
-            else:
-                _fan_logger.info(
-                    "cpu=%.0f°C gpu=%s target=%.0f%% cur=%.0f%% → next=%.0f%% delta=%.1f (skip, <%.0f)",
-                    cpu_s, g, target, current, next_pct, delta, cfg.write_min_delta_pct,
-                )
+        pwm = _pct_to_pwm(target)
+        reason = " (enter custom)" if state.force_write else ""
+        _fan_logger.info(
+            "cpu=%s gpu=%s target=%.0f%% overheat=%s -> pwm=%d WRITE%s",
+            _temp_text(state.ema_cpu),
+            _temp_text(state.ema_gpu),
+            target,
+            state.overheat_active,
+            pwm,
+            reason,
+        )
+        try:
+            _daemon_client.request_fan_pwm(pwm)
+        except Exception as error:
+            _fan_logger.warning("fan PWM write failed: %s", error)
+            return
 
-        st.next_control = now + CONTROL_INTERVAL
+        state.last_written_pct = target
+        state.force_write = False
 
 
 def start_fan_control() -> None:
     """Start the custom fan-control background thread."""
     threading.Thread(
-        target=FanController().run_forever, daemon=True, name="fan-control",
+        target=FanController().run_forever,
+        daemon=True,
+        name="fan-control",
     ).start()

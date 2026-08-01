@@ -224,7 +224,3 @@ def set_manual_preset(preset: str | None) -> FanConfig:
     pwm1 / pwm1_enable).
     """
     return fan_config.save_manual_preset(preset)
-
-
-def save_ramp_down_delay(delay: float) -> FanConfig:
-    return fan_config.save_ramp_down_delay(delay)

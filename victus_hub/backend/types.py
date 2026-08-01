@@ -77,14 +77,6 @@ class FanConfig:
     # The fan-control loop backs off while a preset is active so the
     # hardware fan mode (max flag or manual pwm) survives.
     manual_preset: str | None = None
-    # Seconds to wait before ramping fan speed down after target drops.
-    # 0 = immediate ramp-down. Default 10s (matches the original Rust impl).
-    ramp_down_delay: float = 10.0
-    # Fan-control tuning constants
-    temp_window: int = 15
-    write_min_delta_pct: float = 5.0
-    ramp_up_pct: float = 30.0
-    ramp_down_pct: float = 15.0
 
 # Re-export list for api.py convenience
 __all__ = [
