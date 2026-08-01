@@ -1,10 +1,13 @@
-"""Top processes card — grouped instances, icon, CPU, RAM, and force stop."""
+"""Grouped process CPU, memory, network, and storage activity."""
 
 from __future__ import annotations
 
 import os
 import signal
+import socket
+import struct
 import threading
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -80,12 +83,17 @@ class ProcessInfo:
     name: str
     rss_kb: int
     cpu_pct: float = 0.0
+    download_bps: float | None = 0.0
+    upload_bps: float | None = 0.0
+    read_bps: float | None = 0.0
+    write_bps: float | None = 0.0
     exe: str = ""
     # Stable group identity (script path, module, or binary path)
     group_key: str = ""
     # Short label for a child instance (comm / role)
     detail: str = ""
     icon: QIcon = field(default_factory=QIcon)
+    socket_inodes: set[int] | None = field(default_factory=set, repr=False)
 
     @property
     def ram_display(self) -> str:
@@ -94,6 +102,22 @@ class ProcessInfo:
     @property
     def cpu_display(self) -> str:
         return _fmt_cpu(self.cpu_pct)
+
+    @property
+    def download_display(self) -> str:
+        return _fmt_rate(self.download_bps)
+
+    @property
+    def upload_display(self) -> str:
+        return _fmt_rate(self.upload_bps)
+
+    @property
+    def read_display(self) -> str:
+        return _fmt_rate(self.read_bps)
+
+    @property
+    def write_display(self) -> str:
+        return _fmt_rate(self.write_bps)
 
 
 @dataclass
@@ -109,8 +133,23 @@ class ProcessGroup:
 
     @property
     def cpu_pct(self) -> float:
-        # Sum of per-process system shares; clamp for sampling noise
-        return max(0.0, min(100.0, sum(p.cpu_pct for p in self.instances)))
+        return max(0.0, sum(p.cpu_pct for p in self.instances))
+
+    @property
+    def download_bps(self) -> float | None:
+        return _sum_rates(p.download_bps for p in self.instances)
+
+    @property
+    def upload_bps(self) -> float | None:
+        return _sum_rates(p.upload_bps for p in self.instances)
+
+    @property
+    def read_bps(self) -> float | None:
+        return _sum_rates(p.read_bps for p in self.instances)
+
+    @property
+    def write_bps(self) -> float | None:
+        return _sum_rates(p.write_bps for p in self.instances)
 
     @property
     def ram_display(self) -> str:
@@ -119,6 +158,22 @@ class ProcessGroup:
     @property
     def cpu_display(self) -> str:
         return _fmt_cpu(self.cpu_pct)
+
+    @property
+    def download_display(self) -> str:
+        return _fmt_rate(self.download_bps)
+
+    @property
+    def upload_display(self) -> str:
+        return _fmt_rate(self.upload_bps)
+
+    @property
+    def read_display(self) -> str:
+        return _fmt_rate(self.read_bps)
+
+    @property
+    def write_display(self) -> str:
+        return _fmt_rate(self.write_bps)
 
     @property
     def count(self) -> int:
@@ -133,7 +188,6 @@ def _fmt_ram(rss_kb: int) -> str:
 
 
 def _fmt_cpu(cpu_pct: float) -> str:
-    # System-relative share (0–100% of all cores combined)
     if cpu_pct < 0.05:
         return "0%"
     if cpu_pct < 10:
@@ -141,64 +195,91 @@ def _fmt_cpu(cpu_pct: float) -> str:
     return f"{cpu_pct:.0f}%"
 
 
-def _parse_stat_jiffies(data: str) -> int | None:
-    """Parse utime+stime from a /proc/.../stat payload."""
+def _sum_rates(values) -> float | None:
+    rates = list(values)
+    if not rates or any(value is None for value in rates):
+        return None
+    return sum(value for value in rates if value is not None)
+
+
+def _fmt_rate(bytes_per_second: float | None) -> str:
+    if bytes_per_second is None:
+        return "—"
+    value = max(0.0, bytes_per_second)
+    if value < 1.0:
+        return "0 B/s"
+    if value < 1024.0:
+        return f"{value:.0f} B/s"
+    value /= 1024.0
+    if value < 1024.0:
+        return f"{value:.1f} KiB/s" if value < 10.0 else f"{value:.0f} KiB/s"
+    value /= 1024.0
+    if value < 1024.0:
+        return f"{value:.1f} MiB/s" if value < 10.0 else f"{value:.0f} MiB/s"
+    return f"{value / 1024.0:.1f} GiB/s"
+
+
+def _parse_proc_stat(data: str) -> tuple[int, int] | None:
+    """Return process CPU jiffies and start time from a proc stat payload."""
     rparen = data.rfind(")")
     if rparen < 0:
         return None
     fields = data[rparen + 2 :].split()
     try:
-        return int(fields[11]) + int(fields[12])
+        return int(fields[11]) + int(fields[12]), int(fields[19])
     except (ValueError, IndexError):
         return None
 
 
-def _read_proc_cpu_jiffies(pid: int) -> int | None:
-    """Total user+system jiffies for the whole process (all threads)."""
-    task_dir = f"/proc/{pid}/task"
-    try:
-        tids = os.listdir(task_dir)
-    except OSError:
-        tids = []
-    if tids:
-        total = 0
-        any_ok = False
-        for tid in tids:
-            try:
-                with open(
-                    f"{task_dir}/{tid}/stat", encoding="utf-8", errors="replace"
-                ) as f:
-                    j = _parse_stat_jiffies(f.read())
-            except OSError:
-                continue
-            if j is not None:
-                total += j
-                any_ok = True
-        if any_ok:
-            return total
-    # Fallback: thread-group leader only
+def _read_proc_stat(pid: int) -> tuple[int, int] | None:
     try:
         with open(f"/proc/{pid}/stat", encoding="utf-8", errors="replace") as f:
-            return _parse_stat_jiffies(f.read())
+            return _parse_proc_stat(f.read())
     except OSError:
         return None
 
 
-def _read_system_jiffies() -> int | None:
-    """Sum of all fields on the aggregate `cpu` line in /proc/stat."""
+def _read_proc_io(pid: int) -> tuple[int, int] | None:
+    """Return cumulative physical storage read/write bytes."""
+    read_bytes = write_bytes = None
     try:
-        with open("/proc/stat", encoding="utf-8", errors="replace") as f:
-            line = f.readline()
+        with open(f"/proc/{pid}/io", encoding="utf-8", errors="replace") as f:
+            for line in f:
+                if line.startswith("read_bytes:"):
+                    read_bytes = int(line.split()[1])
+                elif line.startswith("write_bytes:"):
+                    write_bytes = int(line.split()[1])
+                if read_bytes is not None and write_bytes is not None:
+                    return read_bytes, write_bytes
+    except (OSError, ValueError, IndexError):
+        pass
+    return None
+
+
+def _read_process_socket_inodes(pid: int, available: set[int]) -> set[int] | None:
+    """Return this process's TCP socket inodes present in a diag snapshot."""
+    if not available:
+        return set()
+    try:
+        entries = os.scandir(f"/proc/{pid}/fd")
     except OSError:
         return None
-    if not line.startswith("cpu "):
-        return None
-    parts = line.split()
-    try:
-        # cpu user nice system idle iowait irq softirq steal guest guest_nice …
-        return sum(int(x) for x in parts[1:])
-    except ValueError:
-        return None
+    found: set[int] = set()
+    with entries:
+        for entry in entries:
+            try:
+                target = os.readlink(entry.path)
+            except OSError:
+                continue
+            if not target.startswith("socket:[") or not target.endswith("]"):
+                continue
+            try:
+                inode = int(target[8:-1])
+            except ValueError:
+                continue
+            if inode in available:
+                found.add(inode)
+    return found
 
 
 def _is_thread_group_leader(pid: int) -> bool:
@@ -622,66 +703,291 @@ def resolve_process_icon(name: str, exe: str = "") -> QIcon:
     return _selection_stable_icon(fallback)
 
 
-class _CpuTracker:
-    """Track per-pid and system jiffies to compute system-relative CPU %."""
+_NETLINK_SOCK_DIAG = 4
+_SOCK_DIAG_BY_FAMILY = 20
+_INET_DIAG_INFO = 2
+_NLMSG_DONE = 3
+_NLMSG_ERROR = 2
+_NLM_F_DUMP_REQUEST = 0x301
+_NLM_F_DUMP_INTR = 0x10
+_TCP_INFO_BYTES_ACKED_OFFSET = 120
+_TCP_INFO_BYTES_RECEIVED_OFFSET = 128
+_CLK_TCK = int(os.sysconf("SC_CLK_TCK"))
+_CPU_COUNT = max(os.cpu_count() or 1, 1)
+
+
+def _aligned(length: int) -> int:
+    return (length + 3) & ~3
+
+
+def _read_tcp_socket_bytes(
+    cancelled=None,
+) -> dict[int, tuple[tuple[int, int], int, int]] | None:
+    """Return inode -> (cookie, downloaded, uploaded) for live TCP.
+
+    SOCK_DIAG exposes kernel TCP counters without packet capture. UDP and
+    connections that open and close entirely between samples are intentionally
+    not estimated because Linux exposes no equivalent reliable counters.
+    """
+    counters: dict[int, tuple[tuple[int, int], int, int]] = {}
+    saw_socket = False
+    saw_counters = False
+    sequence = int(time.monotonic_ns() & 0xFFFFFFFF)
+    for family in (socket.AF_INET, socket.AF_INET6):
+        if cancelled is not None and cancelled():
+            return None
+        diag = None
+        try:
+            diag = socket.socket(
+                socket.AF_NETLINK,
+                socket.SOCK_RAW,
+                _NETLINK_SOCK_DIAG,
+            )
+            diag.settimeout(0.25)
+            diag.bind((0, 0))
+            request = struct.pack(
+                "=BBBBI",
+                family,
+                socket.IPPROTO_TCP,
+                1 << (_INET_DIAG_INFO - 1),
+                0,
+                0x1FFF,
+            )
+            request += struct.pack("!HH", 0, 0)
+            request += bytes(32)
+            request += struct.pack("=III", 0, 0xFFFFFFFF, 0xFFFFFFFF)
+            header = struct.pack(
+                "=IHHII",
+                16 + len(request),
+                _SOCK_DIAG_BY_FAMILY,
+                _NLM_F_DUMP_REQUEST,
+                sequence,
+                0,
+            )
+            diag.send(header + request)
+        except OSError:
+            if diag is not None:
+                diag.close()
+            return None
+
+        done = False
+        failed = False
+        family_counters: dict[int, tuple[tuple[int, int], int, int]] = {}
+        try:
+            while not done:
+                if cancelled is not None and cancelled():
+                    return None
+                payload, _ancillary, message_flags, _address = diag.recvmsg(
+                    1024 * 1024,
+                )
+                if message_flags & socket.MSG_TRUNC:
+                    failed = True
+                    break
+                offset = 0
+                while offset + 16 <= len(payload):
+                    length, kind, flags, seq, _pid = struct.unpack_from(
+                        "=IHHII", payload, offset,
+                    )
+                    if length < 16 or offset + length > len(payload):
+                        failed = True
+                        break
+                    message = payload[offset + 16 : offset + length]
+                    offset += _aligned(length)
+                    if seq != sequence:
+                        continue
+                    if flags & _NLM_F_DUMP_INTR:
+                        failed = True
+                        break
+                    if kind == _NLMSG_ERROR:
+                        failed = True
+                        break
+                    if kind == _NLMSG_DONE:
+                        done = True
+                        continue
+                    if kind != _SOCK_DIAG_BY_FAMILY or len(message) < 72:
+                        continue
+                    saw_socket = True
+                    inode = struct.unpack_from("=I", message, 68)[0]
+                    cookie = struct.unpack_from("=II", message, 44)
+                    attr_offset = 72
+                    while attr_offset + 4 <= len(message):
+                        attr_len, attr_type = struct.unpack_from(
+                            "=HH", message, attr_offset,
+                        )
+                        if attr_len < 4 or attr_offset + attr_len > len(message):
+                            break
+                        info = message[attr_offset + 4 : attr_offset + attr_len]
+                        if attr_type == _INET_DIAG_INFO and len(info) >= 136:
+                            uploaded = struct.unpack_from(
+                                "=Q", info, _TCP_INFO_BYTES_ACKED_OFFSET,
+                            )[0]
+                            downloaded = struct.unpack_from(
+                                "=Q", info, _TCP_INFO_BYTES_RECEIVED_OFFSET,
+                            )[0]
+                            family_counters[inode] = cookie, downloaded, uploaded
+                            saw_counters = True
+                            break
+                        attr_offset += _aligned(attr_len)
+                if failed:
+                    break
+        except OSError:
+            failed = True
+        finally:
+            if diag is not None:
+                diag.close()
+        if failed or not done:
+            return None
+        counters.update(family_counters)
+    if saw_socket and not saw_counters:
+        return None
+    return counters
+
+
+class _MetricTracker:
+    """Difference cumulative process and socket counters between scans."""
 
     def __init__(self):
-        # pid → process jiffies at last sample
-        self._prev_proc: dict[int, int] = {}
-        self._prev_sys: int | None = None
+        self.reset()
 
-    def begin_sample(self) -> int | None:
-        """Read system jiffies once per refresh; return system delta (or None)."""
-        sys_now = _read_system_jiffies()
-        if sys_now is None:
-            self._prev_sys = None
-            return None
-        prev = self._prev_sys
-        self._prev_sys = sys_now
-        if prev is None or sys_now < prev:
-            return None
-        dsys = sys_now - prev
-        return dsys if dsys > 0 else None
+    def reset(self) -> None:
+        self._previous_time: float | None = None
+        self._previous_process: dict[
+            int,
+            tuple[int, int, int | None, int | None, float | None],
+        ] = {}
+        self._previous_socket_time: float | None = None
+        self._previous_sockets: dict[tuple[int, int], tuple[int, int]] = {}
 
-    def cpu_pct(self, pid: int, jiffies: int | None, system_delta: int | None) -> float:
-        """Return % of total machine CPU used by *pid* since last sample (0–100)."""
-        if jiffies is None:
-            self._prev_proc.pop(pid, None)
-            return 0.0
-        prev_j = self._prev_proc.get(pid)
-        self._prev_proc[pid] = jiffies
-        if prev_j is None or system_delta is None:
-            return 0.0
-        dj = jiffies - prev_j
-        if dj < 0:
-            return 0.0
-        # system_delta already counts all cores (sum of /proc/stat cpu fields)
-        pct = 100.0 * dj / system_delta
-        return max(0.0, min(pct, 100.0))
+    def begin_sample(
+        self,
+        now: float,
+        sockets: dict[int, tuple[tuple[int, int], int, int]] | None,
+    ) -> tuple[float | None, dict[int, tuple[float, float]]]:
+        previous_time = self._previous_time
+        self._previous_time = now
+        elapsed = None if previous_time is None else now - previous_time
+        if elapsed is not None and elapsed <= 0.0:
+            elapsed = None
 
-    def prune(self, live_pids: set[int]):
-        for p in [p for p in self._prev_proc if p not in live_pids]:
-            del self._prev_proc[p]
+        rates: dict[int, tuple[float, float]] = {}
+        socket_elapsed = (
+            None
+            if self._previous_socket_time is None
+            else now - self._previous_socket_time
+        )
+        if sockets is not None and socket_elapsed is not None and socket_elapsed > 0.0:
+            for inode, (cookie, downloaded, uploaded) in sockets.items():
+                previous = self._previous_sockets.get(cookie)
+                if previous is None:
+                    continue
+                download_delta = downloaded - previous[0]
+                upload_delta = uploaded - previous[1]
+                if download_delta >= 0 and upload_delta >= 0:
+                    rates[inode] = (
+                        download_delta / socket_elapsed,
+                        upload_delta / socket_elapsed,
+                    )
+        if sockets is not None:
+            self._previous_socket_time = now
+            self._previous_sockets = {
+                cookie: (downloaded, uploaded)
+                for cookie, downloaded, uploaded in sockets.values()
+            }
+        return elapsed, rates
+
+    def process_rates(
+        self,
+        pid: int,
+        stat: tuple[int, int] | None,
+        io: tuple[int, int] | None,
+        elapsed: float | None,
+        now: float,
+    ) -> tuple[float, float | None, float | None]:
+        if stat is None:
+            self._previous_process.pop(pid, None)
+            return 0.0, None, None
+        jiffies, start_time = stat
+        previous = self._previous_process.get(pid)
+        same_process = previous is not None and previous[0] == start_time
+        if io is not None:
+            read_bytes, write_bytes = io
+            io_time = now
+        elif same_process:
+            read_bytes, write_bytes, io_time = previous[2], previous[3], previous[4]
+        else:
+            read_bytes = write_bytes = io_time = None
+        self._previous_process[pid] = (
+            start_time,
+            jiffies,
+            read_bytes,
+            write_bytes,
+            io_time,
+        )
+        if not same_process or elapsed is None:
+            return 0.0, 0.0 if io is not None else None, 0.0 if io is not None else None
+
+        cpu_delta = jiffies - previous[1]
+        # Match KDE System Monitor: percentage of total logical CPU capacity,
+        # rather than top's convention where one fully busy core is 100%.
+        cpu_pct = max(
+            0.0,
+            100.0 * cpu_delta / (_CLK_TCK * elapsed * _CPU_COUNT),
+        )
+        if (
+            io is None
+            or previous[2] is None
+            or previous[3] is None
+            or previous[4] is None
+        ):
+            return cpu_pct, None, None
+        io_elapsed = now - previous[4]
+        if io_elapsed <= 0.0:
+            return cpu_pct, 0.0, 0.0
+        read_bps = max(0.0, (read_bytes - previous[2]) / io_elapsed)
+        write_bps = max(0.0, (write_bytes - previous[3]) / io_elapsed)
+        return cpu_pct, read_bps, write_bps
+
+    def prune(self, live_pids: set[int]) -> None:
+        for pid in [pid for pid in self._previous_process if pid not in live_pids]:
+            del self._previous_process[pid]
 
 
-_cpu_tracker = _CpuTracker()
+_metric_tracker = _MetricTracker()
 
 
-def read_process_groups(limit: int = _TOP_GROUPS) -> list[ProcessGroup]:
+def read_process_groups(
+    limit: int = _TOP_GROUPS,
+    cancelled=None,
+    reset_rates: bool = False,
+) -> list[ProcessGroup]:
     """Scan /proc, group by app identity, return top groups by RAM.
 
     Thread-safe for a single concurrent scanner. Does **not** create QIcons
     (those are attached on the GUI thread via ``attach_group_icons``).
     """
     procs: list[ProcessInfo] = []
+    if cancelled is not None and cancelled():
+        return []
     try:
         entries = os.listdir("/proc")
     except OSError:
         return []
 
-    system_delta = _cpu_tracker.begin_sample()
+    if reset_rates:
+        _metric_tracker.reset()
+    socket_bytes = _read_tcp_socket_bytes(cancelled)
+    if cancelled is not None and cancelled():
+        return []
+    sample_time = time.monotonic()
+    elapsed, socket_rates = _metric_tracker.begin_sample(
+        sample_time, socket_bytes,
+    )
+    network_available = socket_bytes is not None
+    available_inodes = set(socket_bytes) if socket_bytes is not None else set()
 
     for entry in entries:
+        if cancelled is not None and cancelled():
+            return []
         if not entry.isdigit():
             continue
         pid = int(entry)
@@ -689,19 +995,50 @@ def read_process_groups(limit: int = _TOP_GROUPS) -> list[ProcessGroup]:
         if meta is None:
             continue
         group_name, detail, mem_kb, exe, group_key = meta
-        jiffies = _read_proc_cpu_jiffies(pid)
-        cpu_pct = _cpu_tracker.cpu_pct(pid, jiffies, system_delta)
+        cpu_pct, read_bps, write_bps = _metric_tracker.process_rates(
+            pid,
+            _read_proc_stat(pid),
+            _read_proc_io(pid),
+            elapsed,
+            sample_time,
+        )
+        socket_inodes = (
+            _read_process_socket_inodes(pid, available_inodes)
+            if network_available
+            else None
+        )
+        process_network_available = network_available and socket_inodes is not None
         procs.append(ProcessInfo(
             pid=pid,
             name=group_name,
             rss_kb=mem_kb,  # PSS when available (field name kept for compatibility)
             cpu_pct=cpu_pct,
+            download_bps=0.0 if process_network_available else None,
+            upload_bps=0.0 if process_network_available else None,
+            read_bps=read_bps,
+            write_bps=write_bps,
             exe=exe,
             group_key=group_key,
             detail=detail,
+            socket_inodes=socket_inodes,
         ))
 
-    _cpu_tracker.prune({p.pid for p in procs})
+    _metric_tracker.prune({p.pid for p in procs})
+
+    socket_owners: dict[int, int] = {}
+    for proc in procs:
+        for inode in proc.socket_inodes or ():
+            socket_owners[inode] = socket_owners.get(inode, 0) + 1
+    for proc in procs:
+        for inode in proc.socket_inodes or ():
+            rate = socket_rates.get(inode)
+            if rate is None:
+                continue
+            owners = socket_owners.get(inode, 1)
+            if proc.download_bps is not None:
+                proc.download_bps += rate[0] / owners
+            if proc.upload_bps is not None:
+                proc.upload_bps += rate[1] / owners
 
     groups: dict[str, ProcessGroup] = {}
     for p in procs:
@@ -756,10 +1093,22 @@ def stop_processes(pids: list[int], force: bool = False) -> None:
 
 # ── UI (QTreeWidget columns, same approach as Sensors page) ─────────────────
 
-# Columns: Process | CPU | RAM
+# Columns: Process | CPU | RAM | Download | Upload | Read | Write
 _COL_PROCESS = 0
 _COL_CPU = 1
 _COL_RAM = 2
+_COL_DOWNLOAD = 3
+_COL_UPLOAD = 4
+_COL_READ = 5
+_COL_WRITE = 6
+_VALUE_COLUMNS = (
+    _COL_CPU,
+    _COL_RAM,
+    _COL_DOWNLOAD,
+    _COL_UPLOAD,
+    _COL_READ,
+    _COL_WRITE,
+)
 
 _ROLE_PID = Qt.UserRole
 _ROLE_GROUP_KEY = Qt.UserRole + 1
@@ -793,8 +1142,10 @@ class TopProcessesCard(QFrame):
 
         self._tree = QTreeWidget()
         self._tree.setObjectName("topProcessesTree")
-        self._tree.setColumnCount(3)
-        self._tree.setHeaderLabels(["Process", "CPU", "RAM"])
+        self._tree.setColumnCount(7)
+        self._tree.setHeaderLabels([
+            "Process", "CPU", "RAM", "Download", "Upload", "Read", "Write",
+        ])
         self._tree.setRootIsDecorated(True)
         self._tree.setIndentation(16)
         self._tree.setAnimated(True)
@@ -814,6 +1165,10 @@ class TopProcessesCard(QFrame):
         self._scan_lock = threading.Lock()
         self._scan_busy = False
         self._scan_again = False
+        self._active = False
+        self._scan_cancel = threading.Event()
+        self._scan_cancel.set()
+        self._reset_rates = True
         self._scan_finished.connect(self._on_scan_finished)
 
         # Flat fill matching the card; selection highlight on click
@@ -858,13 +1213,35 @@ class TopProcessesCard(QFrame):
         header.setDefaultAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         header.setStretchLastSection(False)
         header.setSectionResizeMode(_COL_PROCESS, QHeaderView.Stretch)
-        header.setSectionResizeMode(_COL_CPU, QHeaderView.Fixed)
-        header.setSectionResizeMode(_COL_RAM, QHeaderView.Fixed)
+        for column in _VALUE_COLUMNS:
+            header.setSectionResizeMode(column, QHeaderView.Fixed)
         self._tree.setColumnWidth(_COL_CPU, 64)
         self._tree.setColumnWidth(_COL_RAM, 72)
+        for column in (_COL_DOWNLOAD, _COL_UPLOAD, _COL_READ, _COL_WRITE):
+            self._tree.setColumnWidth(column, 84)
 
-        self._tree.headerItem().setTextAlignment(_COL_CPU, int(Qt.AlignRight | Qt.AlignVCenter))
-        self._tree.headerItem().setTextAlignment(_COL_RAM, int(Qt.AlignRight | Qt.AlignVCenter))
+        for column in _VALUE_COLUMNS:
+            self._tree.headerItem().setTextAlignment(
+                column, int(Qt.AlignRight | Qt.AlignVCenter),
+            )
+        self._tree.headerItem().setToolTip(
+            _COL_CPU,
+            "Share of total logical CPU capacity, matching KDE System Monitor.",
+        )
+        self._tree.headerItem().setToolTip(
+            _COL_DOWNLOAD,
+            "Live TCP receive rate; short-lived and non-TCP traffic is not estimated.",
+        )
+        self._tree.headerItem().setToolTip(
+            _COL_UPLOAD,
+            "Live acknowledged TCP send rate; short-lived and non-TCP traffic is not estimated.",
+        )
+        self._tree.headerItem().setToolTip(
+            _COL_READ, "Physical storage read rate from /proc/<pid>/io.",
+        )
+        self._tree.headerItem().setToolTip(
+            _COL_WRITE, "Physical storage write rate from /proc/<pid>/io.",
+        )
 
         layout.addWidget(self._tree)
 
@@ -875,27 +1252,67 @@ class TopProcessesCard(QFrame):
         self._selected_ref: tuple[str, object] | None = None
         self._tree.itemSelectionChanged.connect(self._remember_selection)
 
+    def set_active(self, active: bool) -> None:
+        """Enable scans only while the Processes tab is actually visible."""
+        with self._scan_lock:
+            if active == self._active:
+                return
+            self._active = active
+            self._scan_again = False
+            self._scan_cancel.set()
+            if active:
+                self._scan_cancel = threading.Event()
+                self._reset_rates = True
+
     def refresh(self):
         """Kick off a background /proc scan; UI updates when it completes."""
         with self._scan_lock:
+            if not self._active:
+                return
             if self._scan_busy:
                 # Coalesce: run one more scan after the in-flight one finishes
                 self._scan_again = True
                 return
             self._scan_busy = True
+            cancel = self._scan_cancel
+            reset_rates = self._reset_rates
+            self._reset_rates = False
         threading.Thread(
-            target=self._scan_worker, daemon=True, name="proc-scan",
+            target=self._scan_worker,
+            args=(cancel, reset_rates),
+            daemon=True,
+            name="proc-scan",
         ).start()
 
-    def _scan_worker(self):
+    def _scan_worker(self, cancel: threading.Event, reset_rates: bool):
         try:
-            groups = read_process_groups()
+            groups = read_process_groups(
+                cancelled=cancel.is_set,
+                reset_rates=reset_rates,
+            )
         except Exception:
             groups = []
-        self._scan_finished.emit(groups)
+        self._scan_finished.emit((cancel, groups))
 
-    def _on_scan_finished(self, groups: object):
+    def _on_scan_finished(self, result: object):
+        if not isinstance(result, tuple) or len(result) != 2:
+            return
+        cancel, groups = result
         group_list: list[ProcessGroup] = groups if isinstance(groups, list) else []
+        with self._scan_lock:
+            self._scan_busy = False
+            current = (
+                self._active
+                and cancel is self._scan_cancel
+                and not self._scan_cancel.is_set()
+            )
+            again = self._active and self._scan_again
+            self._scan_again = False
+        if not current:
+            if again:
+                self.refresh()
+            return
+
         # QIcon / theme work stays on the GUI thread
         try:
             attach_group_icons(group_list)
@@ -903,11 +1320,6 @@ class TopProcessesCard(QFrame):
             pass
         self.update_groups(group_list)
 
-        again = False
-        with self._scan_lock:
-            self._scan_busy = False
-            again = self._scan_again
-            self._scan_again = False
         if again:
             self.refresh()
 
@@ -1024,8 +1436,12 @@ class TopProcessesCard(QFrame):
             item.setIcon(_COL_PROCESS, group.icon)
         item.setText(_COL_CPU, group.cpu_display)
         item.setText(_COL_RAM, group.ram_display)
-        item.setTextAlignment(_COL_CPU, int(Qt.AlignRight | Qt.AlignVCenter))
-        item.setTextAlignment(_COL_RAM, int(Qt.AlignRight | Qt.AlignVCenter))
+        item.setText(_COL_DOWNLOAD, group.download_display)
+        item.setText(_COL_UPLOAD, group.upload_display)
+        item.setText(_COL_READ, group.read_display)
+        item.setText(_COL_WRITE, group.write_display)
+        for column in _VALUE_COLUMNS:
+            item.setTextAlignment(column, int(Qt.AlignRight | Qt.AlignVCenter))
         item.setToolTip(_COL_PROCESS, group.name)
 
     def _fill_instance_item(self, item: QTreeWidgetItem, proc: ProcessInfo):
@@ -1035,8 +1451,12 @@ class TopProcessesCard(QFrame):
         item.setData(0, _ROLE_GROUP_KEY, proc.group_key)
         item.setText(_COL_CPU, proc.cpu_display)
         item.setText(_COL_RAM, proc.ram_display)
-        item.setTextAlignment(_COL_CPU, int(Qt.AlignRight | Qt.AlignVCenter))
-        item.setTextAlignment(_COL_RAM, int(Qt.AlignRight | Qt.AlignVCenter))
+        item.setText(_COL_DOWNLOAD, proc.download_display)
+        item.setText(_COL_UPLOAD, proc.upload_display)
+        item.setText(_COL_READ, proc.read_display)
+        item.setText(_COL_WRITE, proc.write_display)
+        for column in _VALUE_COLUMNS:
+            item.setTextAlignment(column, int(Qt.AlignRight | Qt.AlignVCenter))
         item.setToolTip(_COL_PROCESS, f"{proc.name}  (PID {proc.pid})")
         item.setIcon(_COL_PROCESS, QIcon())
 

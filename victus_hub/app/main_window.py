@@ -73,6 +73,7 @@ class MainWindow(QMainWindow):
         self._sensors_page = SensorsPage()
         self._keyboard_page = KeyboardPage()
         self._settings_page = SettingsPage()
+        self._ui_active = False
 
         self._pages = [
             self._home_page,
@@ -94,7 +95,7 @@ class MainWindow(QMainWindow):
 
         # Update the scroll area's minimum height when the page changes so
         # each page gets exactly the vertical space it needs (no squishing).
-        self._stack.currentChanged.connect(self._update_min_height)
+        self._stack.currentChanged.connect(self._on_current_page_changed)
 
         # Sidebar -> stack sync
         self._sidebar.tab_changed.connect(self._on_tab_changed)
@@ -163,20 +164,16 @@ class MainWindow(QMainWindow):
         self._sensor_timer = QTimer(self)
         self._sensor_timer.setInterval(1000)
         self._sensor_timer.timeout.connect(self._poll_sensors)
-        self._sensor_timer.start()
 
         # Profile poll (2s)
         self._profile_timer = QTimer(self)
         self._profile_timer.setInterval(2000)
         self._profile_timer.timeout.connect(self._poll_profile)
-        self._profile_timer.start()
 
         # UI-active gate (visibility). When False (hidden to tray /
         # minimized) the sensor + profile timers stop, the keyboard preview
         # repaint is gated, the lm-sensors subprocess is skipped, and the
         # processes /proc scan stops. Hardware control threads keep running.
-        self._ui_active = True
-
         # Fan-control background thread
         start_fan_control()
         # Sync fan mode segmented control from persisted config and apply
@@ -215,16 +212,14 @@ class MainWindow(QMainWindow):
 
     def _on_tab_changed(self, index: int):
         self._stack.setCurrentIndex(index)
-        # Gate per-tab work: the Processes /proc scan only runs when the
-        # Processes tab is current + the UI is visible.
-        self._update_processes_timer()
-        if (self._ui_active
-                and self._stack.currentWidget() is self._processes_page):
-            self._processes_page.refresh()  # instant fresh list on tab entry
         # Gate the keyboard-preview repaint on the Keyboard tab (hardware
         # writes are unaffected — they run regardless of the active tab).
         self._lighting.set_ui_active(
             self._ui_active and self._is_keyboard_tab_current())
+
+    def _on_current_page_changed(self, index: int) -> None:
+        self._update_min_height(index)
+        self._update_processes_timer()
 
     def _update_min_height(self, index: int) -> None:
         """Set the stack's minimum height to the current page's minimum
@@ -240,8 +235,12 @@ class MainWindow(QMainWindow):
     def _update_processes_timer(self) -> None:
         """Run the Processes /proc scan only while visible + on that tab."""
         want = self._ui_active and (self._stack.currentWidget() is self._processes_page)
+        was_active = self._processes_timer.isActive()
+        self._processes_page.set_active(want)
         if want:
             self._processes_timer.start()
+            if not was_active:
+                self._processes_page.refresh()
         else:
             self._processes_timer.stop()
 

@@ -18,5 +18,9 @@ class ProcessesPage(QWidget):
         layout.addWidget(self._top_processes, 1)
 
     def refresh(self) -> None:
-        """Refresh process list (called from the main sensor poll)."""
+        """Refresh the process list while this page is active."""
         self._top_processes.refresh()
+
+    def set_active(self, active: bool) -> None:
+        """Start or cancel process metric collection for this page."""
+        self._top_processes.set_active(active)
