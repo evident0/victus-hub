@@ -257,15 +257,36 @@ class KeyboardPage(QWidget):
         layout.addLayout(title_row)
 
         # Visual keyboard
+        keyboard_panel = QWidget()
+        keyboard_panel.setObjectName("keyboardPreviewPanel")
+        keyboard_panel.setStyleSheet(f"""
+            QWidget#keyboardPreviewPanel {{
+                background-color: {COLORS['surface']};
+                border: 1px solid {COLORS['border']};
+                border-radius: 14px;
+            }}
+        """)
+        keyboard_layout = QVBoxLayout(keyboard_panel)
+        keyboard_layout.setContentsMargins(6, 6, 6, 6)
+        keyboard_layout.setSpacing(0)
         self._visual = KeyboardVisual(zone_count=self._zone_count)
         self._apply_visual_from_settings()
-        layout.addWidget(self._visual, 1)
+        keyboard_layout.addWidget(self._visual)
+        layout.addWidget(keyboard_panel, 1)
 
         # Controls grid
         controls = QWidget()
+        controls.setObjectName("keyboardControls")
+        controls.setStyleSheet(f"""
+            QWidget#keyboardControls {{
+                background-color: {COLORS['surface']};
+                border: 1px solid {COLORS['border']};
+                border-radius: 14px;
+            }}
+        """)
         ctrl_layout = QHBoxLayout(controls)
-        ctrl_layout.setContentsMargins(0, 0, 0, 0)
-        ctrl_layout.setSpacing(12)
+        ctrl_layout.setContentsMargins(16, 14, 16, 14)
+        ctrl_layout.setSpacing(14)
 
         # Enable
         self._enable_check = ToggleSwitch("RGB enabled")

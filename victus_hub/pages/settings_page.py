@@ -4,12 +4,10 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QSpinBox, QDoubleSpinBox,
 )
-from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QPalette
 
 from victus_hub.app.theme import COLORS
 from victus_hub.backend import fan_config
-from victus_hub.widgets.toggle_switch import ToggleSwitch
 from victus_hub.features.keyboard.shortcut import (
     KeybindSettings,
     keybind_from_event,
@@ -72,37 +70,62 @@ class SettingsPage(QWidget):
         layout.setContentsMargins(16, 16, 16, 16)
         layout.setSpacing(12)
 
+        card_style = f"""
+            QWidget[settingsCard="true"] {{
+                background-color: {COLORS['surface']};
+                border: 1px solid {COLORS['border']};
+                border-radius: 14px;
+            }}
+        """
+
+        fan_panel = QWidget()
+        fan_panel.setProperty("settingsCard", True)
+        fan_panel.setStyleSheet(card_style)
+        fan_layout = QVBoxLayout(fan_panel)
+        fan_layout.setContentsMargins(16, 14, 16, 14)
+        fan_layout.setSpacing(12)
+
         cfg = fan_config.load()
         fan_label = QLabel("Fan Control")
         fan_label.setStyleSheet(
             f"color: {COLORS['text']}; font-size: 13px; font-weight: bold;"
         )
-        layout.addWidget(fan_label)
+        fan_layout.addWidget(fan_label)
         self._min_fan_change = make_double_spin(
             "Minimum fan change", "%",
             cfg.min_fan_change_pct, 0.0, 20.0, 0.5,
         )
         self._min_fan_change._spin.valueChanged.connect(self._save_min_fan_change)
-        layout.addLayout(self._min_fan_change)
+        fan_layout.addLayout(self._min_fan_change)
+        layout.addWidget(fan_panel)
 
         # ── Program Shortcut ──
         self._shortcut_ctrl = None  # set by MainWindow via set_shortcut_controller
         self._kb = read_keybind_settings()
+        if self._kb.key != 0 and not self._kb.enabled:
+            self._kb = KeybindSettings(enabled=True, mods=self._kb.mods, key=self._kb.key)
+            write_keybind_settings(self._kb)
+
+        shortcut_panel = QWidget()
+        shortcut_panel.setProperty("settingsCard", True)
+        shortcut_panel.setStyleSheet(card_style)
+        shortcut_layout = QVBoxLayout(shortcut_panel)
+        shortcut_layout.setContentsMargins(16, 14, 16, 14)
+        shortcut_layout.setSpacing(12)
 
         shortcut_label = QLabel("Program Shortcut")
         shortcut_label.setStyleSheet(
             f"color: {COLORS['text']}; font-size: 13px; font-weight: bold;"
         )
-        layout.addWidget(shortcut_label)
 
-        hint = QLabel("Set a key or key combination to unhide the program from the tray.\n"
-                      "Single keys like the OMEN key are supported.")
-        hint.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 11px;")
-        hint.setWordWrap(True)
-        layout.addWidget(hint)
+        shortcut_row = QHBoxLayout()
+        shortcut_row.setSpacing(16)
+        shortcut_row.addWidget(shortcut_label)
+        shortcut_row.addStretch()
 
         # Current keybind display + capture/clear buttons
         kb_row = QHBoxLayout()
+        kb_row.setSpacing(8)
         self._kb_value = QLabel(self._shortcut_text(self._kb))
         self._kb_value.setStyleSheet(
             f"color: {COLORS['text']}; font-size: 12px; font-weight: bold;"
@@ -114,25 +137,22 @@ class SettingsPage(QWidget):
 
         self._kb_set_btn = QPushButton("Set shortcut")
         self._kb_set_btn.setFixedWidth(120)
+        self._kb_set_btn.setFixedHeight(34)
         self._kb_set_btn.setStyleSheet(self._shortcut_btn_style(False))
         self._kb_set_btn.clicked.connect(self._on_set_shortcut)
         kb_row.addWidget(self._kb_set_btn)
 
         self._kb_clear_btn = QPushButton("Clear")
         self._kb_clear_btn.setFixedWidth(80)
+        self._kb_clear_btn.setFixedHeight(34)
         self._kb_clear_btn.setEnabled(self._kb.key != 0)
         self._kb_clear_btn.clicked.connect(self._on_clear_shortcut)
         kb_row.addWidget(self._kb_clear_btn)
 
-        kb_row.addStretch()
-        layout.addLayout(kb_row)
+        shortcut_row.addLayout(kb_row)
+        shortcut_layout.addLayout(shortcut_row)
 
-        # Enable toggle
-        self._kb_enable = ToggleSwitch("Enabled")
-        self._kb_enable.setChecked(self._kb.enabled)
-        self._kb_enable.setEnabled(self._kb.key != 0)
-        self._kb_enable.toggled.connect(self._on_shortcut_enabled)
-        layout.addWidget(self._kb_enable)
+        layout.addWidget(shortcut_panel)
 
         layout.addStretch()
 
@@ -159,7 +179,7 @@ class SettingsPage(QWidget):
                 color: #ffffff;
                 border: none;
                 border-radius: 6px;
-                padding: 6px 12px;
+                padding: 8px 12px;
                 font-weight: bold;
                 font-size: 12px;
             }}
@@ -205,28 +225,18 @@ class SettingsPage(QWidget):
 
     def _on_shortcut_captured(self, mods, key: int):
         self._kb = keybind_from_event(mods, key)
+        self._kb = KeybindSettings(enabled=True, mods=self._kb.mods, key=self._kb.key)
         write_keybind_settings(self._kb)
         self._finish_capture()
         self._kb_clear_btn.setEnabled(True)
-        self._kb_enable.setEnabled(True)
-        self._kb_enable.setChecked(True)
         if self._shortcut_ctrl is not None:
             self._shortcut_ctrl.reload_settings()
 
     def _on_clear_shortcut(self):
-        self._kb = KeybindSettings(enabled=self._kb.enabled, mods=(), key=0)
+        self._kb = KeybindSettings(enabled=False, mods=(), key=0)
         write_keybind_settings(self._kb)
         self._finish_capture()
         self._kb_clear_btn.setEnabled(False)
-        self._kb_enable.setEnabled(False)
         if self._shortcut_ctrl is not None:
             self._shortcut_ctrl.cancel_capture()
-            self._shortcut_ctrl.reload_settings()
-
-    def _on_shortcut_enabled(self, checked: bool):
-        self._kb = KeybindSettings(
-            enabled=checked, mods=self._kb.mods, key=self._kb.key,
-        )
-        write_keybind_settings(self._kb)
-        if self._shortcut_ctrl is not None:
             self._shortcut_ctrl.reload_settings()
