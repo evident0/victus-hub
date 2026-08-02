@@ -1249,6 +1249,13 @@ class TopProcessesCard(QFrame):
             }}
         """)
 
+        QTimer.singleShot(
+            0,
+            lambda: self._tree.verticalScrollBar().setStyleSheet(
+                f"margin-top: {self._tree.header().height()}px;"
+            ),
+        )
+
         header = self._tree.header()
         header.setDefaultAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         header.setStretchLastSection(False)
