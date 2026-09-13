@@ -72,6 +72,7 @@ class BigMetric(QWidget):
 
         self._value = QLabel("—")
         self._value.setFont(ui_font(42, 600))
+        self._value.setAlignment(Qt.AlignLeft | Qt.AlignTop)
         self._value.setStyleSheet(
             f"color: {COLORS['text']}; background: transparent; "
             f"font-size: 42px; font-weight: 600; font-family: '{UI_FONT}';"
@@ -79,19 +80,20 @@ class BigMetric(QWidget):
 
         self._unit = QLabel(unit)
         self._unit.setFont(ui_font(unit_size(unit), 400))
+        self._unit.setAlignment(Qt.AlignLeft | Qt.AlignTop)
         self._unit.setStyleSheet(
             f"color: {COLORS['sub']}; background: transparent; "
             f"font-size: {unit_size(unit)}px; font-family: '{UI_FONT}';"
         )
-        self._unit.setContentsMargins(4, 10, 0, 0)
 
         num = QHBoxLayout()
         num.setContentsMargins(0, 0, 0, 0)
         num.setSpacing(0)
-        num.addWidget(self._value, 0, Qt.AlignBottom)
-        num.addWidget(self._unit, 0, Qt.AlignBottom)
+        num.addWidget(self._value, 0, Qt.AlignTop)
+        num.addWidget(self._unit, 0, Qt.AlignTop)
         num.addStretch()
         col.addLayout(num)
+        self._sync_unit_baseline()
 
         self._caption = QLabel(caption)
         self._caption.setFont(ui_font(12))
@@ -108,6 +110,17 @@ class BigMetric(QWidget):
             self._caption.setText(caption)
         if unit is not None:
             self._unit.setText(unit)
+            self._unit.setFont(ui_font(unit_size(unit), 400))
+            self._unit.setStyleSheet(
+                f"color: {COLORS['sub']}; background: transparent; "
+                f"font-size: {unit_size(unit)}px; font-family: '{UI_FONT}';"
+            )
+        self._sync_unit_baseline()
+
+    def _sync_unit_baseline(self) -> None:
+        """Sit °C / rpm on the same baseline as the 42 px reading."""
+        top = self._value.fontMetrics().ascent() - self._unit.fontMetrics().ascent()
+        self._unit.setContentsMargins(4, max(0, top), 0, 0)
 
 
 def unit_size(unit: str) -> int:
