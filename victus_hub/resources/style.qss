@@ -276,4 +276,40 @@ QHeaderView::section {
     text-transform: uppercase;
 }
 
+/* ── Menu ── */
+QMenu {
+    background-color: #202020;
+    color: #ffffff;
+    border: 1px solid #3a3a3a;
+    border-radius: 8px;
+    padding: 4px;
+}
+
+QMenu::item {
+    background-color: transparent;
+    color: #ffffff;
+    padding: 6px 14px;
+    border-radius: 6px;
+    margin: 1px 2px;
+}
+
+QMenu::item:selected {
+    background-color: #303030;
+}
+
+QMenu::item:disabled {
+    color: #9d9d9d;
+}
+
+QMenu::item:selected:disabled {
+    background-color: transparent;
+    color: #9d9d9d;
+}
+
+QMenu::separator {
+    height: 1px;
+    background: #3a3a3a;
+    margin: 4px 8px;
+}
+
 /* Sidebar button styles are set in widgets/sidebar.py for labeled nav. */

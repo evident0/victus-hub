@@ -1,13 +1,14 @@
 """Sensors page with collapsible grouped table (Top Processes visual style)."""
 
 from PySide6.QtWidgets import (
-    QAbstractItemView, QFrame, QHeaderView, QMenu,
+    QAbstractItemView, QFrame, QHeaderView,
     QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget,
 )
 from PySide6.QtCore import Qt, Signal, QTimer
 from PySide6.QtGui import QColor, QAction
 
 from victus_hub.app.theme import COLORS
+from victus_hub.widgets.popup_menu import PopupMenu
 
 _COL_SENSOR = 0
 _COL_CURRENT = 1
@@ -138,7 +139,7 @@ class SensorsPage(QWidget):
         if not key:
             return
 
-        menu = QMenu(self)
+        menu = PopupMenu(self)
         graph_action = QAction("Graph", menu)
         graph_action.setEnabled(graphable)
         if graphable:

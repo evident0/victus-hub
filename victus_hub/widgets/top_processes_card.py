@@ -14,11 +14,12 @@ from pathlib import Path
 from PySide6.QtCore import Qt, QSize, QTimer, Signal
 from PySide6.QtGui import QIcon, QPixmap
 from PySide6.QtWidgets import (
-    QAbstractItemView, QFrame, QHeaderView, QMenu, QVBoxLayout,
+    QAbstractItemView, QFrame, QHeaderView, QVBoxLayout,
     QSizePolicy, QTreeWidget, QTreeWidgetItem,
 )
 
 from victus_hub.app.theme import COLORS
+from victus_hub.widgets.popup_menu import PopupMenu
 
 # Scrollable list — enough slots for mid-size apps, not only browsers.
 _TOP_GROUPS = 30
@@ -1584,7 +1585,7 @@ class TopProcessesCard(QFrame):
         if not pids:
             return
 
-        menu = QMenu(self)
+        menu = PopupMenu(self)
         multi = len(pids) > 1
         force_label = "Force stop all" if multi else "Force stop"
         act_force = menu.addAction(force_label)

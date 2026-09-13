@@ -84,17 +84,17 @@ def request_fan_pwm(pwm: int) -> str:
 def request_keyboard_color(
     red: int, green: int, blue: int, zone: int | None = None,
 ) -> str:
-    """Set keyboard color on all zones, or on one zone when *zone* is given."""
+    """Set keyboard color on all zones, or on one zone when *zone* is given.
+
+    Quiet on purpose: software RGB effects write this at ~20 Hz.
+    """
     if zone is None:
-        logger.info("\u2192 daemon: keyboard-color %d %d %d", red, green, blue)
-        response = _request_daemon(f"keyboard-color\t{red}\t{green}\t{blue}\n")
-    else:
-        logger.info(
-            "\u2192 daemon: keyboard-color zone=%d %d %d %d",
-            zone, red, green, blue,
-        )
         response = _request_daemon(
-            f"keyboard-color\t{zone}\t{red}\t{green}\t{blue}\n"
+            f"keyboard-color\t{red}\t{green}\t{blue}\n", quiet=True,
+        )
+    else:
+        response = _request_daemon(
+            f"keyboard-color\t{zone}\t{red}\t{green}\t{blue}\n", quiet=True,
         )
     return protocol.parse_status_response(response)
 
@@ -144,13 +144,11 @@ def request_power_limits(
     slow_limit: int,
     tctl_temp: int = 95,
 ) -> str:
-    # Noisy when limits are re-applied periodically; keep quiet unless debugging.
-    # logger.info(
-    #     "\u2192 daemon: power-limits STAPM=%d fast=%d slow=%d tctl=%d",
-    #     stapm_limit, fast_limit, slow_limit, tctl_temp,
-    # )
+    logger.info(
+        "\u2192 daemon: power-limits STAPM=%d fast=%d slow=%d tctl=%d",
+        stapm_limit, fast_limit, slow_limit, tctl_temp,
+    )
     response = _request_daemon(
         f"power-limits\t{stapm_limit}\t{fast_limit}\t{slow_limit}\t{tctl_temp}\n",
-        quiet=True,
     )
     return protocol.parse_status_response(response)

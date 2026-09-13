@@ -5,11 +5,12 @@ import logging
 from PySide6.QtCore import Qt, QSettings, QTimer, QEvent
 from PySide6.QtGui import QAction, QCloseEvent, QIcon, QHideEvent, QShowEvent
 from PySide6.QtWidgets import (
-    QApplication, QFrame, QHBoxLayout, QMainWindow, QMenu, QScrollArea,
+    QApplication, QFrame, QHBoxLayout, QMainWindow, QScrollArea,
     QStackedWidget, QSystemTrayIcon, QWidget,
 )
 
 from victus_hub.app.theme import COLORS
+from victus_hub.widgets.popup_menu import PopupMenu
 from victus_hub.widgets.sidebar import Sidebar
 from victus_hub.pages.home_page import HomePage
 from victus_hub.pages.processes_page import ProcessesPage
@@ -118,7 +119,7 @@ class MainWindow(QMainWindow):
         self._tray.setToolTip("Victus Hub")
         self._tray.activated.connect(self._on_tray_activated)
 
-        tray_menu = QMenu()
+        tray_menu = PopupMenu()
         show_action = QAction("Show/Hide", self)
         show_action.triggered.connect(self._toggle_visible)
         tray_menu.addAction(show_action)
@@ -155,7 +156,10 @@ class MainWindow(QMainWindow):
         self._lighting = LightingController(self)
         self._lighting.frame_changed.connect(self._keyboard_page.apply_frame)
         self._keyboard_page.enabled_changed.connect(self._lighting.set_enabled)
+        self._keyboard_page.effect_changed.connect(self._lighting.set_effect)
+        self._keyboard_page.speed_changed.connect(self._lighting.set_speed)
         self._keyboard_page.color_changed.connect(self._lighting.set_color)
+        self._keyboard_page.color2_changed.connect(self._lighting.set_color2)
         self._keyboard_page.zone_color_changed.connect(self._lighting.set_zone_color)
         self._keyboard_page.idle_timeout_changed.connect(self._lighting.set_idle_timeout)
         self._keyboard_page.brightness_changed.connect(self._lighting.set_brightness)

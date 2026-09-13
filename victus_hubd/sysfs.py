@@ -22,7 +22,7 @@ def hp_hwmon() -> Path | None:
 
 
 
-def write_sysfs(path: Path, value: int | str) -> str:
+def write_sysfs(path: Path, value: int | str, quiet: bool = False) -> str:
     """Write a value to a sysfs path; returns path label on success."""
     label = str(path)
     try:
@@ -30,7 +30,8 @@ def write_sysfs(path: Path, value: int | str) -> str:
     except OSError as e:
         logger.error("%s=%s: %s", label, value, e)
         raise RuntimeError(f"{label}: {e}")
-    logger.info("%s=%s", label, value)
+    if not quiet:
+        logger.info("%s=%s", label, value)
     return label
 
 
@@ -113,8 +114,8 @@ _kbd_user_brightness: int = 255
 def _write_led_color(led: Path, red: int, green: int, blue: int) -> str:
     """Write multi_intensity + the user-preferred brightness for one LED."""
     value = f"{red} {green} {blue}"
-    write_sysfs(led / "multi_intensity", value)
-    write_sysfs(led / "brightness", _kbd_user_brightness)
+    write_sysfs(led / "multi_intensity", value, quiet=True)
+    write_sysfs(led / "brightness", _kbd_user_brightness, quiet=True)
     return str(led)
 
 
@@ -130,7 +131,7 @@ def write_keyboard_color(red: int, green: int, blue: int) -> str:
     labels: list[str] = []
     for name in _kbd_rgb_led_names():
         labels.append(_write_led_color(Path(KBD_RGB_LEDS) / name, red, green, blue))
-    logger.info("[keyboard-rgb] color %s -> %s", value, ", ".join(labels))
+    logger.debug("[keyboard-rgb] color %s -> %s", value, ", ".join(labels))
     return labels[0] if labels else KBD_RGB_LEDS
 
 
@@ -141,7 +142,7 @@ def write_keyboard_zone_color(zone: int, red: int, green: int, blue: int) -> str
         raise RuntimeError(f"zone {zone} out of range (0-{max(0, len(names) - 1)})")
     led = Path(KBD_RGB_LEDS) / names[zone]
     label = _write_led_color(led, red, green, blue)
-    logger.info(
+    logger.debug(
         "[keyboard-rgb] zone %d color %d %d %d -> %s",
         zone, red, green, blue, label,
     )

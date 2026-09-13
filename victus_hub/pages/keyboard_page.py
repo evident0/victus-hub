@@ -1,14 +1,15 @@
 """Keyboard page with lighting controls and visual keyboard preview.
 
 Single-zone hardware keeps one color picker. Multi-zone (4-zone) hardware
-shows independent pickers for Right / Center / Left / WASD.
+shows independent pickers for Right / Center / Left / WASD. Software
+effects (breathing, wave, cycle, …) are computed in userspace.
 """
 
 from __future__ import annotations
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
-    QPushButton, QColorDialog, QSlider,
+    QPushButton, QColorDialog, QSlider, QComboBox, QStyleFactory,
 )
 from PySide6.QtCore import Qt, Signal, QRectF
 from PySide6.QtGui import QPainter, QColor, QFont
@@ -20,7 +21,11 @@ from victus_hub.widgets.toggle_switch import ToggleSwitch
 from victus_hub.widgets.status_badge import StatusBadge
 from victus_hub.backend.modules import keyboard_rgb_module
 from victus_hub.features.keyboard.lighting import (
+    EFFECTS_IGNORE_COLOR,
+    EFFECTS_NEED_COLOR2,
     ZONE_NAMES,
+    effects_for_zone_count,
+    normalize_lighting_settings,
     normalize_zone_colors,
     read_lighting_settings,
     write_lighting_settings,
@@ -75,7 +80,7 @@ def _style_color_btn(hex_str: str) -> str:
 
 
 class KeyboardVisual(QWidget):
-    """Visual keyboard preview showing static color(s) (or off)."""
+    """Visual keyboard preview showing per-zone color(s) (or off)."""
 
     def __init__(self, parent=None, zone_count: int = 1):
         super().__init__(parent)
@@ -225,7 +230,10 @@ class KeyboardPage(QWidget):
     """Keyboard lighting tab with controls and visual preview."""
 
     enabled_changed = Signal(bool)
-    color_changed = Signal(str)           # single-zone color
+    effect_changed = Signal(str)
+    speed_changed = Signal(int)
+    color_changed = Signal(str)           # single-zone / primary color
+    color2_changed = Signal(str)          # wave / gradient secondary
     zone_color_changed = Signal(int, str)  # multi-zone: (zone_index, hex)
     idle_timeout_changed = Signal(int)
     brightness_changed = Signal(int)
@@ -234,7 +242,7 @@ class KeyboardPage(QWidget):
         super().__init__(parent)
         self._zone_count = api.get_keyboard_zone_count()
         # Load settings
-        s = read_lighting_settings()
+        s = normalize_lighting_settings(read_lighting_settings(), self._zone_count)
         self._zone_hexes = normalize_zone_colors(
             s.color, s.zone_colors, self._zone_count,
         )
@@ -285,34 +293,120 @@ class KeyboardPage(QWidget):
                 border-radius: 14px;
             }}
         """)
-        ctrl_layout = QHBoxLayout(controls)
+        ctrl_layout = QVBoxLayout(controls)
         ctrl_layout.setContentsMargins(16, 14, 16, 14)
-        ctrl_layout.setSpacing(14)
+        ctrl_layout.setSpacing(12)
+
+        row1 = QHBoxLayout()
+        row1.setContentsMargins(0, 0, 0, 0)
+        row1.setSpacing(14)
 
         # Enable
         self._enable_check = ToggleSwitch("RGB enabled")
         self._enable_check.setChecked(s.enabled)
         self._enable_check.toggled.connect(self._on_enabled_changed)
-        ctrl_layout.addWidget(self._enable_check)
+        row1.addWidget(self._enable_check)
+
+        effect_label = QLabel("Effect")
+        effect_label.setStyleSheet(
+            f"color: {COLORS['text_secondary']}; font-size: 11px;"
+        )
+        row1.addWidget(effect_label)
+
+        self._effect_combo = QComboBox()
+        self._effect_combo.setMinimumWidth(148)
+        self._effect_combo.setFixedHeight(28)
+        self._effect_combo.setMaxVisibleItems(12)
+        fusion = QStyleFactory.create("Fusion")
+        if fusion is not None:
+            fusion.setParent(self._effect_combo)
+            self._effect_combo.setStyle(fusion)
+        for value, label in effects_for_zone_count(self._zone_count):
+            self._effect_combo.addItem(label, value)
+        effect_idx = self._effect_combo.findData(s.effect)
+        self._effect_combo.setCurrentIndex(max(0, effect_idx))
+        self._effect_combo.currentIndexChanged.connect(self._on_effect_changed)
+        row1.addWidget(self._effect_combo)
+
+        speed_label = QLabel("Speed")
+        speed_label.setStyleSheet(
+            f"color: {COLORS['text_secondary']}; font-size: 11px;"
+        )
+        row1.addWidget(speed_label)
+
+        self._speed_slider = QSlider(Qt.Horizontal)
+        self._speed_slider.setRange(1, 100)
+        self._speed_slider.setValue(s.speed)
+        self._speed_slider.setFixedWidth(120)
+        self._speed_slider.setToolTip(f"Effect speed: {s.speed}/100")
+        self._speed_slider.valueChanged.connect(self._on_speed_changed)
+        row1.addWidget(self._speed_slider)
+
+        # Brightness
+        brightness_label = QLabel("Brightness")
+        brightness_label.setStyleSheet(
+            f"color: {COLORS['text_secondary']}; font-size: 11px;"
+        )
+        row1.addWidget(brightness_label)
+
+        self._brightness_slider = QSlider(Qt.Horizontal)
+        self._brightness_slider.setRange(0, 255)
+        self._brightness_slider.setValue(s.brightness)
+        self._brightness_slider.setFixedWidth(120)
+        self._brightness_slider.setToolTip(f"Backlight brightness: {s.brightness}/255")
+        self._brightness_slider.valueChanged.connect(self._on_brightness_changed)
+        row1.addWidget(self._brightness_slider)
+        row1.addStretch()
+        ctrl_layout.addLayout(row1)
+
+        self._colors_row = QWidget()
+        row2 = QHBoxLayout(self._colors_row)
+        row2.setContentsMargins(0, 0, 0, 0)
+        row2.setSpacing(14)
 
         self._color_btn: QPushButton | None = None
+        self._color2_btn: QPushButton | None = None
         self._zone_btns: list[QPushButton] = []
 
-        if self._zone_count <= 1:
-            # Single color (original UI)
-            color_label = QLabel("Color")
-            color_label.setStyleSheet(
-                f"color: {COLORS['text_secondary']}; font-size: 11px;"
-            )
-            ctrl_layout.addWidget(color_label)
+        self._primary_wrap = QWidget()
+        primary_row = QHBoxLayout(self._primary_wrap)
+        primary_row.setContentsMargins(0, 0, 0, 0)
+        primary_row.setSpacing(8)
+        self._primary_label = QLabel("Color")
+        self._primary_label.setStyleSheet(
+            f"color: {COLORS['text_secondary']}; font-size: 11px;"
+        )
+        primary_row.addWidget(self._primary_label)
+        self._color_btn = QPushButton()
+        self._color_btn.setFixedSize(34, 28)
+        self._color_btn.setStyleSheet(_style_color_btn(s.color))
+        self._color_btn.setToolTip("Primary color")
+        self._color_btn.clicked.connect(self._pick_color)
+        primary_row.addWidget(self._color_btn)
+        row2.addWidget(self._primary_wrap)
 
-            self._color_btn = QPushButton()
-            self._color_btn.setFixedSize(34, 28)
-            self._color_btn.setStyleSheet(_style_color_btn(s.color))
-            self._color_btn.clicked.connect(self._pick_color)
-            ctrl_layout.addWidget(self._color_btn)
-        else:
-            # One picker per hardware zone
+        self._color2_wrap = QWidget()
+        color2_row = QHBoxLayout(self._color2_wrap)
+        color2_row.setContentsMargins(0, 0, 0, 0)
+        color2_row.setSpacing(8)
+        color2_label = QLabel("Color 2")
+        color2_label.setStyleSheet(
+            f"color: {COLORS['text_secondary']}; font-size: 11px;"
+        )
+        color2_row.addWidget(color2_label)
+        self._color2_btn = QPushButton()
+        self._color2_btn.setFixedSize(34, 28)
+        self._color2_btn.setStyleSheet(_style_color_btn(s.color2))
+        self._color2_btn.setToolTip("Secondary color")
+        self._color2_btn.clicked.connect(self._pick_color2)
+        color2_row.addWidget(self._color2_btn)
+        row2.addWidget(self._color2_wrap)
+
+        self._zone_wrap = QWidget()
+        zone_row = QHBoxLayout(self._zone_wrap)
+        zone_row.setContentsMargins(0, 0, 0, 0)
+        zone_row.setSpacing(14)
+        if self._zone_count > 1:
             for zone_idx, name in enumerate(ZONE_NAMES[: self._zone_count]):
                 zone_box = QVBoxLayout()
                 zone_box.setContentsMargins(0, 0, 0, 0)
@@ -334,24 +428,12 @@ class KeyboardPage(QWidget):
                 )
                 zone_box.addWidget(btn)
                 self._zone_btns.append(btn)
-                ctrl_layout.addLayout(zone_box)
-
-        # Brightness
-        brightness_label = QLabel("Brightness")
-        brightness_label.setStyleSheet(
-            f"color: {COLORS['text_secondary']}; font-size: 11px;"
-        )
-        ctrl_layout.addWidget(brightness_label)
-
-        self._brightness_slider = QSlider(Qt.Horizontal)
-        self._brightness_slider.setRange(0, 255)
-        self._brightness_slider.setValue(s.brightness)
-        self._brightness_slider.setFixedWidth(120)
-        self._brightness_slider.setToolTip(f"Backlight brightness: {s.brightness}/255")
-        self._brightness_slider.valueChanged.connect(self._on_brightness_changed)
-        ctrl_layout.addWidget(self._brightness_slider)
-        ctrl_layout.addStretch()
+                zone_row.addLayout(zone_box)
+        row2.addWidget(self._zone_wrap)
+        row2.addStretch()
+        ctrl_layout.addWidget(self._colors_row)
         layout.addWidget(controls)
+        self._sync_effect_controls()
 
         # Idle timeout — separate card below RGB controls
         idle_on = s.idle_timeout > 0
@@ -398,25 +480,77 @@ class KeyboardPage(QWidget):
             self._settings.color = self._zone_hexes[0]
         write_lighting_settings(self._settings)
 
+    def _sync_effect_controls(self) -> None:
+        effect = self._settings.effect
+        animated = effect != "static"
+        self._speed_slider.setEnabled(animated)
+        ignore_color = effect in EFFECTS_IGNORE_COLOR
+        need_color2 = effect in EFFECTS_NEED_COLOR2
+        if self._zone_count > 1:
+            show_zones = (not ignore_color) and (not need_color2)
+            show_primary = need_color2
+            if need_color2:
+                self._primary_label.setText("Color 1")
+        else:
+            show_zones = False
+            show_primary = not ignore_color
+            self._primary_label.setText("Color 1" if need_color2 else "Color")
+        self._zone_wrap.setVisible(show_zones)
+        self._primary_wrap.setVisible(show_primary)
+        self._color2_wrap.setVisible(need_color2)
+        self._colors_row.setVisible(show_primary or need_color2 or show_zones)
+
     def _on_enabled_changed(self, checked: bool):
         self._settings.enabled = checked
         self._persist()
         self._apply_visual_from_settings()
         self.enabled_changed.emit(checked)
 
+    def _on_effect_changed(self, index: int):
+        value = self._effect_combo.itemData(index)
+        if not value:
+            return
+        self._settings.effect = str(value)
+        self._persist()
+        self._sync_effect_controls()
+        self._apply_visual_from_settings()
+        self.effect_changed.emit(self._settings.effect)
+
+    def _on_speed_changed(self, value: int):
+        self._settings.speed = max(1, min(100, value))
+        self._speed_slider.setToolTip(f"Effect speed: {value}/100")
+        self._persist()
+        self.speed_changed.emit(self._settings.speed)
+
     def _pick_color(self):
-        """Single-zone color picker (original path)."""
+        """Primary / single-zone color picker."""
         current = QColor(self._settings.color)
         color = QColorDialog.getColor(current, self, "Keyboard Color")
         if color.isValid():
             hex_str = color.name()
             self._settings.color = hex_str
-            self._zone_hexes = [hex_str]
+            if self._zone_count <= 1:
+                self._zone_hexes = [hex_str]
+            elif self._zone_hexes:
+                self._zone_hexes[0] = hex_str
             if self._color_btn is not None:
                 self._color_btn.setStyleSheet(_style_color_btn(hex_str))
             self._persist()
-            self._visual.set_key_state(self._settings.enabled, color)
+            self._apply_visual_from_settings()
             self.color_changed.emit(hex_str)
+
+    def _pick_color2(self):
+        current = QColor(self._settings.color2)
+        color = QColorDialog.getColor(current, self, "Secondary Color")
+        if not color.isValid():
+            return
+        hex_str = color.name()
+        self._settings.color2 = hex_str
+        if self._color2_btn is not None:
+            self._color2_btn.setStyleSheet(_style_color_btn(hex_str))
+        self._persist()
+        self._apply_visual_from_settings()
+        self.color2_changed.emit(hex_str)
 
     def _pick_zone_color(self, zone: int):
         """Multi-zone color picker for one zone."""
