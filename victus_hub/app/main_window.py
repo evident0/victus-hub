@@ -135,6 +135,7 @@ class MainWindow(QMainWindow):
         self._home_page.fans_clicked.connect(lambda: self.set_active_tab(2))
         self._home_page.lighting_clicked.connect(lambda: self.set_active_tab(3))
         self._home_page.power_clicked.connect(lambda: self.set_active_tab(1))
+        self._power_page.limits_applied.connect(self._home_page.refresh_power)
 
         # Sensors: graph pop-out requests
         self._sensors_page.open_graph_requested.connect(self._open_sensor_graph)
@@ -152,6 +153,10 @@ class MainWindow(QMainWindow):
         self._keyboard_page.zone_color_changed.connect(self._lighting.set_zone_color)
         self._keyboard_page.idle_timeout_changed.connect(self._lighting.set_idle_timeout)
         self._keyboard_page.brightness_changed.connect(self._lighting.set_brightness)
+        self._keyboard_page.enabled_changed.connect(
+            lambda *_: self._home_page.refresh_lighting())
+        self._keyboard_page.effect_changed.connect(
+            lambda *_: self._home_page.refresh_lighting())
 
         self._power = PowerLimitController(self)
 
@@ -222,10 +227,6 @@ class MainWindow(QMainWindow):
     def _on_tab_changed(self, index: int):
         self._stack.setCurrentIndex(index)
         self._morph_to_page(index, True)
-        # Gate the keyboard-preview repaint on the Keyboard tab (hardware
-        # writes are unaffected — they run regardless of the active tab).
-        self._lighting.set_ui_active(
-            self._ui_active and self._is_keyboard_tab_current())
 
     def _on_current_page_changed(self, index: int) -> None:
         self._update_min_height(index)
@@ -263,10 +264,6 @@ class MainWindow(QMainWindow):
         if hasattr(self._fans_page, "refresh_accent"):
             self._fans_page.refresh_accent()
 
-
-    def _is_keyboard_tab_current(self) -> bool:
-        return self._stack.currentWidget() is self._keyboard_page
-
     def _update_processes_timer(self) -> None:
         """Run the Processes /proc scan only while visible + on that tab."""
         want = self._ui_active and (self._stack.currentWidget() is self._processes_page)
@@ -294,7 +291,7 @@ class MainWindow(QMainWindow):
         else:
             self._sensor_timer.stop()
             self._profile_timer.stop()
-        self._lighting.set_ui_active(active and self._is_keyboard_tab_current())
+        self._lighting.set_ui_active(active)
         api.set_ui_active(active)
         self._update_processes_timer()
         if active:

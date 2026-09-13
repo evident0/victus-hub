@@ -59,8 +59,10 @@ class LightingController(QObject):
         self._timer.timeout.connect(self._tick)
         self._timer.start()
         # Gate the on-screen keyboard-preview repaint only (NOT hardware
-        # writes): stop repainting a hidden/irrelevant UI. Defaults active
-        # until MainWindow flips it on visibility changes.
+        # writes): stop repainting when the window is hidden. Home and
+        # Keyboard both show a preview, so this follows window visibility
+        # rather than the current tab. Defaults active until MainWindow
+        # flips it on show/hide.
         self._ui_active = True
 
     @property

@@ -9,6 +9,8 @@ POWER_MAX_MW = 55_000
 POWER_STEP_MW = 1_000
 DEFAULT_POWER_LIMIT_MW = 25_000
 DEFAULT_REAPPLY_SECONDS = 5
+REAPPLY_MIN_S = 1
+REAPPLY_MAX_S = 120
 
 TCTL_TEMP_MIN_C = 75
 TCTL_TEMP_MAX_C = 95
@@ -35,6 +37,11 @@ def clamp_tctl_temp(value: int) -> int:
     return max(TCTL_TEMP_MIN_C, min(TCTL_TEMP_MAX_C, int(value)))
 
 
+def clamp_reapply_seconds(value: int) -> int:
+    """Clamp the ryzenadj reapply interval to 1–120 seconds."""
+    return max(REAPPLY_MIN_S, min(REAPPLY_MAX_S, int(value)))
+
+
 def read_power_enabled() -> bool:
     settings = QSettings()
     return settings.value("powerLimits/enabled", False, type=bool)
@@ -56,7 +63,7 @@ def read_power_limit_settings() -> PowerLimitSettings:
             int(settings.value("powerLimits/slow", DEFAULT_POWER_LIMIT_MW))),
         tctl_temp=clamp_tctl_temp(
             int(settings.value("powerLimits/tctlTemp", DEFAULT_TCTL_TEMP_C))),
-        reapply_seconds=max(1, int(settings.value(
+        reapply_seconds=clamp_reapply_seconds(int(settings.value(
             "powerLimits/reapplySeconds", DEFAULT_REAPPLY_SECONDS))),
     )
 
@@ -67,4 +74,4 @@ def write_power_limit_settings(s: PowerLimitSettings):
     settings.setValue("powerLimits/fast", clamp_power_limit(s.fast_limit))
     settings.setValue("powerLimits/slow", clamp_power_limit(s.slow_limit))
     settings.setValue("powerLimits/tctlTemp", clamp_tctl_temp(s.tctl_temp))
-    settings.setValue("powerLimits/reapplySeconds", max(1, s.reapply_seconds))
+    settings.setValue("powerLimits/reapplySeconds", clamp_reapply_seconds(s.reapply_seconds))

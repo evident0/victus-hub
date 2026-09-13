@@ -5,7 +5,7 @@ import threading
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QSizePolicy, QLabel, QSlider,
 )
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 
 from victus_hub.app.theme import COLORS, mono_font, ui_font
 from victus_hub.widgets.toggle_switch import ToggleSwitch
@@ -13,8 +13,9 @@ from victus_hub.backend.modules import ryzenadj_available
 from victus_hub.widgets.chrome import PageHead, hairline
 from victus_hub.features.power.limits import (
     POWER_MIN_MW, POWER_MAX_MW,
+    REAPPLY_MIN_S, REAPPLY_MAX_S,
     TCTL_TEMP_MIN_C, TCTL_TEMP_MAX_C,
-    PowerLimitSettings, clamp_power_limit, clamp_tctl_temp,
+    PowerLimitSettings, clamp_power_limit, clamp_reapply_seconds, clamp_tctl_temp,
     read_power_enabled, write_power_enabled,
     read_power_limit_settings, write_power_limit_settings,
 )
@@ -57,6 +58,8 @@ class _SliderRow(QWidget):
 
 class PowerPage(QWidget):
     """Power tab: limit sliders, apply, and auto-reapply."""
+
+    limits_applied = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -125,9 +128,9 @@ class PowerPage(QWidget):
         layout.addWidget(hairline())
 
         self._reapply_spin = _SliderRow(
-            "Reapply", 1, 60, self._reapply_seconds, "s",
+            "Reapply", REAPPLY_MIN_S, REAPPLY_MAX_S,
+            clamp_reapply_seconds(self._reapply_seconds), "s",
         )
-        self._reapply_spin.slider.setRange(1, 3600)
         self._reapply_spin.slider.valueChanged.connect(self._on_reapply_changed)
         layout.addWidget(self._reapply_spin)
 
@@ -162,20 +165,21 @@ class PowerPage(QWidget):
         self._update_apply_enabled()
 
     def _on_reapply_changed(self, value: int):
-        self._reapply_seconds = max(1, value)
+        self._reapply_seconds = clamp_reapply_seconds(value)
         applied = read_power_limit_settings()
         write_power_limit_settings(PowerLimitSettings(
             stapm_limit=applied.stapm_limit,
             fast_limit=applied.fast_limit,
             slow_limit=applied.slow_limit,
             tctl_temp=applied.tctl_temp,
-            reapply_seconds=self._reapply_seconds,
+            reapply_seconds=clamp_reapply_seconds(self._reapply_seconds),
         ))
 
     def _on_power_enabled_changed(self, checked: bool):
         self._power_enabled = checked
         write_power_enabled(checked)
         self._update_apply_enabled()
+        self.limits_applied.emit()
 
     def _power_values_dirty(self) -> bool:
         return (
@@ -200,6 +204,7 @@ class PowerPage(QWidget):
         self._applied_slow = settings.slow_limit
         self._applied_tctl = settings.tctl_temp
         self._update_apply_enabled()
+        self.limits_applied.emit()
 
         def _apply():
             try:
@@ -220,7 +225,7 @@ class PowerPage(QWidget):
             fast_limit=self._fast_limit,
             slow_limit=self._slow_limit,
             tctl_temp=self._tctl_temp,
-            reapply_seconds=self._reapply_seconds,
+            reapply_seconds=clamp_reapply_seconds(self._reapply_seconds),
         )
 
     def sync_power_from_settings(self):

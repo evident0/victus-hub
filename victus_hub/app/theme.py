@@ -6,7 +6,7 @@ from pathlib import Path
 
 from PySide6.QtGui import QColor, QFont, QFontDatabase
 
-# Warm dark panel. Names match the Ohman XAML resources; older keys stay as
+# Neutral dark panel. Names match the Ohman XAML resources; older keys stay as
 # aliases so existing widgets keep working after the restyle.
 ECO = "#2FBF8F"
 BALANCED = "#3F8CFF"
@@ -19,27 +19,27 @@ MODE_COLORS = (ECO, BALANCED, PERF)
 MODE_NAMES = ("Eco", "Balanced", "Performance")
 
 COLORS = {
-    "bg": "#161311",
-    "card": "#161311",
-    "sunken": "#0F0D0B",
-    "well": "#0D0B0A",
-    "pill": "#201C19",
-    "line": "#2C2825",
-    "line2": "#272320",
-    "edge": "#343029",
-    "track": "#312D2A",
-    "switch_off": "#36322F",
-    "knob_off": "#8A8581",
-    "text": "#EDEAE8",
-    "text_hi": "#F4F1EF",
-    "seg_text": "#A8A3A0",
-    "hex": "#A29D99",
-    "sub": "#96918D",
-    "desc": "#908B87",
-    "status": "#8A8581",
-    "axis": "#847F7B",
-    "foot": "#7E7976",
-    "section": "#787370",
+    "bg": "#161616",
+    "card": "#161616",
+    "sunken": "#0F0F0F",
+    "well": "#0D0D0D",
+    "pill": "#202020",
+    "line": "#2C2C2C",
+    "line2": "#272727",
+    "edge": "#343434",
+    "track": "#313131",
+    "switch_off": "#363636",
+    "knob_off": "#8A8A8A",
+    "text": "#EDEDED",
+    "text_hi": "#F4F4F4",
+    "seg_text": "#A8A8A8",
+    "hex": "#A2A2A2",
+    "sub": "#969696",
+    "desc": "#909090",
+    "status": "#8A8A8A",
+    "axis": "#848484",
+    "foot": "#7E7E7E",
+    "section": "#787878",
     "accent": BALANCED,
     "accent_hi": "#6BA6FF",
     "ok": OK,
@@ -49,14 +49,14 @@ COLORS = {
     "balanced": BALANCED,
     "perf": PERF,
     # aliases used by older widgets
-    "surface": "#161311",
-    "surface_raised": "#201C19",
-    "text_secondary": "#96918D",
+    "surface": "#161616",
+    "surface_raised": "#202020",
+    "text_secondary": "#969696",
     "accent_blue": BALANCED,
     "accent_green": ECO,
     "accent_red": DANGER,
-    "border": "#2C2825",
-    "border_focus": "#343029",
+    "border": "#2C2C2C",
+    "border_focus": "#343434",
 }
 
 UI_FONT = "IBM Plex Sans"

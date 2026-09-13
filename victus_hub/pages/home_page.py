@@ -10,7 +10,11 @@ from PySide6.QtCore import Qt, Signal
 from victus_hub.widgets.profile_section import ProfileSection
 from victus_hub.widgets.chrome import PageHead, BigMetric, FooterBar, hairline
 from victus_hub.app.theme import COLORS, mode_name, ui_font
-from victus_hub.features.keyboard.lighting import read_lighting_settings
+from victus_hub.features.keyboard.lighting import (
+    lighting_frames,
+    normalize_lighting_settings,
+    read_lighting_settings,
+)
 from victus_hub.features.power.limits import read_power_limit_settings, read_power_enabled
 
 
@@ -118,7 +122,8 @@ class HomePage(QWidget):
 
         from victus_hub import api as _api
         from victus_hub.pages.keyboard_page import KeyboardVisual
-        self._mini = KeyboardVisual(zone_count=_api.get_keyboard_zone_count(), compact=True)
+        self._zone_count = _api.get_keyboard_zone_count()
+        self._mini = KeyboardVisual(zone_count=self._zone_count, compact=True)
         self._mini.setFixedSize(145, 64)
         lr.addWidget(self._mini, 0, Qt.AlignVCenter)
         l_arrow = QLabel("→")
@@ -136,8 +141,8 @@ class HomePage(QWidget):
         self._footer.set_right("v0.1.0")
         layout.addWidget(self._footer)
 
-        self._refresh_power_row()
-        self._refresh_light_row()
+        self.refresh_power()
+        self.refresh_lighting()
 
     def update_sensor_data(self, snapshot):
         """Refresh the four home readings from a sensor snapshot."""
@@ -198,10 +203,10 @@ class HomePage(QWidget):
         self._light_arrow.setStyleSheet(
             f"color: {COLORS['accent']}; background: transparent;"
         )
-        self._refresh_power_row()
-        self._refresh_light_row()
+        self.refresh_power()
+        self.refresh_lighting()
 
-    def _refresh_power_row(self) -> None:
+    def refresh_power(self) -> None:
         if not read_power_enabled():
             self._power_sub.setText("Limits off")
             return
@@ -209,10 +214,12 @@ class HomePage(QWidget):
         watts = round(pwr.stapm_limit / 1000)
         self._power_sub.setText(f"STAPM {watts} W")
 
-    def _refresh_light_row(self) -> None:
+    def refresh_lighting(self) -> None:
+        """Sync the lighting caption and mini keyboard from saved settings."""
         s = read_lighting_settings()
         if not s.enabled:
             self._light_sub.setText("Off")
+            self._mini.set_zone_state(False, [])
             return
         effect = (s.effect or "static").replace("_", " ").title()
         zones = len(s.zone_colors) if s.zone_colors else 1
@@ -220,3 +227,9 @@ class HomePage(QWidget):
             self._light_sub.setText(f"{effect} · {zones} zones")
         else:
             self._light_sub.setText(effect)
+        frames = lighting_frames(
+            normalize_lighting_settings(s, self._zone_count),
+            self._zone_count,
+            0.0,
+        )
+        self.apply_frame(frames)

@@ -87,7 +87,7 @@ class KeyboardVisual(QWidget):
     def __init__(self, parent=None, zone_count: int = 1, compact: bool = False):
         super().__init__(parent)
         self._zone_count = max(1, zone_count)
-        self._zone_colors = [QColor("#201C19")] * self._zone_count
+        self._zone_colors = [QColor(COLORS["pill"])] * self._zone_count
         self._enabled = False
         self._compact = compact
         if compact:
@@ -177,7 +177,7 @@ class KeyboardVisual(QWidget):
                 key_center_x = flex_x + gap_u + kw / 2
                 color = self._color_for_key(label, key_center_x)
                 if not self._enabled:
-                    color = QColor("#201C19")
+                    color = QColor(COLORS["pill"])
 
                 if self._enabled and color.value() > 30 and not compact:
                     glow = QColor(color)
@@ -197,9 +197,9 @@ class KeyboardVisual(QWidget):
                     font.setPixelSize(font_size)
                     painter.setFont(font)
                     brightness = (color.red() * 299 + color.green() * 587 + color.blue() * 114) / 1000
-                    text_color = QColor("#161311") if brightness > 150 else QColor("#EDEAE8")
+                    text_color = QColor(COLORS["bg"]) if brightness > 150 else QColor(COLORS["text"])
                     if not self._enabled:
-                        text_color = QColor("#5C5855")
+                        text_color = QColor("#5C5C5C")
                     painter.setPen(text_color)
                     painter.drawText(key_rect, Qt.AlignCenter, label)
 

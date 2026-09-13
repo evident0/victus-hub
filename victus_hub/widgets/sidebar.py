@@ -1,4 +1,4 @@
-"""62 px Ohman rail: diamond mark, sliding pill, stroke icons, settings at the bottom."""
+"""62 px rail: sliding pill, stroke icons, settings at the bottom."""
 
 from __future__ import annotations
 
@@ -7,11 +7,11 @@ import math
 from PySide6.QtCore import (
     QByteArray, QEasingCurve, QPoint, QPropertyAnimation, QRect, QTimer, Qt, Signal,
 )
-from PySide6.QtGui import QColor, QLinearGradient, QPainter, QPainterPath
+from PySide6.QtGui import QColor, QPainter
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import QSizePolicy, QVBoxLayout, QWidget
 
-from victus_hub.app.theme import COLORS, mix_hex
+from victus_hub.app.theme import COLORS
 
 
 def _gear_path(cx: float = 12, cy: float = 12, r_out: float = 10,
@@ -47,8 +47,8 @@ _ICONS: list[tuple[str, str, list[str], list[str]]] = [
      [],
      ["M13 2 L4 14 L11 14 L10 22 L20 9 L13 9 Z"]),
     ("Fans", "fans",
-     ["M10.827 16.379a6.082 6.082 0 0 1-8.618-7.002l5.412 1.45a6.082 6.082 0 0 1 7.002-8.618l-1.45 5.412a6.082 6.082 0 0 1 8.618 7.002l-5.412-1.45a6.082 6.082 0 0 1-7.002 8.618l1.45-5.412Z",
-      "M12 11.5 A0.6 0.6 0 1 0 12 12.7 A0.6 0.6 0 1 0 12 11.5 Z"],
+     ["M3 8.5 C5.5 5.5 8.5 11.5 12 8.5 C15.5 5.5 18.5 11.5 21 8.5 "
+      "M3 15.5 C5.5 12.5 8.5 18.5 12 15.5 C15.5 12.5 18.5 18.5 21 15.5"],
      []),
     ("Keyboard", "keyboard",
      ["M2.5 7.5 A2 2 0 0 1 4.5 5.5 H19.5 A2 2 0 0 1 21.5 7.5 V16.5 A2 2 0 0 1 19.5 18.5 H4.5 A2 2 0 0 1 2.5 16.5 Z M6 9.5 H6.4 M9.8 9.5 H10.2 M13.6 9.5 H14 M17.4 9.5 H17.8 M6 12.5 H6.4 M9.8 12.5 H10.2 M13.6 12.5 H14 M17.4 12.5 H17.8 M7.5 15.5 H16.5"],
@@ -77,36 +77,6 @@ def _svg(strokes: list[str], fills: list[str], color: str) -> QSvgRenderer:
         parts.append(f'<path d="{d}" fill="{color}" fill-rule="evenodd"/>')
     parts.append("</svg>")
     return QSvgRenderer(QByteArray("".join(parts).encode("utf-8")))
-
-
-class _Mark(QWidget):
-    """13 px diamond in the live accent, rotated 45°."""
-
-    clicked = Signal()
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setFixedSize(RAIL_W, 50)
-        self.setCursor(Qt.PointingHandCursor)
-        self.setToolTip("Home")
-
-    def mousePressEvent(self, event):
-        if event.button() == Qt.LeftButton:
-            self.clicked.emit()
-
-    def paintEvent(self, _event):
-        p = QPainter(self)
-        p.setRenderHint(QPainter.Antialiasing)
-        p.translate(self.width() / 2, self.height() / 2 + 2)
-        p.rotate(45)
-        path = QPainterPath()
-        path.addRoundedRect(-6.5, -6.5, 13, 13, 2, 2)
-        g = QLinearGradient(-6.5, -6.5, 6.5, 6.5)
-        accent = COLORS["accent"]
-        g.setColorAt(0, QColor(mix_hex(accent, "#FFFFFF", 0.26)))
-        g.setColorAt(1, QColor(mix_hex(accent, "#000000", 0.30)))
-        p.fillPath(path, g)
-        p.end()
 
 
 class _NavBtn(QWidget):
@@ -176,10 +146,11 @@ class Sidebar(QWidget):
         super().__init__(parent)
         self.setFixedWidth(RAIL_W)
         self.setObjectName("sidebar")
-        self.setStyleSheet(
-            f"#sidebar {{ background-color: {COLORS['sunken']}; "
-            f"border-right: 1px solid {COLORS['line2']}; }}"
-        )
+        self.setAttribute(Qt.WA_StyledBackground, True)
+        self.setAutoFillBackground(True)
+        pal = self.palette()
+        pal.setColor(self.backgroundRole(), QColor(COLORS["sunken"]))
+        self.setPalette(pal)
 
         self._buttons: list[_NavBtn] = []
         self._active_index = 0
@@ -190,14 +161,9 @@ class Sidebar(QWidget):
         self._pill_anim.setDuration(280)
         self._pill_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
 
-        self._mark = _Mark(self)
-        self._mark.clicked.connect(lambda: self.set_active(0))
-
         layout = QVBoxLayout(self)
-        layout.setContentsMargins((RAIL_W - BTN) // 2, 0, (RAIL_W - BTN) // 2, 20)
+        layout.setContentsMargins((RAIL_W - BTN) // 2, 20, (RAIL_W - BTN) // 2, 20)
         layout.setSpacing(4)
-        layout.addWidget(self._mark)
-        layout.addSpacing(4)
 
         for i, (tip, _key, strokes, fills) in enumerate(_ICONS):
             btn = _NavBtn(i, tip, strokes, fills)
@@ -227,13 +193,17 @@ class Sidebar(QWidget):
         self._place_pill(True)
         self.tab_changed.emit(index)
 
+    def paintEvent(self, _event):
+        p = QPainter(self)
+        p.fillRect(self.rect(), QColor(COLORS["sunken"]))
+        p.setPen(QColor(COLORS["line2"]))
+        x = self.width() - 1
+        p.drawLine(x, 0, x, self.height())
+        p.end()
+
     def refresh_accent(self) -> None:
-        self._mark.update()
         self._pill.update()
-        self.setStyleSheet(
-            f"#sidebar {{ background-color: {COLORS['sunken']}; "
-            f"border-right: 1px solid {COLORS['line2']}; }}"
-        )
+        self.update()
 
     def showEvent(self, event):
         super().showEvent(event)
@@ -249,7 +219,6 @@ class Sidebar(QWidget):
         target = QPoint(top_left.x(), top_left.y())
         self._pill.resize(BTN, BTN)
         self._pill.lower()
-        self._mark.raise_()
         for b in self._buttons:
             b.raise_()
         if not animate or not self._pill.isVisible():
