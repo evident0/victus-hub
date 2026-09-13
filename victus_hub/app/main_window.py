@@ -5,7 +5,7 @@ import logging
 from PySide6.QtCore import Qt, QSettings, QTimer, QEvent
 from PySide6.QtGui import QAction, QCloseEvent, QIcon, QHideEvent, QShowEvent
 from PySide6.QtWidgets import (
-    QApplication, QHBoxLayout, QMainWindow, QMenu, QScrollArea,
+    QApplication, QFrame, QHBoxLayout, QMainWindow, QMenu, QScrollArea,
     QStackedWidget, QSystemTrayIcon, QWidget,
 )
 
@@ -54,6 +54,15 @@ class MainWindow(QMainWindow):
         # Sidebar
         self._sidebar = Sidebar()
         layout.addWidget(self._sidebar)
+
+        sidebar_sep = QFrame()
+        sidebar_sep.setObjectName("sidebarSeparator")
+        sidebar_sep.setFrameShape(QFrame.VLine)
+        sidebar_sep.setFixedWidth(1)
+        sidebar_sep.setStyleSheet(
+            f"background-color: {COLORS['border']}; border: none;"
+        )
+        layout.addWidget(sidebar_sep)
 
         # Stacked pages — wrapped in a scroll area so corner-tiling (KDE)
         # scrolls instead of squishing the content below its minimum size.

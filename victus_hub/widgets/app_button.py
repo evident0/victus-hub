@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from PySide6.QtWidgets import QToolButton, QSizePolicy
-from PySide6.QtCore import Qt, QSize
+from PySide6.QtWidgets import QToolButton, QSizePolicy, QPushButton
+from PySide6.QtCore import Qt, QSize, Signal
 from PySide6.QtGui import QFont
 
 from victus_hub.app.icon_utils import load_icon
@@ -15,10 +15,13 @@ class AppButton(QToolButton):
 
     When *icon* is an image path, the icon is shown above the label
     (``ToolButtonTextUnderIcon``). Unicode icons fall back to stacked text.
+    Optional *has_action* draws a settings cog inside the tile.
     """
 
+    action_requested = Signal()
+
     def __init__(self, label: str, icon: str | None, accent: str,
-                 selected: bool = False, parent=None):
+                 selected: bool = False, has_action: bool = False, parent=None):
         super().__init__(parent)
         self._label = label
         self._icon_spec = icon
@@ -26,6 +29,7 @@ class AppButton(QToolButton):
         self._selected = selected
         self._enabled = True
         self._has_image_icon = False
+        self._cog: QPushButton | None = None
 
         self.setMinimumHeight(88)
         self.setMinimumWidth(100)
@@ -56,7 +60,23 @@ class AppButton(QToolButton):
         font = QFont("", 11, QFont.Bold)
         self.setFont(font)
 
+        if has_action:
+            cog = QPushButton(self)
+            cog.setObjectName("appBtnCog")
+            cog.setIcon(load_icon("settings.png", size=18))
+            cog.setIconSize(QSize(18, 18))
+            cog.setFixedSize(28, 28)
+            cog.setCursor(Qt.PointingHandCursor)
+            cog.setToolTip("Open fan curves editor")
+            cog.clicked.connect(self.action_requested.emit)
+            self._cog = cog
+
         self._update_style()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if self._cog is not None:
+            self._cog.move(self.width() - self._cog.width() - 8, 8)
 
     def set_selected(self, selected: bool):
         """Update the selected visual state."""
@@ -79,9 +99,22 @@ class AppButton(QToolButton):
         self._update_style()
 
     def _update_style(self):
-        # Extra top/bottom padding when icon sits above text
+        # Extra top/bottom padding when icon sits above text.
+        # Selected outline is 1px thicker than the idle border; shrink
+        # padding by the same amount so the tile does not grow.
         pad = "10px 6px 8px 6px" if self._has_image_icon else "8px 4px"
-        pad_selected = "8px 4px 6px 4px" if self._has_image_icon else "6px 2px"
+        pad_selected = "9px 5px 7px 5px" if self._has_image_icon else "7px 3px"
+
+        cog = f"""
+            QPushButton#appBtnCog {{
+                background: transparent;
+                border: none;
+                border-radius: 14px;
+            }}
+            QPushButton#appBtnCog:hover {{
+                background-color: {COLORS['surface_raised']};
+            }}
+        """
 
         if not self._enabled:
             self.setStyleSheet(f"""
@@ -92,6 +125,7 @@ class AppButton(QToolButton):
                     border-radius: 6px;
                     padding: {pad};
                 }}
+                {cog}
             """)
             return
 
@@ -103,13 +137,14 @@ class AppButton(QToolButton):
                 QToolButton {{
                     background-color: {bg};
                     color: {text_color};
-                    border: 3px solid {self._accent};
+                    border: 2px solid {self._accent};
                     border-radius: 6px;
                     padding: {pad_selected};
                 }}
                 QToolButton:hover {{
                     background-color: #3a3a3a;
                 }}
+                {cog}
             """)
         else:
             self.setStyleSheet(f"""
@@ -126,4 +161,5 @@ class AppButton(QToolButton):
                 QToolButton:pressed {{
                     background-color: #3a3a3a;
                 }}
+                {cog}
             """)

@@ -13,8 +13,8 @@ TABS = [
     ("keyboard.png", "Keyboard"),
     ("thermometer.png", "Sensors"),
     ("list.png", "Processes"),
-    ("settings.png", "Settings"),
 ]
+SETTINGS_TAB = ("settings.png", "Settings")
 
 
 class Sidebar(QWidget):
@@ -32,7 +32,6 @@ class Sidebar(QWidget):
         self.setStyleSheet(f"""
             #sidebar {{
                 background-color: {COLORS['surface']};
-                border-right: 1px solid {COLORS['border']};
             }}
         """)
 
@@ -45,20 +44,24 @@ class Sidebar(QWidget):
         self._active_index = 0
 
         for i, (icon_file, label) in enumerate(TABS):
-            btn = QPushButton(f"  {label}")
-            btn.setIcon(load_icon(icon_file, size=self._ICON))
-            btn.setIconSize(QSize(self._ICON, self._ICON))
-            btn.setToolTip(label)
-            btn.setCursor(Qt.PointingHandCursor)
-            btn.setObjectName("sidebarBtn")
-            btn.setProperty("active", i == 0)
-            btn.setFixedHeight(42)
-            btn.setStyleSheet(self._btn_style(i == 0))
-            btn.clicked.connect(lambda checked=False, idx=i: self.set_active(idx))
-            layout.addWidget(btn)
-            self._buttons.append(btn)
+            self._add_tab(layout, i, icon_file, label)
 
         layout.addStretch()
+        self._add_tab(layout, len(TABS), *SETTINGS_TAB)
+
+    def _add_tab(self, layout: QVBoxLayout, index: int, icon_file: str, label: str) -> None:
+        btn = QPushButton(f"  {label}")
+        btn.setIcon(load_icon(icon_file, size=self._ICON))
+        btn.setIconSize(QSize(self._ICON, self._ICON))
+        btn.setToolTip(label)
+        btn.setCursor(Qt.PointingHandCursor)
+        btn.setObjectName("sidebarBtn")
+        btn.setProperty("active", index == 0)
+        btn.setFixedHeight(42)
+        btn.setStyleSheet(self._btn_style(index == 0))
+        btn.clicked.connect(lambda checked=False, idx=index: self.set_active(idx))
+        layout.addWidget(btn)
+        self._buttons.append(btn)
 
     def _btn_style(self, active: bool) -> str:
         if active:

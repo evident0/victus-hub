@@ -11,7 +11,6 @@ from PySide6.QtCore import Qt, Signal
 
 from victus_hub import api
 from victus_hub.widgets.app_button import AppButton
-from victus_hub.widgets.segmented_control import SegmentedControl
 from victus_hub.features.gpu.mux import GpuMuxMode, read_gpu_mux_state
 from victus_hub.app.theme import COLORS
 from victus_hub.backend.nvidia import get_gpu_name
@@ -27,9 +26,9 @@ PROFILES = [
 ]
 
 FAN_MODES = [
-    ("auto", "Auto", False),
-    ("max", "Max", False),
-    ("custom", "Custom", True),
+    ("auto", "Auto", "wind.png", COLORS["accent_green"], False),
+    ("max", "Max", "flame.png", COLORS["accent_red"], False),
+    ("custom", "Custom", "sparkles.png", COLORS["accent_blue"], True),
 ]
 
 _MUX_ACCENTS = (
@@ -116,14 +115,19 @@ class ProfileSection(QWidget):
         root.addLayout(fan_title_row)
         root.addSpacing(10)
         fan_row = QHBoxLayout()
-        fan_row.setSpacing(8)
-        fan_row.addStretch()
-        self._fan_segments = SegmentedControl(FAN_MODES)
-        self._fan_segments.setFixedWidth(360)
-        self._fan_segments.segment_selected.connect(self._on_fan_select)
-        self._fan_segments.action_requested.connect(self._on_fan_action)
-        fan_row.addWidget(self._fan_segments)
-        fan_row.addStretch()
+        fan_row.setSpacing(10)
+        self._fan_buttons: dict[str, AppButton] = {}
+        for key, label, icon, accent, has_action in FAN_MODES:
+            btn = AppButton(
+                label, icon, accent,
+                selected=(key == self._selected_fan_mode),
+                has_action=has_action,
+            )
+            btn.clicked.connect(lambda _, k=key: self._on_fan_select(k))
+            if has_action:
+                btn.action_requested.connect(self._on_fan_action)
+            fan_row.addWidget(btn, 1)
+            self._fan_buttons[key] = btn
         root.addLayout(fan_row)
 
         # ── GPU MUX ──
@@ -214,13 +218,16 @@ class ProfileSection(QWidget):
 
     def set_selected_fan_mode(self, mode: str):
         self._selected_fan_mode = mode
-        self._fan_segments.set_selected(mode)
+        for key, btn in self._fan_buttons.items():
+            btn.set_selected(key == mode)
 
     def _on_fan_select(self, mode: str):
-        self._selected_fan_mode = mode
+        if mode == self._selected_fan_mode:
+            return
+        self.set_selected_fan_mode(mode)
         self.fan_mode_selected.emit(mode)
 
-    def _on_fan_action(self, _key: str):
+    def _on_fan_action(self):
         self.fan_curves_popout_requested.emit()
 
     # ── GPU MUX ──

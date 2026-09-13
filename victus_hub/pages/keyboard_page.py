@@ -245,6 +245,7 @@ class KeyboardPage(QWidget):
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(16, 12, 16, 12)
+        layout.setSpacing(12)
         # Title row
         title_row = QHBoxLayout()
         title_row.setContentsMargins(0, 0, 0, 0)
@@ -274,7 +275,7 @@ class KeyboardPage(QWidget):
         keyboard_layout.addWidget(self._visual)
         layout.addWidget(keyboard_panel, 1)
 
-        # Controls grid
+        # RGB controls
         controls = QWidget()
         controls.setObjectName("keyboardControls")
         controls.setStyleSheet(f"""
@@ -349,19 +350,38 @@ class KeyboardPage(QWidget):
         self._brightness_slider.setToolTip(f"Backlight brightness: {s.brightness}/255")
         self._brightness_slider.valueChanged.connect(self._on_brightness_changed)
         ctrl_layout.addWidget(self._brightness_slider)
-
-        # Idle timeout
-        self._idle_timeout = make_spin(
-            "Idle timeout", "s",
-            s.idle_timeout, 0, 600,
-            compact=True,
-        )
-        self._idle_timeout._spin.setSpecialValueText("Off")
-        self._idle_timeout._spin.valueChanged.connect(self._on_idle_timeout_changed)
-        ctrl_layout.addLayout(self._idle_timeout)
-
         ctrl_layout.addStretch()
         layout.addWidget(controls)
+
+        # Idle timeout — separate card below RGB controls
+        idle_on = s.idle_timeout > 0
+        idle_value = s.idle_timeout if idle_on else 30
+        idle_card = QWidget()
+        idle_card.setObjectName("keyboardIdle")
+        idle_card.setStyleSheet(f"""
+            QWidget#keyboardIdle {{
+                background-color: {COLORS['surface']};
+                border: 1px solid {COLORS['border']};
+                border-radius: 14px;
+            }}
+        """)
+        idle_row = QHBoxLayout(idle_card)
+        idle_row.setContentsMargins(16, 14, 16, 14)
+        idle_row.setSpacing(14)
+        self._idle_check = ToggleSwitch("Idle timeout")
+        self._idle_check.setChecked(idle_on)
+        self._idle_check.toggled.connect(self._on_idle_enabled_changed)
+        idle_row.addWidget(self._idle_check)
+        self._idle_timeout = make_spin(
+            "Idle timeout", "s",
+            idle_value, 1, 600,
+            compact=True,
+        )
+        self._idle_timeout._spin.setEnabled(idle_on)
+        self._idle_timeout._spin.valueChanged.connect(self._on_idle_timeout_changed)
+        idle_row.addLayout(self._idle_timeout)
+        idle_row.addStretch()
+        layout.addWidget(idle_card)
 
     def _apply_visual_from_settings(self) -> None:
         if self._zone_count <= 1:
@@ -415,8 +435,30 @@ class KeyboardPage(QWidget):
         self._apply_visual_from_settings()
         self.zone_color_changed.emit(zone, hex_str)
 
+    def _effective_idle_timeout(self) -> int:
+        if not self._idle_check.isChecked():
+            return 0
+        return max(1, self._idle_timeout._spin.value())
+
+    def _commit_idle_timeout(self) -> None:
+        value = self._effective_idle_timeout()
+        self._settings.idle_timeout = value
+        self._persist()
+        self.idle_timeout_changed.emit(value)
+
+    def _on_idle_enabled_changed(self, checked: bool):
+        spin = self._idle_timeout._spin
+        if checked and spin.value() < 1:
+            spin.blockSignals(True)
+            spin.setValue(30)
+            spin.blockSignals(False)
+        spin.setEnabled(checked)
+        self._commit_idle_timeout()
+
     def _on_idle_timeout_changed(self, value: int):
-        self._settings.idle_timeout = max(0, value)
+        if not self._idle_check.isChecked():
+            return
+        self._settings.idle_timeout = max(1, value)
         self._persist()
         self.idle_timeout_changed.emit(self._settings.idle_timeout)
 

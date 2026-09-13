@@ -2,7 +2,9 @@
 
 import threading
 
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton
+from PySide6.QtWidgets import (
+    QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QSizePolicy,
+)
 from PySide6.QtCore import Qt
 
 from victus_hub.app.theme import COLORS
@@ -85,32 +87,6 @@ class PowerPage(QWidget):
         self._tctl_spin._spin.valueChanged.connect(self._on_tctl_changed)
         limits_layout.addLayout(self._tctl_spin)
 
-        self._apply_btn = QPushButton("Apply")
-        self._apply_btn.setCursor(Qt.PointingHandCursor)
-        self._apply_btn.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {COLORS['accent_blue']};
-                color: #ffffff;
-                border: none;
-                border-radius: 6px;
-                padding: 8px 16px;
-                font-weight: bold;
-                font-size: 13px;
-            }}
-            QPushButton:hover {{
-                background-color: #4db8f2;
-            }}
-            QPushButton:pressed {{
-                background-color: #2a9edf;
-            }}
-            QPushButton:disabled {{
-                background-color: {COLORS['surface_raised']};
-                color: {COLORS['text_secondary']};
-            }}
-        """)
-        self._apply_btn.clicked.connect(self._on_apply_power)
-        limits_layout.addWidget(self._apply_btn)
-
         self._power_check = ToggleSwitch("Enable power limits")
         self._power_check.setChecked(self._power_enabled)
         self._power_check.toggled.connect(self._on_power_enabled_changed)
@@ -127,6 +103,37 @@ class PowerPage(QWidget):
         self._reapply_spin._spin.valueChanged.connect(self._on_reapply_changed)
         reapply_layout.addLayout(self._reapply_spin)
         layout.addWidget(reapply_card)
+
+        self._apply_btn = QPushButton("Apply")
+        self._apply_btn.setCursor(Qt.PointingHandCursor)
+        self._apply_btn.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Fixed)
+        self._apply_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {COLORS['accent_blue']};
+                color: #ffffff;
+                border: none;
+                border-radius: 8px;
+                padding: 8px 20px;
+                font-weight: 600;
+                font-size: 13px;
+            }}
+            QPushButton:hover {{
+                background-color: #4db8f2;
+            }}
+            QPushButton:pressed {{
+                background-color: #2a9edf;
+            }}
+            QPushButton:disabled {{
+                background-color: {COLORS['surface_raised']};
+                color: {COLORS['text_secondary']};
+            }}
+        """)
+        self._apply_btn.clicked.connect(self._on_apply_power)
+        apply_row = QHBoxLayout()
+        apply_row.setContentsMargins(0, 4, 0, 0)
+        apply_row.addWidget(self._apply_btn)
+        apply_row.addStretch()
+        layout.addLayout(apply_row)
 
         self._update_apply_enabled()
         layout.addStretch()
