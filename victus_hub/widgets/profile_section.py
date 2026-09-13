@@ -21,9 +21,9 @@ from victus_hub.backend.modules import platform_profile_backend, mux_module, fan
 logger = logging.getLogger(__name__)
 
 PROFILES = [
-    ("Power Saver", "NewIcons/leaf.png", COLORS["accent_green"]),
-    ("Balanced", "NewIcons/balance.png", COLORS["accent_blue"]),
-    ("Performance", "NewIcons/rocket.png", COLORS["accent_red"]),
+    ("Power Saver", "leaf.png", COLORS["accent_green"]),
+    ("Balanced", "scale.png", COLORS["accent_blue"]),
+    ("Performance", "rocket.png", COLORS["accent_red"]),
 ]
 
 FAN_MODES = [
@@ -41,8 +41,8 @@ _MUX_ACCENTS = (
 
 # Icon-above-label tiles for known MUX modes (white monochrome assets)
 _MUX_ICONS: dict[str, str] = {
-    "hybrid": "NewIcons/hybrid.png",
-    "discrete": "NewIcons/discrete.png",
+    "hybrid": "layers.png",
+    "discrete": "gpu.png",
 }
 
 

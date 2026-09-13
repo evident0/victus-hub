@@ -61,7 +61,7 @@ class SegmentedControl(QFrame):
         if has_action:
             cog = QPushButton()
             cog.setObjectName("cogBtn")
-            cog.setIcon(load_icon("NewIcons/settings.png", size=20))
+            cog.setIcon(load_icon("settings.png", size=20))
             cog.setIconSize(QSize(20, 20))
             cog.setFixedSize(28, 28)
             cog.setCursor(Qt.PointingHandCursor)

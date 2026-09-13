@@ -9,7 +9,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QSize
-from PySide6.QtGui import QIcon, QImageReader, QPixmap
+from PySide6.QtGui import QIcon, QImageReader, QPainter, QPixmap
 from PySide6.QtSvg import QSvgRenderer
 
 
@@ -108,14 +108,15 @@ def _resolve(filename: str) -> Path:
 
 
 def _render_svg(path: Path, size: int) -> QPixmap:
-    from PySide6.QtGui import QPainter
-
-    pm = QPixmap(size, size)
-    pm.fill(Qt.transparent)
     renderer = QSvgRenderer(str(path))
     if not renderer.isValid():
         return QPixmap()
+
+    pm = QPixmap(size, size)
+    pm.fill(Qt.transparent)
     p = QPainter(pm)
+    p.setRenderHint(QPainter.Antialiasing)
+    p.setRenderHint(QPainter.SmoothPixmapTransform)
     renderer.render(p)
     p.end()
     return pm

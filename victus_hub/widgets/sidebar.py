@@ -8,12 +8,12 @@ from victus_hub.app.theme import COLORS
 
 # (icon file, short label shown in the rail)
 TABS = [
-    ("NewIcons/laptop.png", "Home"),
-    ("NewIcons/fan.png", "Fans"),
-    ("NewIcons/keyboard.png", "Keyboard"),
-    ("NewIcons/temperature.png", "Sensors"),
-    ("icons8-show-right-side-panel-48-white.png", "Processes"),
-    ("NewIcons/settings.png", "Settings"),
+    ("laptop.png", "Home"),
+    ("fan.png", "Fans"),
+    ("keyboard.png", "Keyboard"),
+    ("thermometer.png", "Sensors"),
+    ("list.png", "Processes"),
+    ("settings.png", "Settings"),
 ]
 
 
