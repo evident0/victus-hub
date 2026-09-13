@@ -140,7 +140,7 @@ class FanChart(QWidget):
         label_font.setPixelSize(11)
         painter.setFont(label_font)
         painter.setPen(QColor(COLORS["axis"]))
-        for s in (0, 75, 100):
+        for s in (0, 25, 50, 75, 100):
             y = self._speed_to_y(s)
             painter.drawText(QRectF(0, y - 8, pl - 6, 16), Qt.AlignRight | Qt.AlignVCenter, str(s))
 
