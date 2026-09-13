@@ -8,10 +8,10 @@ from PySide6.QtGui import (
 )
 
 from victus_hub.backend.types import FanPoint
-from victus_hub.app.theme import COLORS
+from victus_hub.app.theme import COLORS, MONO_FONT, UI_FONT
 
-CHART_PADDING = 52
-POINT_R = 7
+CHART_PADDING = 36
+POINT_R = 5
 HIT_R = 14
 TEMP_MIN = 30
 
@@ -39,7 +39,7 @@ class FanChart(QWidget):
         self.setMinimumHeight(220)
         self.setMouseTracking(True)
         self.setCursor(Qt.CrossCursor)
-        self.setStyleSheet(f"background-color: {COLORS['surface']}; border-radius: 4px;")
+        self.setStyleSheet(f"background-color: {COLORS['bg']};")
 
     # ── Properties ──
 
@@ -125,33 +125,30 @@ class FanChart(QWidget):
         ph = pb - pt
 
         # Title
-        title_font = QFont()
-        title_font.setPointSize(10)
-        title_font.setBold(True)
+        title_font = QFont(UI_FONT)
+        title_font.setPixelSize(14)
+        title_font.setWeight(QFont.Weight.DemiBold)
         painter.setFont(title_font)
         painter.setPen(QColor(COLORS["text"]))
-        painter.drawText(QRectF(0, 4, w, 18), Qt.AlignCenter, self._title)
+        painter.drawText(QRectF(pl, 2, pw, 20), Qt.AlignLeft | Qt.AlignVCenter, self._title)
 
-        # Y-axis labels (speed %)
-        label_font = QFont()
-        label_font.setPointSize(9)
+        label_font = QFont(MONO_FONT)
+        label_font.setPixelSize(11)
         painter.setFont(label_font)
-        painter.setPen(QColor(COLORS["text"]))
-        for s in range(0, 101, 10):
+        painter.setPen(QColor(COLORS["axis"]))
+        for s in (0, 75, 100):
             y = self._speed_to_y(s)
-            painter.drawText(QRectF(2, y - 8, pl - 6, 16), Qt.AlignRight | Qt.AlignVCenter, f"{s}%")
+            painter.drawText(QRectF(0, y - 8, pl - 6, 16), Qt.AlignRight | Qt.AlignVCenter, str(s))
 
-        # X-axis labels (temp)
         for t in range(TEMP_MIN, self._temp_max + 1, 10):
             if t > self._temp_max:
                 break
             x = self._temp_to_x(t)
-            painter.drawText(QRectF(x - 16, pb + 4, 32, 18), Qt.AlignCenter, str(t))
+            painter.drawText(QRectF(x - 16, pb + 4, 32, 16), Qt.AlignCenter, f"{t}°")
 
-        # Grid lines
-        grid_pen = QPen(QColor("#444444"), 1)
+        grid_pen = QPen(QColor(COLORS["line"]), 1)
         painter.setPen(grid_pen)
-        for s in range(0, 101, 10):
+        for s in (0, 25, 50, 75, 100):
             y = self._speed_to_y(s)
             painter.drawLine(int(pl), int(y), int(pr), int(y))
         for t in range(TEMP_MIN, self._temp_max + 1, 10):
@@ -160,10 +157,20 @@ class FanChart(QWidget):
             x = self._temp_to_x(t)
             painter.drawLine(int(x), int(pt), int(x), int(pb))
 
-        # Plot boundary
-        boundary_pen = QPen(QColor("#444444"), 1)
-        painter.setPen(boundary_pen)
-        painter.drawRect(QRectF(pl, pt, pw, ph))
+        fill = QColor(self._accent)
+        fill.setAlpha(40)
+        path = QPainterPath()
+        if self._points:
+            first = self._points[0]
+            path.moveTo(self._temp_to_x(first.temp), pb)
+            for point in self._points:
+                path.lineTo(self._temp_to_x(point.temp), self._speed_to_y(point.speed))
+            last = self._points[-1]
+            path.lineTo(self._temp_to_x(last.temp), pb)
+            path.closeSubpath()
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(fill)
+            painter.drawPath(path)
 
         for i in range(1, len(self._points)):
             left, right = self._points[i - 1], self._points[i]
@@ -171,22 +178,21 @@ class FanChart(QWidget):
             y1 = self._speed_to_y(left.speed)
             x2 = self._temp_to_x(right.temp)
             y2 = self._speed_to_y(right.speed)
-            line_pen = QPen(self._accent, 3)
+            line_pen = QPen(self._accent, 2)
             line_pen.setCapStyle(Qt.RoundCap)
             painter.setPen(line_pen)
             painter.drawLine(QPointF(x1, y1), QPointF(x2, y2))
 
-        # Points
         for i, point in enumerate(self._points):
             px = self._temp_to_x(point.temp)
             py = self._speed_to_y(point.speed)
-            if i == self._selected_point:
-                painter.setBrush(QColor("#ffffff"))
-                painter.setPen(QPen(self._accent, 2))
-            else:
-                painter.setBrush(self._accent)
-                painter.setPen(Qt.NoPen)
+            painter.setBrush(QColor(COLORS["bg"]))
+            painter.setPen(QPen(self._accent, 2))
             painter.drawEllipse(QPointF(px, py), POINT_R, POINT_R)
+            if i == self._selected_point:
+                painter.setBrush(QColor("#FFFFFF"))
+                painter.setPen(Qt.NoPen)
+                painter.drawEllipse(QPointF(px, py), 3, 3)
 
         # Hover tooltip
         if 0 <= self._hovered_index < len(self._points):

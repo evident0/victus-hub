@@ -5,11 +5,11 @@ import logging
 from PySide6.QtCore import Qt, QSettings, QTimer, QEvent
 from PySide6.QtGui import QAction, QActionGroup, QCloseEvent, QIcon, QHideEvent, QShowEvent
 from PySide6.QtWidgets import (
-    QApplication, QFrame, QHBoxLayout, QMainWindow, QScrollArea,
+    QApplication, QHBoxLayout, QMainWindow, QScrollArea,
     QStackedWidget, QSystemTrayIcon, QWidget,
 )
 
-from victus_hub.app.theme import COLORS
+from victus_hub.app.theme import set_accent, stylesheet
 from victus_hub.app.icon_utils import load_icon
 from victus_hub.widgets.popup_menu import PopupMenu
 from victus_hub.widgets.profile_section import FAN_MODES, PROFILES
@@ -38,7 +38,8 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Victus Hub")
-        self.resize(960, 640)
+        self.resize(460, 740)
+        self.setMinimumSize(420, 520)
 
         # App icon — logoV.png with native colors (no tint, no solid background)
         self._app_icon = load_icon("logoV.png", size=48)
@@ -57,22 +58,13 @@ class MainWindow(QMainWindow):
         self._sidebar = Sidebar()
         layout.addWidget(self._sidebar)
 
-        sidebar_sep = QFrame()
-        sidebar_sep.setObjectName("sidebarSeparator")
-        sidebar_sep.setFrameShape(QFrame.VLine)
-        sidebar_sep.setFixedWidth(1)
-        sidebar_sep.setStyleSheet(
-            f"background-color: {COLORS['border']}; border: none;"
-        )
-        layout.addWidget(sidebar_sep)
-
         # Stacked pages — wrapped in a scroll area so corner-tiling (KDE)
         # scrolls instead of squishing the content below its minimum size.
         # The minimum height is updated per-page (see _update_min_height)
         # so each page gets exactly the space it needs.
         self._stack = QStackedWidget()
         self._stack.setObjectName("pageStack")
-        self._stack.setMinimumWidth(600)
+        self._stack.setMinimumWidth(360)
 
         self._scroll = QScrollArea()
         self._scroll.setObjectName("pageScroll")
@@ -139,6 +131,8 @@ class MainWindow(QMainWindow):
         self._home_page.profile_selected.connect(self._on_profile_select)
         self._home_page.fan_mode_selected.connect(self._on_fan_mode)
         self._home_page.fan_curves_popout_requested.connect(self._open_fan_curves_window)
+        self._home_page.lighting_clicked.connect(lambda: self.set_active_tab(2))
+        self._home_page.power_clicked.connect(lambda: self.set_active_tab(1))
 
         # Sensors: graph pop-out requests
         self._sensors_page.open_graph_requested.connect(self._open_sensor_graph)
@@ -148,6 +142,7 @@ class MainWindow(QMainWindow):
         self._fan_curves_window: FanCurvesWindow | None = None
         self._lighting = LightingController(self)
         self._lighting.frame_changed.connect(self._keyboard_page.apply_frame)
+        self._lighting.frame_changed.connect(self._home_page.apply_frame)
         self._keyboard_page.enabled_changed.connect(self._lighting.set_enabled)
         self._keyboard_page.effect_changed.connect(self._lighting.set_effect)
         self._keyboard_page.speed_changed.connect(self._lighting.set_speed)
@@ -214,6 +209,8 @@ class MainWindow(QMainWindow):
 
         # Set initial minimum height for the first page.
         self._update_min_height(0)
+        self._apply_accent(self._selected_profile, animate=False)
+        self._morph_to_page(0, False)
     # ── Tab switching ──
 
     def set_active_tab(self, index: int):
@@ -223,6 +220,7 @@ class MainWindow(QMainWindow):
 
     def _on_tab_changed(self, index: int):
         self._stack.setCurrentIndex(index)
+        self._morph_to_page(index, True)
         # Gate the keyboard-preview repaint on the Keyboard tab (hardware
         # writes are unaffected — they run regardless of the active tab).
         self._lighting.set_ui_active(
@@ -238,6 +236,28 @@ class MainWindow(QMainWindow):
         page = self._stack.widget(index)
         if page is not None:
             self._stack.setMinimumHeight(page.minimumSizeHint().height())
+
+    _PAGE_SIZE = {
+        0: (460, 740),
+        1: (460, 680),
+        2: (700, 680),
+        3: (720, 640),
+        4: (720, 640),
+        5: (460, 640),
+    }
+
+    def _morph_to_page(self, index: int, _animate: bool) -> None:
+        w, h = self._PAGE_SIZE.get(index, (460, 700))
+        self.resize(w, h)
+
+    def _apply_accent(self, index: int, animate: bool = True) -> None:
+        set_accent(index)
+        app = QApplication.instance()
+        if app is not None:
+            app.setStyleSheet(stylesheet())
+        self._sidebar.refresh_accent()
+        if hasattr(self._home_page, "refresh_accent"):
+            self._home_page.refresh_accent()
 
 
     def _is_keyboard_tab_current(self) -> bool:
@@ -469,14 +489,18 @@ class MainWindow(QMainWindow):
     # ── Geometry persistence ──
 
     def _restore_geometry(self):
-        geo = self._settings.value("window/geometry")
-        if geo:
-            self.restoreGeometry(geo)
+        pos = self._settings.value("window/pos")
+        if pos is not None:
+            self.move(pos)
         else:
-            self.resize(960, 640)
+            geo = self._settings.value("window/geometry")
+            if geo:
+                self.restoreGeometry(geo)
+                self._morph_to_page(0, False)
 
     def _save_geometry(self):
         self._settings.setValue("window/geometry", self.saveGeometry())
+        self._settings.setValue("window/pos", self.pos())
 
     # ── Sensor polling ──
 
@@ -512,6 +536,7 @@ class MainWindow(QMainWindow):
         if profile is not None and profile != self._selected_profile:
             self._selected_profile = profile
             self._home_page.set_selected_profile(profile)
+            self._apply_accent(profile)
             self._sync_tray_checks()
             if self._fan_curves_window is not None:
                 self._fan_curves_window.set_edit_profile(profile)
@@ -521,6 +546,7 @@ class MainWindow(QMainWindow):
     def _on_profile_select(self, index: int):
         self._selected_profile = index
         self._home_page.set_selected_profile(index)
+        self._apply_accent(index)
         self._sync_tray_checks()
         if self._fan_curves_window is not None:
             self._fan_curves_window.set_edit_profile(index)

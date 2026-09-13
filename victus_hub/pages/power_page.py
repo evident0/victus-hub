@@ -1,19 +1,16 @@
-"""Power page — ryzenadj power limit controls."""
+"""Power page — ryzenadj power limit controls, Ohman rows."""
 
 import threading
 
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QSizePolicy,
+    QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QSizePolicy, QLabel, QSlider,
 )
 from PySide6.QtCore import Qt
 
-from victus_hub.app.theme import COLORS
+from victus_hub.app.theme import COLORS, mono_font, ui_font
 from victus_hub.widgets.toggle_switch import ToggleSwitch
-from victus_hub.widgets.status_badge import StatusBadge
 from victus_hub.backend.modules import ryzenadj_available
-from victus_hub.pages.settings_page import (
-    make_spin, make_settings_card, make_card_title,
-)
+from victus_hub.widgets.chrome import PageHead, hairline
 from victus_hub.features.power.limits import (
     POWER_MIN_MW, POWER_MAX_MW,
     TCTL_TEMP_MIN_C, TCTL_TEMP_MAX_C,
@@ -24,8 +21,42 @@ from victus_hub.features.power.limits import (
 from victus_hub.api import apply_power_limits
 
 
+class _SliderRow(QWidget):
+    """Label, slider, mono value — Ohman power-gain row."""
+
+    def __init__(self, title: str, vmin: int, vmax: int, value: int, suffix: str,
+                 parent=None):
+        super().__init__(parent)
+        row = QHBoxLayout(self)
+        row.setContentsMargins(0, 14, 0, 14)
+        row.setSpacing(18)
+        lbl = QLabel(title)
+        lbl.setFont(ui_font(14))
+        lbl.setStyleSheet(f"color: {COLORS['text']}; background: transparent;")
+        lbl.setFixedWidth(110)
+        row.addWidget(lbl)
+        self.slider = QSlider(Qt.Horizontal)
+        self.slider.setRange(vmin, vmax)
+        self.slider.setValue(value)
+        row.addWidget(self.slider, 1)
+        self.value = QLabel(f"{value} {suffix}")
+        self.value.setFont(mono_font(13))
+        self.value.setFixedWidth(56)
+        self.value.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self.value.setStyleSheet(f"color: {COLORS['text']}; background: transparent;")
+        row.addWidget(self.value)
+        self._suffix = suffix
+        self.slider.valueChanged.connect(self._on_slide)
+
+    def _on_slide(self, v: int) -> None:
+        self.value.setText(f"{v} {self._suffix}")
+
+    def setValue(self, v: int) -> None:
+        self.slider.setValue(v)
+
+
 class PowerPage(QWidget):
-    """Power tab: limit steppers, apply, and auto-reapply."""
+    """Power tab: limit sliders, apply, and auto-reapply."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -37,100 +68,76 @@ class PowerPage(QWidget):
         self._tctl_temp = pwr.tctl_temp
         self._reapply_seconds = pwr.reapply_seconds
         self._power_enabled = read_power_enabled()
-        # Last values sent via Apply (used to detect dirty controls)
         self._applied_stapm = pwr.stapm_limit
         self._applied_fast = pwr.fast_limit
         self._applied_slow = pwr.slow_limit
         self._applied_tctl = pwr.tctl_temp
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(16, 16, 16, 16)
-        layout.setSpacing(12)
+        layout.setContentsMargins(24, 24, 24, 20)
+        layout.setSpacing(0)
+
+        ry_text, _ry_color = ryzenadj_available()
+        self._head = PageHead("Power")
+        self._head.set_status(ry_text)
+        layout.addWidget(self._head)
 
         power_min_w = POWER_MIN_MW // 1000
         power_max_w = POWER_MAX_MW // 1000
 
-        limits_card, limits_layout = make_settings_card()
-        title_row = QHBoxLayout()
-        title_row.setContentsMargins(0, 0, 0, 0)
-        title_row.addWidget(make_card_title("Power Limits"))
-        title_row.addStretch()
-        ry_text, ry_color = ryzenadj_available()
-        title_row.addWidget(StatusBadge(ry_text, ry_color))
-        limits_layout.addLayout(title_row)
-
-        self._stapm_spin = make_spin(
-            "STAPM Limit", "W",
-            round(self._stapm_limit / 1000), power_min_w, power_max_w,
-        )
-        self._stapm_spin._spin.valueChanged.connect(self._on_stapm_changed)
-        limits_layout.addLayout(self._stapm_spin)
-
-        self._fast_spin = make_spin(
-            "Fast Limit", "W",
-            round(self._fast_limit / 1000), power_min_w, power_max_w,
-        )
-        self._fast_spin._spin.valueChanged.connect(self._on_fast_changed)
-        limits_layout.addLayout(self._fast_spin)
-
-        self._slow_spin = make_spin(
-            "Slow Limit", "W",
-            round(self._slow_limit / 1000), power_min_w, power_max_w,
-        )
-        self._slow_spin._spin.valueChanged.connect(self._on_slow_changed)
-        limits_layout.addLayout(self._slow_spin)
-
-        self._tctl_spin = make_spin(
-            "Tctl Temp", "°C",
-            self._tctl_temp, TCTL_TEMP_MIN_C, TCTL_TEMP_MAX_C,
-        )
-        self._tctl_spin._spin.valueChanged.connect(self._on_tctl_changed)
-        limits_layout.addLayout(self._tctl_spin)
-
+        enable_row = QHBoxLayout()
+        enable_row.setContentsMargins(0, 24, 0, 0)
         self._power_check = ToggleSwitch("Enable power limits")
         self._power_check.setChecked(self._power_enabled)
         self._power_check.toggled.connect(self._on_power_enabled_changed)
-        limits_layout.addWidget(self._power_check)
+        enable_row.addWidget(self._power_check)
+        enable_row.addStretch()
+        layout.addLayout(enable_row)
 
-        layout.addWidget(limits_card)
-
-        reapply_card, reapply_layout = make_settings_card()
-        reapply_layout.addWidget(make_card_title("Auto reapply"))
-        self._reapply_spin = make_spin(
-            "Interval", "s",
-            self._reapply_seconds, 1, 3600,
+        self._stapm_spin = _SliderRow(
+            "STAPM", power_min_w, power_max_w,
+            round(self._stapm_limit / 1000), "W",
         )
-        self._reapply_spin._spin.valueChanged.connect(self._on_reapply_changed)
-        reapply_layout.addLayout(self._reapply_spin)
-        layout.addWidget(reapply_card)
+        self._stapm_spin.slider.valueChanged.connect(self._on_stapm_changed)
+        layout.addWidget(self._stapm_spin)
+
+        self._fast_spin = _SliderRow(
+            "Fast", power_min_w, power_max_w,
+            round(self._fast_limit / 1000), "W",
+        )
+        self._fast_spin.slider.valueChanged.connect(self._on_fast_changed)
+        layout.addWidget(self._fast_spin)
+
+        self._slow_spin = _SliderRow(
+            "Slow", power_min_w, power_max_w,
+            round(self._slow_limit / 1000), "W",
+        )
+        self._slow_spin.slider.valueChanged.connect(self._on_slow_changed)
+        layout.addWidget(self._slow_spin)
+
+        self._tctl_spin = _SliderRow(
+            "Tctl", TCTL_TEMP_MIN_C, TCTL_TEMP_MAX_C,
+            self._tctl_temp, "°C",
+        )
+        self._tctl_spin.slider.valueChanged.connect(self._on_tctl_changed)
+        layout.addWidget(self._tctl_spin)
+
+        layout.addWidget(hairline())
+
+        self._reapply_spin = _SliderRow(
+            "Reapply", 1, 60, self._reapply_seconds, "s",
+        )
+        self._reapply_spin.slider.setRange(1, 3600)
+        self._reapply_spin.slider.valueChanged.connect(self._on_reapply_changed)
+        layout.addWidget(self._reapply_spin)
 
         self._apply_btn = QPushButton("Apply")
+        self._apply_btn.setObjectName("accentBtn")
         self._apply_btn.setCursor(Qt.PointingHandCursor)
         self._apply_btn.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Fixed)
-        self._apply_btn.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {COLORS['accent_blue']};
-                color: #ffffff;
-                border: none;
-                border-radius: 8px;
-                padding: 8px 20px;
-                font-weight: 600;
-                font-size: 13px;
-            }}
-            QPushButton:hover {{
-                background-color: #4db8f2;
-            }}
-            QPushButton:pressed {{
-                background-color: #2a9edf;
-            }}
-            QPushButton:disabled {{
-                background-color: {COLORS['surface_raised']};
-                color: {COLORS['text_secondary']};
-            }}
-        """)
         self._apply_btn.clicked.connect(self._on_apply_power)
         apply_row = QHBoxLayout()
-        apply_row.setContentsMargins(0, 4, 0, 0)
+        apply_row.setContentsMargins(0, 16, 0, 0)
         apply_row.addWidget(self._apply_btn)
         apply_row.addStretch()
         layout.addLayout(apply_row)
@@ -139,7 +146,6 @@ class PowerPage(QWidget):
         layout.addStretch()
 
     def _on_stapm_changed(self, value_w: int):
-        # Local only — daemon command updates only on Apply (value is watts)
         self._stapm_limit = clamp_power_limit(value_w * 1000)
         self._update_apply_enabled()
 
@@ -156,7 +162,6 @@ class PowerPage(QWidget):
         self._update_apply_enabled()
 
     def _on_reapply_changed(self, value: int):
-        # Persist interval only; keep last-applied limit values until Apply
         self._reapply_seconds = max(1, value)
         applied = read_power_limit_settings()
         write_power_limit_settings(PowerLimitSettings(
@@ -181,7 +186,6 @@ class PowerPage(QWidget):
         )
 
     def _update_apply_enabled(self):
-        # Clickable when inactive, or when active but values differ from last Apply
         can_apply = (not self._power_enabled) or self._power_values_dirty()
         self._apply_btn.setEnabled(can_apply)
         self._apply_btn.setCursor(
@@ -197,7 +201,6 @@ class PowerPage(QWidget):
         self._applied_tctl = settings.tctl_temp
         self._update_apply_enabled()
 
-        # Apply immediately so limits take effect without waiting for reapply tick
         def _apply():
             try:
                 apply_power_limits(
@@ -222,11 +225,11 @@ class PowerPage(QWidget):
 
     def sync_power_from_settings(self):
         pwr = read_power_limit_settings()
-        self._stapm_spin._spin.setValue(round(pwr.stapm_limit / 1000))
-        self._fast_spin._spin.setValue(round(pwr.fast_limit / 1000))
-        self._slow_spin._spin.setValue(round(pwr.slow_limit / 1000))
-        self._tctl_spin._spin.setValue(pwr.tctl_temp)
-        self._reapply_spin._spin.setValue(pwr.reapply_seconds)
+        self._stapm_spin.setValue(round(pwr.stapm_limit / 1000))
+        self._fast_spin.setValue(round(pwr.fast_limit / 1000))
+        self._slow_spin.setValue(round(pwr.slow_limit / 1000))
+        self._tctl_spin.setValue(pwr.tctl_temp)
+        self._reapply_spin.setValue(pwr.reapply_seconds)
         self._applied_stapm = pwr.stapm_limit
         self._applied_fast = pwr.fast_limit
         self._applied_slow = pwr.slow_limit

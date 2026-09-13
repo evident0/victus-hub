@@ -47,29 +47,33 @@ class FanCurvesWindow(QMainWindow):
         central = QWidget()
         self.setCentralWidget(central)
         layout = QVBoxLayout(central)
-        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setContentsMargins(24, 24, 24, 20)
         layout.setSpacing(10)
 
         # Header: title
         header = QHBoxLayout()
         title = QLabel("Fan Curves")
-        title.setStyleSheet("font-size: 18px; font-weight: 800; color: #ffffff;")
+        title.setStyleSheet(
+            f"font-size: 15px; font-weight: 600; color: {COLORS['text']}; background: transparent;"
+        )
         header.addWidget(title)
         self._profile_label = QLabel("")
-        self._profile_label.setStyleSheet("color: #9d9d9d; font-size: 13px; background: transparent;")
+        self._profile_label.setStyleSheet(
+            f"color: {COLORS['status']}; font-size: 11px; background: transparent;"
+        )
         header.addWidget(self._profile_label)
         header.addStretch()
         layout.addLayout(header)
 
         # Fan charts
-        self._cpu_chart = FanChart("CPU Fan Curve", QColor(COLORS["accent_blue"]), fan_config.CPU_TEMP_MAX_C)
+        self._cpu_chart = FanChart("CPU curve", QColor(COLORS["accent"]), fan_config.CPU_TEMP_MAX_C)
         self._cpu_chart.point_added.connect(self._on_cpu_point_added)
         self._cpu_chart.point_moved.connect(self._on_cpu_point_moved)
         self._cpu_chart.point_deleted.connect(self._on_cpu_point_deleted)
         self._cpu_chart.point_selected.connect(self._on_cpu_point_selected)
         layout.addWidget(self._cpu_chart, 1)
 
-        self._gpu_chart = FanChart("GPU Fan Curve", QColor(COLORS["accent_red"]), fan_config.GPU_TEMP_MAX_C)
+        self._gpu_chart = FanChart("GPU curve", QColor(COLORS["perf"]), fan_config.GPU_TEMP_MAX_C)
         self._gpu_chart.point_added.connect(self._on_gpu_point_added)
         self._gpu_chart.point_moved.connect(self._on_gpu_point_moved)
         self._gpu_chart.point_deleted.connect(self._on_gpu_point_deleted)

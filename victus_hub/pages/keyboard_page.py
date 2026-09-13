@@ -9,17 +9,18 @@ from __future__ import annotations
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
-    QPushButton, QColorDialog, QSlider,
+    QPushButton, QColorDialog, QSlider, QLineEdit,
 )
 from PySide6.QtCore import Qt, Signal, QRectF
 from PySide6.QtGui import QPainter, QColor, QFont
 
 from victus_hub import api
-from victus_hub.app.theme import COLORS
+from victus_hub.app.theme import COLORS, UI_FONT, mono_font, ui_font
 from victus_hub.pages.settings_page import make_spin
-from victus_hub.widgets.app_combo import AppComboBox
+from victus_hub.widgets.chrome import PageHead, SettingsRow, hairline
+from victus_hub.widgets.seg import LinkSeg, Seg
+from victus_hub.widgets.strip_picker import StripPicker
 from victus_hub.widgets.toggle_switch import ToggleSwitch
-from victus_hub.widgets.status_badge import StatusBadge
 from victus_hub.backend.modules import keyboard_rgb_module
 from victus_hub.features.keyboard.lighting import (
     EFFECTS_IGNORE_COLOR,
@@ -83,12 +84,17 @@ def _style_color_btn(hex_str: str) -> str:
 class KeyboardVisual(QWidget):
     """Visual keyboard preview showing per-zone color(s) (or off)."""
 
-    def __init__(self, parent=None, zone_count: int = 1):
+    def __init__(self, parent=None, zone_count: int = 1, compact: bool = False):
         super().__init__(parent)
         self._zone_count = max(1, zone_count)
-        self._zone_colors = [QColor("#2a2a2a")] * self._zone_count
+        self._zone_colors = [QColor("#201C19")] * self._zone_count
         self._enabled = False
-        self.setMinimumHeight(240)
+        self._compact = compact
+        if compact:
+            self.setMinimumHeight(56)
+            self.setMaximumHeight(72)
+        else:
+            self.setMinimumHeight(200)
         self.setSizePolicy(self.sizePolicy().horizontalPolicy(),
                            self.sizePolicy().verticalPolicy())
 
@@ -134,95 +140,71 @@ class KeyboardVisual(QWidget):
 
         w = self.width()
         h = self.height()
-        # ── Chassis ──
-        chassis_rect = QRectF(
-            _CHASSIS_MARGIN, _CHASSIS_MARGIN,
-            w - 2 * _CHASSIS_MARGIN, h - 2 * _CHASSIS_MARGIN,
-        )
-        painter.setPen(Qt.NoPen)
-        painter.setBrush(QColor(COLORS["surface"]))
-        painter.drawRoundedRect(chassis_rect, 8, 8)
+        compact = self._compact
+        margin = 0 if compact else 2
+        gap = 2.0 if compact else _GAP_PX
+        radius = 3.0 if compact else 6.0
 
-        # Pre-compute row heights from the chassis interior
         n_rows = len(_KEYBOARD)
-        chassis_w = w - 2 * _CHASSIS_MARGIN
-        chassis_h = h - 2 * _CHASSIS_MARGIN
-        inner_w = chassis_w - 2 * _CHASSIS_PAD
-        inner_h = chassis_h - 2 * _CHASSIS_PAD
-
-        # Compute unit from width
+        inner_w = w - 2 * margin
+        inner_h = h - 2 * margin
         unit_w = inner_w / _MAIN_ROW_WIDTH
-
-        # Compute unit from height — enforce square 1u keys
-        row_h_limit = (inner_h - (n_rows - 1) * _GAP_PX) / n_rows
-        unit_h = row_h_limit + _GAP_PX
-
+        row_h_limit = (inner_h - (n_rows - 1) * gap) / n_rows
+        unit_h = row_h_limit + gap
         unit = min(unit_w, unit_h)
-        row_h = unit - _GAP_PX
+        row_h = unit - gap
 
-        # Keyboard block dimensions for centering
         block_w = _MAIN_ROW_WIDTH * unit
-        block_h = n_rows * unit - _GAP_PX
-
-        base_x = _CHASSIS_MARGIN + _CHASSIS_PAD + (inner_w - block_w) / 2
-        base_y = _CHASSIS_MARGIN + _CHASSIS_PAD + (inner_h - block_h) / 2
+        block_h = n_rows * unit - gap
+        base_x = margin + (inner_w - block_w) / 2
+        base_y = margin + (inner_h - block_h) / 2
 
         for row_idx, row in enumerate(_KEYBOARD):
-            # Total flex width for this row
             total_flex = sum(kw for _, kw, _ in row) + sum(kg for _, _, kg in row)
             row_w = total_flex * unit
             if row_idx == 0:
-                # Center the function row within the block
                 x = base_x + (block_w - row_w) / 2
             else:
                 x = base_x
-            y = base_y + row_idx * (row_h + _GAP_PX)
+            y = base_y + row_idx * (row_h + gap)
 
-            flex_x = 0.0  # running flex-space x for zone computation
-            for label, kw, gap in row:
-                x += gap * unit
-                key_w = kw * unit - _GAP_PX
+            flex_x = 0.0
+            for label, kw, gap_u in row:
+                x += gap_u * unit
+                key_w = kw * unit - gap
                 key_rect = QRectF(x, y, key_w, row_h)
 
-                key_center_x = flex_x + gap + kw / 2
+                key_center_x = flex_x + gap_u + kw / 2
                 color = self._color_for_key(label, key_center_x)
+                if not self._enabled:
+                    color = QColor("#201C19")
 
-                # Glow under lit keys (skip dark/disabled)
-                if self._enabled and color.value() > 30:
-                    glow_rect = key_rect.adjusted(-1, -1, 2, 2)
+                if self._enabled and color.value() > 30 and not compact:
                     glow = QColor(color)
-                    glow.setAlpha(40)
+                    glow.setAlpha(36)
                     painter.setBrush(glow)
                     painter.setPen(Qt.NoPen)
-                    painter.drawRoundedRect(glow_rect, _KEY_RADIUS + 2, _KEY_RADIUS + 2)
+                    painter.drawRoundedRect(key_rect.adjusted(-1, -1, 1, 1), radius + 1, radius + 1)
 
-                # Key body
+                painter.setPen(Qt.NoPen)
                 painter.setBrush(color)
-                border = QColor(max(color.red() + 20, color.red()),
-                                max(color.green() + 20, color.green()),
-                                max(color.blue() + 20, color.blue())) if self._enabled \
-                    else QColor("#1a1a1a")
-                painter.setPen(border)
-                painter.setBrush(color)
-                painter.drawRoundedRect(key_rect, _KEY_RADIUS, _KEY_RADIUS)
+                painter.drawRoundedRect(key_rect, radius, radius)
 
-                # Label
-                if label:
+                if label and not compact:
                     is_big = len(str(label)) <= 1
-                    font_size = int(row_h * 0.32) if is_big else int(row_h * 0.22)
-                    font = QFont("DejaVu Sans", font_size)
-                    font.setBold(not is_big)
+                    font_size = max(7, int(row_h * (0.34 if is_big else 0.22)))
+                    font = QFont(UI_FONT)
+                    font.setPixelSize(font_size)
                     painter.setFont(font)
-                    # Text color: light on dark keys, dark on bright keys
                     brightness = (color.red() * 299 + color.green() * 587 + color.blue() * 114) / 1000
-                    text_color = QColor("#1a1a1a") if brightness > 140 else QColor("#e0e0e0")
+                    text_color = QColor("#161311") if brightness > 150 else QColor("#EDEAE8")
                     if not self._enabled:
-                        text_color = QColor("#555555")
+                        text_color = QColor("#5C5855")
                     painter.setPen(text_color)
                     painter.drawText(key_rect, Qt.AlignCenter, label)
 
                 x += kw * unit
-                flex_x += kw + gap
+                flex_x += kw + gap_u
 
         painter.end()
 
@@ -253,212 +235,305 @@ class KeyboardPage(QWidget):
         self._settings = s
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(16, 12, 16, 12)
-        layout.setSpacing(12)
-        # Title row
-        title_row = QHBoxLayout()
-        title_row.setContentsMargins(0, 0, 0, 0)
-        title = QLabel("Keyboard Lighting")
-        title.setStyleSheet("font-size: 18px; font-weight: 800; color: #ffffff;")
-        title_row.addWidget(title)
-        title_row.addStretch()
-        kbd_text, kbd_color = keyboard_rgb_module()
-        title_row.addWidget(StatusBadge(kbd_text, kbd_color))
-        layout.addLayout(title_row)
+        layout.setContentsMargins(24, 24, 24, 24)
+        layout.setSpacing(0)
 
-        # Visual keyboard
-        keyboard_panel = QWidget()
-        keyboard_panel.setObjectName("keyboardPreviewPanel")
-        keyboard_panel.setStyleSheet(f"""
-            QWidget#keyboardPreviewPanel {{
-                background-color: {COLORS['surface']};
-                border: 1px solid {COLORS['border']};
-                border-radius: 14px;
-            }}
-        """)
-        keyboard_layout = QVBoxLayout(keyboard_panel)
-        keyboard_layout.setContentsMargins(6, 6, 6, 6)
-        keyboard_layout.setSpacing(0)
-        self._visual = KeyboardVisual(zone_count=self._zone_count)
-        self._apply_visual_from_settings()
-        keyboard_layout.addWidget(self._visual)
-        layout.addWidget(keyboard_panel, 1)
+        kbd_text, _kbd_color = keyboard_rgb_module()
+        self._head = PageHead("Keyboard")
+        self._head.set_status(kbd_text)
+        layout.addWidget(self._head)
 
-        # RGB controls
-        controls = QWidget()
-        controls.setObjectName("keyboardControls")
-        controls.setStyleSheet(f"""
-            QWidget#keyboardControls {{
-                background-color: {COLORS['surface']};
-                border: 1px solid {COLORS['border']};
-                border-radius: 14px;
-            }}
-        """)
-        ctrl_layout = QVBoxLayout(controls)
-        ctrl_layout.setContentsMargins(16, 14, 16, 14)
-        ctrl_layout.setSpacing(12)
-
-        row1 = QHBoxLayout()
-        row1.setContentsMargins(0, 0, 0, 0)
-        row1.setSpacing(14)
-
-        # Enable
-        self._enable_check = ToggleSwitch("RGB enabled")
-        self._enable_check.setChecked(s.enabled)
-        self._enable_check.toggled.connect(self._on_enabled_changed)
-        row1.addWidget(self._enable_check)
-
-        self._colors_row = QWidget()
-        row2 = QHBoxLayout(self._colors_row)
-        row2.setContentsMargins(0, 0, 0, 0)
-        row2.setSpacing(14)
-
-        self._color_btn: QPushButton | None = None
-        self._color2_btn: QPushButton | None = None
-        self._zone_btns: list[QPushButton] = []
-
-        self._primary_wrap = QWidget()
-        primary_row = QHBoxLayout(self._primary_wrap)
-        primary_row.setContentsMargins(0, 0, 0, 0)
-        primary_row.setSpacing(8)
-        self._primary_label = QLabel("Color")
-        self._primary_label.setStyleSheet(
-            f"color: {COLORS['text_secondary']}; font-size: 11px;"
-        )
-        primary_row.addWidget(self._primary_label)
-        self._color_btn = QPushButton()
-        self._color_btn.setFixedSize(34, 28)
-        self._color_btn.setStyleSheet(_style_color_btn(s.color))
-        self._color_btn.setToolTip("Primary color")
-        self._color_btn.clicked.connect(self._pick_color)
-        primary_row.addWidget(self._color_btn)
-        row2.addWidget(self._primary_wrap)
-
-        self._color2_wrap = QWidget()
-        color2_row = QHBoxLayout(self._color2_wrap)
-        color2_row.setContentsMargins(0, 0, 0, 0)
-        color2_row.setSpacing(8)
-        color2_label = QLabel("Color 2")
-        color2_label.setStyleSheet(
-            f"color: {COLORS['text_secondary']}; font-size: 11px;"
-        )
-        color2_row.addWidget(color2_label)
-        self._color2_btn = QPushButton()
-        self._color2_btn.setFixedSize(34, 28)
-        self._color2_btn.setStyleSheet(_style_color_btn(s.color2))
-        self._color2_btn.setToolTip("Secondary color")
-        self._color2_btn.clicked.connect(self._pick_color2)
-        color2_row.addWidget(self._color2_btn)
-        row2.addWidget(self._color2_wrap)
+        self._effect_items = [("off", "Off")] + list(effects_for_zone_count(self._zone_count))
+        names = [label for _value, label in self._effect_items]
+        # Two rows if the list is long, so the compact panel still fits.
+        chunk = 6 if len(names) > 7 else len(names)
+        self._effect_links: list[LinkSeg] = []
+        self._effect_offset: list[int] = []
+        links_col = QVBoxLayout()
+        links_col.setContentsMargins(0, 24, 0, 0)
+        links_col.setSpacing(10)
+        for start in range(0, len(names), chunk):
+            seg = LinkSeg(names[start:start + chunk], gap=16, size=14)
+            offset = start
+            seg.picked.connect(lambda i, off=offset: self._on_effect_link(off + i))
+            links_col.addWidget(seg)
+            self._effect_links.append(seg)
+            self._effect_offset.append(offset)
+        layout.addLayout(links_col)
+        if s.enabled:
+            try:
+                effect_idx = 1 + [v for v, _ in self._effect_items[1:]].index(s.effect)
+            except ValueError:
+                effect_idx = 1
+        else:
+            effect_idx = 0
+        self._select_effect_link(effect_idx, False)
 
         self._zone_wrap = QWidget()
-        zone_row = QHBoxLayout(self._zone_wrap)
-        zone_row.setContentsMargins(0, 0, 0, 0)
-        zone_row.setSpacing(14)
-        if self._zone_count > 1:
-            for zone_idx, name in enumerate(ZONE_NAMES[: self._zone_count]):
-                zone_box = QHBoxLayout()
-                zone_box.setContentsMargins(0, 0, 0, 0)
-                zone_box.setSpacing(8)
-                zone_label = QLabel(name)
-                zone_label.setStyleSheet(
-                    f"color: {COLORS['text_secondary']}; font-size: 11px;"
-                )
-                zone_box.addWidget(zone_label)
+        zone_l = QHBoxLayout(self._zone_wrap)
+        zone_l.setContentsMargins(0, 22, 0, 0)
+        zone_l.setSpacing(10)
+        sel_lbl = QLabel("Select")
+        sel_lbl.setFont(ui_font(13))
+        sel_lbl.setStyleSheet(f"color: {COLORS['seg_text']}; background: transparent;")
+        zone_l.addWidget(sel_lbl)
+        zone_names = list(ZONE_NAMES[: self._zone_count]) + ["All"]
+        self._gran = Seg(zone_names, kind="compact") if self._zone_count > 1 else None
+        self._zone_target = 0  # 0..n-1 zone, n = all
+        if self._gran is not None:
+            self._gran.picked.connect(self._on_gran)
+            self._gran.select(self._zone_count, False)  # All
+            self._zone_target = self._zone_count
+            zone_l.addWidget(self._gran)
+        zone_l.addStretch()
+        self._zone_wrap.setVisible(self._zone_count > 1)
+        layout.addWidget(self._zone_wrap)
 
-                btn = QPushButton()
-                btn.setFixedSize(34, 28)
-                btn.setToolTip(f"{name} zone color")
-                hex_str = self._zone_hexes[zone_idx]
-                btn.setStyleSheet(_style_color_btn(hex_str))
-                btn.clicked.connect(
-                    lambda _checked=False, z=zone_idx: self._pick_zone_color(z)
-                )
-                zone_box.addWidget(btn)
-                self._zone_btns.append(btn)
-                zone_row.addLayout(zone_box)
-        row2.addWidget(self._zone_wrap)
-        row1.addWidget(self._colors_row)
+        self._visual = KeyboardVisual(zone_count=self._zone_count)
+        vis_wrap = QWidget()
+        vis_l = QVBoxLayout(vis_wrap)
+        vis_l.setContentsMargins(0, 22, 0, 0)
+        vis_l.addWidget(self._visual)
+        layout.addWidget(vis_wrap, 1)
+        self._apply_visual_from_settings()
 
-        effect_label = QLabel("Effect")
-        effect_label.setStyleSheet(
-            f"color: {COLORS['text_secondary']}; font-size: 11px;"
+        editor = QWidget()
+        ed = QVBoxLayout(editor)
+        ed.setContentsMargins(0, 22, 0, 0)
+        ed.setSpacing(12)
+        ed.addWidget(hairline())
+
+        self._color_editor = QWidget()
+        ce = QHBoxLayout(self._color_editor)
+        ce.setContentsMargins(0, 18, 0, 0)
+        ce.setSpacing(12)
+
+        left = QVBoxLayout()
+        left.setContentsMargins(0, 0, 0, 0)
+        left.setSpacing(6)
+        hex_row = QHBoxLayout()
+        hex_row.setContentsMargins(0, 0, 0, 0)
+        hex_row.setSpacing(0)
+        self._hex_chip = QLabel()
+        self._hex_chip.setFixedSize(40, 34)
+        self._hex_chip.setCursor(Qt.PointingHandCursor)
+        self._hex_chip.mousePressEvent = lambda e: self._pick_color()  # type: ignore
+        hex_field = QWidget()
+        hex_field.setFixedHeight(34)
+        hex_field.setStyleSheet(
+            f"background-color: {COLORS['well']}; border: 1px solid {COLORS['edge']};"
         )
-        row1.addWidget(effect_label)
-
-        self._effect_combo = AppComboBox()
-        self._effect_combo.setMinimumWidth(148)
-        self._effect_combo.setFixedHeight(28)
-        self._effect_combo.setMaxVisibleItems(12)
-        for value, label in effects_for_zone_count(self._zone_count):
-            self._effect_combo.addItem(label, value)
-        effect_idx = self._effect_combo.findData(s.effect)
-        self._effect_combo.setCurrentIndex(max(0, effect_idx))
-        self._effect_combo.currentIndexChanged.connect(self._on_effect_changed)
-        row1.addWidget(self._effect_combo)
-
-        speed_label = QLabel("Speed")
-        speed_label.setStyleSheet(
-            f"color: {COLORS['text_secondary']}; font-size: 11px;"
+        hf = QHBoxLayout(hex_field)
+        hf.setContentsMargins(0, 0, 10, 0)
+        hf.setSpacing(0)
+        hf.addWidget(self._hex_chip)
+        hash_lbl = QLabel("  #")
+        hash_lbl.setFont(mono_font(13))
+        hash_lbl.setStyleSheet(f"color: {COLORS['foot']}; background: transparent;")
+        hf.addWidget(hash_lbl)
+        self._hex_edit = QLineEdit(s.color.lstrip("#"))
+        self._hex_edit.setMaxLength(6)
+        self._hex_edit.setFrame(False)
+        self._hex_edit.setFont(mono_font(13))
+        self._hex_edit.setStyleSheet(
+            f"background: transparent; color: {COLORS['text']}; padding: 0;"
         )
-        row1.addWidget(speed_label)
+        self._hex_edit.editingFinished.connect(self._on_hex_typed)
+        hf.addWidget(self._hex_edit, 1)
+        hex_row.addWidget(hex_field, 1)
+        left.addLayout(hex_row)
 
-        self._speed_slider = QSlider(Qt.Horizontal)
-        self._speed_slider.setRange(1, 100)
-        self._speed_slider.setValue(s.speed)
-        self._speed_slider.setFixedWidth(120)
-        self._speed_slider.setToolTip(f"Effect speed: {s.speed}/100")
-        self._speed_slider.valueChanged.connect(self._on_speed_changed)
-        row1.addWidget(self._speed_slider)
-
-        # Brightness
-        brightness_label = QLabel("Brightness")
-        brightness_label.setStyleSheet(
-            f"color: {COLORS['text_secondary']}; font-size: 11px;"
-        )
-        row1.addWidget(brightness_label)
-
+        level_row = QHBoxLayout()
+        level_row.setContentsMargins(0, 0, 0, 0)
+        level_row.setSpacing(8)
         self._brightness_slider = QSlider(Qt.Horizontal)
         self._brightness_slider.setRange(0, 255)
         self._brightness_slider.setValue(s.brightness)
-        self._brightness_slider.setFixedWidth(120)
-        self._brightness_slider.setToolTip(f"Backlight brightness: {s.brightness}/255")
         self._brightness_slider.valueChanged.connect(self._on_brightness_changed)
-        row1.addWidget(self._brightness_slider)
-        row1.addStretch()
-        ctrl_layout.addLayout(row1)
-        layout.addWidget(controls)
-        self._sync_effect_controls()
+        level_row.addWidget(self._brightness_slider, 1)
+        self._txt_level = QLabel(f"{round(s.brightness * 100 / 255)}%")
+        self._txt_level.setFont(mono_font(11))
+        self._txt_level.setFixedWidth(36)
+        self._txt_level.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self._txt_level.setStyleSheet(f"color: {COLORS['hex']}; background: transparent;")
+        level_row.addWidget(self._txt_level)
+        left.addLayout(level_row)
+        ce.addLayout(left, 0)
 
-        # Idle timeout — separate card below RGB controls
+        strips = QVBoxLayout()
+        strips.setContentsMargins(0, 0, 0, 0)
+        strips.setSpacing(0)
+        self._hue = StripPicker(cells=36, shade=False)
+        self._shade = StripPicker(cells=36, shade=True)
+        self._hue.picked.connect(self._on_strip_color)
+        self._shade.picked.connect(self._on_strip_color)
+        strips.addWidget(self._hue)
+        strips.addWidget(self._shade)
+        ce.addLayout(strips, 1)
+        ed.addWidget(self._color_editor)
+
+        self._color2_wrap = QWidget()
+        c2 = QHBoxLayout(self._color2_wrap)
+        c2.setContentsMargins(0, 0, 0, 0)
+        c2.setSpacing(8)
+        self._primary_label = QLabel("Color 2")
+        self._primary_label.setFont(ui_font(13))
+        self._primary_label.setStyleSheet(f"color: {COLORS['text']}; background: transparent;")
+        c2.addWidget(self._primary_label)
+        self._color2_btn = QPushButton()
+        self._color2_btn.setFixedSize(34, 28)
+        self._color2_btn.setStyleSheet(_style_color_btn(s.color2))
+        self._color2_btn.clicked.connect(self._pick_color2)
+        c2.addWidget(self._color2_btn)
+        c2.addStretch()
+        ed.addWidget(self._color2_wrap)
+
+        self._effect_editor = QWidget()
+        ee = QHBoxLayout(self._effect_editor)
+        ee.setContentsMargins(0, 0, 0, 0)
+        ee.setSpacing(16)
+        spd_lbl = QLabel("Speed")
+        spd_lbl.setFont(ui_font(13))
+        spd_lbl.setStyleSheet(f"color: {COLORS['text']}; background: transparent;")
+        ee.addWidget(spd_lbl)
+        self._speed_slider = QSlider(Qt.Horizontal)
+        self._speed_slider.setRange(1, 100)
+        self._speed_slider.setValue(s.speed)
+        self._speed_slider.valueChanged.connect(self._on_speed_changed)
+        ee.addWidget(self._speed_slider, 1)
+        self._txt_speed = QLabel(str(s.speed))
+        self._txt_speed.setFont(mono_font(12))
+        self._txt_speed.setFixedWidth(32)
+        self._txt_speed.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self._txt_speed.setStyleSheet(f"color: {COLORS['hex']}; background: transparent;")
+        ee.addWidget(self._txt_speed)
+        ed.addWidget(self._effect_editor)
+
+        # Hidden aliases so older handler fields still exist.
+        self._enable_check = ToggleSwitch("")
+        self._enable_check.hide()
+        self._enable_check.setChecked(s.enabled)
+        self._color_btn = QPushButton()
+        self._color_btn.hide()
+        self._zone_btns = []
+        self._primary_wrap = self._color_editor
+        self._colors_row = self._color_editor
+
+        layout.addWidget(editor)
+
         idle_on = s.idle_timeout > 0
         idle_value = s.idle_timeout if idle_on else 30
-        idle_card = QWidget()
-        idle_card.setObjectName("keyboardIdle")
-        idle_card.setStyleSheet(f"""
-            QWidget#keyboardIdle {{
-                background-color: {COLORS['surface']};
-                border: 1px solid {COLORS['border']};
-                border-radius: 14px;
-            }}
-        """)
-        idle_row = QHBoxLayout(idle_card)
-        idle_row.setContentsMargins(16, 14, 16, 14)
-        idle_row.setSpacing(14)
-        self._idle_check = ToggleSwitch("Idle timeout")
-        self._idle_check.setChecked(idle_on)
-        self._idle_check.toggled.connect(self._on_idle_enabled_changed)
-        idle_row.addWidget(self._idle_check)
-        self._idle_timeout = make_spin(
-            "Idle timeout", "s",
-            idle_value, 1, 600,
-            compact=True,
-        )
+        idle_ctrl = QWidget()
+        idle_l = QHBoxLayout(idle_ctrl)
+        idle_l.setContentsMargins(0, 0, 0, 0)
+        idle_l.setSpacing(10)
+        self._idle_timeout = make_spin("Idle timeout", "s", idle_value, 1, 600, compact=True)
         self._idle_timeout._spin.setEnabled(idle_on)
         self._idle_timeout._spin.valueChanged.connect(self._on_idle_timeout_changed)
-        idle_row.addLayout(self._idle_timeout)
-        idle_row.addStretch()
-        layout.addWidget(idle_card)
+        idle_l.addLayout(self._idle_timeout)
+        self._idle_check = ToggleSwitch("", big=False)
+        self._idle_check.setChecked(idle_on)
+        self._idle_check.toggled.connect(self._on_idle_enabled_changed)
+        idle_l.addWidget(self._idle_check)
+        layout.addWidget(SettingsRow(
+            "Idle timeout",
+            "Dim the backlight when you stop typing",
+            idle_ctrl,
+        ))
+
+        self._set_hex_chip(s.color)
+        self._hue.set_current(s.color)
+        self._shade.set_current(s.color)
+        self._sync_effect_controls()
+
+    def _select_effect_link(self, index: int, animate: bool) -> None:
+        for seg, offset in zip(self._effect_links, self._effect_offset):
+            local = index - offset
+            n = len(seg._labels)
+            if 0 <= local < n:
+                seg.select(local, animate)
+            else:
+                seg.select(-1, False) if False else None
+                for i, lab in enumerate(seg._labels):
+                    lab.setStyleSheet(
+                        f"color: {COLORS['desc']}; background: transparent;"
+                    )
+                seg._sel = -1
+                seg._place(False)
+
+    def _on_effect_link(self, index: int) -> None:
+        self._select_effect_link(index, True)
+        value, _label = self._effect_items[index]
+        if value == "off":
+            if self._settings.enabled:
+                self._enable_check.blockSignals(True)
+                self._enable_check.setChecked(False)
+                self._enable_check.blockSignals(False)
+                self._on_enabled_changed(False)
+            return
+        if not self._settings.enabled:
+            self._enable_check.blockSignals(True)
+            self._enable_check.setChecked(True)
+            self._enable_check.blockSignals(False)
+            self._settings.enabled = True
+            self._persist()
+            self.enabled_changed.emit(True)
+        self._settings.effect = str(value)
+        self._persist()
+        self._sync_effect_controls()
+        self._apply_visual_from_settings()
+        self.effect_changed.emit(self._settings.effect)
+
+    def _on_gran(self, index: int) -> None:
+        self._zone_target = index
+
+    def _set_hex_chip(self, hex_str: str) -> None:
+        self._hex_chip.setStyleSheet(f"background-color: {hex_str};")
+        self._hex_edit.blockSignals(True)
+        self._hex_edit.setText(hex_str.lstrip("#").upper())
+        self._hex_edit.blockSignals(False)
+        hue = QColor(hex_str).hue()
+        if hue >= 0:
+            self._shade.set_hue(hue)
+        self._hue.set_current(hex_str)
+        self._shade.set_current(hex_str)
+
+    def _apply_picked_hex(self, hex_str: str) -> None:
+        if self._zone_count > 1 and self._zone_target < self._zone_count:
+            self._zone_hexes[self._zone_target] = hex_str
+            if self._zone_target == 0:
+                self._settings.color = hex_str
+            self._persist()
+            self._apply_visual_from_settings()
+            self.zone_color_changed.emit(self._zone_target, hex_str)
+        else:
+            self._settings.color = hex_str
+            if self._zone_count <= 1:
+                self._zone_hexes = [hex_str]
+            else:
+                self._zone_hexes = [hex_str] * self._zone_count
+            self._persist()
+            self._apply_visual_from_settings()
+            self.color_changed.emit(hex_str)
+            if self._zone_count > 1:
+                for i, h in enumerate(self._zone_hexes):
+                    self.zone_color_changed.emit(i, h)
+        self._set_hex_chip(hex_str)
+
+    def _on_strip_color(self, hex_str: str) -> None:
+        self._apply_picked_hex(hex_str)
+
+    def _on_hex_typed(self) -> None:
+        raw = self._hex_edit.text().strip().lstrip("#")
+        if len(raw) != 6:
+            self._hex_edit.setText(self._settings.color.lstrip("#").upper())
+            return
+        try:
+            int(raw, 16)
+        except ValueError:
+            self._hex_edit.setText(self._settings.color.lstrip("#").upper())
+            return
+        self._apply_picked_hex("#" + raw.upper())
 
     def _apply_visual_from_settings(self) -> None:
         if self._zone_count <= 1:
@@ -477,43 +552,34 @@ class KeyboardPage(QWidget):
 
     def _sync_effect_controls(self) -> None:
         effect = self._settings.effect
-        animated = effect != "static"
+        enabled = self._settings.enabled
+        animated = enabled and effect != "static"
+        ignore_color = (not enabled) or effect in EFFECTS_IGNORE_COLOR
+        need_color2 = enabled and effect in EFFECTS_NEED_COLOR2
+        show_color = enabled and not ignore_color
+        self._effect_editor.setVisible(animated)
         self._speed_slider.setEnabled(animated)
-        ignore_color = effect in EFFECTS_IGNORE_COLOR
-        need_color2 = effect in EFFECTS_NEED_COLOR2
-        if self._zone_count > 1:
-            show_zones = (not ignore_color) and (not need_color2)
-            show_primary = need_color2
-            if need_color2:
-                self._primary_label.setText("Color 1")
-        else:
-            show_zones = False
-            show_primary = not ignore_color
-            self._primary_label.setText("Color 1" if need_color2 else "Color")
-        self._zone_wrap.setVisible(show_zones)
-        self._primary_wrap.setVisible(show_primary)
+        self._color_editor.setVisible(show_color)
         self._color2_wrap.setVisible(need_color2)
-        self._colors_row.setVisible(show_primary or need_color2 or show_zones)
+        self._zone_wrap.setVisible(enabled and self._zone_count > 1 and show_color)
+        zones = self._zone_count if self._zone_count > 1 else 1
+        status = "off" if not enabled else f"{zones} zone{'s' if zones != 1 else ''} · {effect.replace('_', ' ')}"
+        self._head.set_status(status)
 
     def _on_enabled_changed(self, checked: bool):
         self._settings.enabled = checked
         self._persist()
         self._apply_visual_from_settings()
+        self._sync_effect_controls()
         self.enabled_changed.emit(checked)
 
     def _on_effect_changed(self, index: int):
-        value = self._effect_combo.itemData(index)
-        if not value:
-            return
-        self._settings.effect = str(value)
-        self._persist()
-        self._sync_effect_controls()
-        self._apply_visual_from_settings()
-        self.effect_changed.emit(self._settings.effect)
+        self._on_effect_link(index)
 
     def _on_speed_changed(self, value: int):
         self._settings.speed = max(1, min(100, value))
         self._speed_slider.setToolTip(f"Effect speed: {value}/100")
+        self._txt_speed.setText(str(value))
         self._persist()
         self.speed_changed.emit(self._settings.speed)
 
@@ -528,8 +594,7 @@ class KeyboardPage(QWidget):
                 self._zone_hexes = [hex_str]
             elif self._zone_hexes:
                 self._zone_hexes[0] = hex_str
-            if self._color_btn is not None:
-                self._color_btn.setStyleSheet(_style_color_btn(hex_str))
+            self._set_hex_chip(hex_str)
             self._persist()
             self._apply_visual_from_settings()
             self.color_changed.emit(hex_str)
@@ -594,6 +659,7 @@ class KeyboardPage(QWidget):
     def _on_brightness_changed(self, value: int):
         self._settings.brightness = max(0, min(255, value))
         self._brightness_slider.setToolTip(f"Backlight brightness: {value}/255")
+        self._txt_level.setText(f"{round(value * 100 / 255)}%")
         self._persist()
         self.brightness_changed.emit(value)
 

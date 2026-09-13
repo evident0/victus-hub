@@ -9,6 +9,7 @@ from PySide6.QtCore import Qt
 
 from victus_hub.app.main_window import MainWindow
 from victus_hub.app.single_instance import SingleInstanceGuard, default_socket_path
+from victus_hub.app.theme import load_fonts, stylesheet, ui_font
 from victus_hub.backend.session_log import install as install_session_log
 
 
@@ -28,14 +29,14 @@ def main():
     app.setWindowIcon(app_icon)
 
 
+    load_fonts()
+    app.setFont(ui_font(13))
+
     # Load global QSS stylesheet
     resources_dir = Path(__file__).parent / "resources"
-    style_path = resources_dir / "style.qss"
-    if style_path.exists():
-        with open(style_path, "r") as f:
-            qss = f.read()
-        qss = qss.replace("url(icons/", f"url({resources_dir.as_posix()}/icons/")
-        app.setStyleSheet(qss)
+    qss = stylesheet()
+    qss = qss.replace("url(icons/", f"url({resources_dir.as_posix()}/icons/")
+    app.setStyleSheet(qss)
 
     # Allow dark title bar on Windows
     if sys.platform == "win32":
