@@ -2,12 +2,14 @@
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QSpinBox, QDoubleSpinBox,
+    QSpinBox, QDoubleSpinBox, QMessageBox,
 )
-from PySide6.QtGui import QColor, QPalette
+from PySide6.QtGui import QColor, QPalette, QDesktopServices
+from PySide6.QtCore import Qt, QUrl
 
 from victus_hub.app.theme import COLORS
 from victus_hub.backend import fan_config
+from victus_hub.backend.diagnostics import write_diagnostics_report
 from victus_hub.features.keyboard.shortcut import (
     KeybindSettings,
     keybind_from_event,
@@ -92,7 +94,7 @@ def make_double_spin(label: str, suffix: str, value: float,
 
 
 class SettingsPage(QWidget):
-    """Settings tab for the program shortcut."""
+    """Settings tab: fan constants, program shortcut, diagnostics."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -157,6 +159,27 @@ class SettingsPage(QWidget):
         shortcut_layout.addLayout(shortcut_row)
 
         layout.addWidget(shortcut_panel)
+
+        diag_panel, diag_layout = make_settings_card()
+        diag_layout.addWidget(make_card_title("Diagnostics"))
+        diag_row = QHBoxLayout()
+        diag_row.setSpacing(12)
+        diag_hint = QLabel(
+            "Save a markdown report with system info, hardware capabilities, "
+            "and this session's terminal log to your Documents folder."
+        )
+        diag_hint.setWordWrap(True)
+        diag_hint.setStyleSheet(
+            f"color: {COLORS['text_secondary']}; font-size: 12px; background: transparent;"
+        )
+        diag_row.addWidget(diag_hint, 1)
+        self._diag_btn = QPushButton("Generate report")
+        self._diag_btn.setFixedHeight(34)
+        self._diag_btn.setStyleSheet(self._shortcut_btn_style(False))
+        self._diag_btn.clicked.connect(self._on_generate_diagnostics)
+        diag_row.addWidget(self._diag_btn, 0, Qt.AlignRight | Qt.AlignVCenter)
+        diag_layout.addLayout(diag_row)
+        layout.addWidget(diag_panel)
 
         layout.addStretch()
 
@@ -244,3 +267,22 @@ class SettingsPage(QWidget):
         if self._shortcut_ctrl is not None:
             self._shortcut_ctrl.cancel_capture()
             self._shortcut_ctrl.reload_settings()
+
+    def _on_generate_diagnostics(self) -> None:
+        try:
+            path = write_diagnostics_report()
+        except OSError as exc:
+            QMessageBox.warning(
+                self,
+                "Diagnostics",
+                f"Could not write the report:\n{exc}",
+            )
+            return
+        box = QMessageBox(self)
+        box.setWindowTitle("Diagnostics")
+        box.setText(f"Report saved to:\n{path}")
+        open_btn = box.addButton("Open", QMessageBox.AcceptRole)
+        box.addButton("OK", QMessageBox.RejectRole)
+        box.exec()
+        if box.clickedButton() is open_btn:
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(path)))

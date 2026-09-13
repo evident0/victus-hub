@@ -84,17 +84,17 @@ def request_fan_pwm(pwm: int) -> str:
 def request_keyboard_color(
     red: int, green: int, blue: int, zone: int | None = None,
 ) -> str:
-    """Set keyboard color on all zones, or on one zone when *zone* is given.
-
-    Quiet on purpose: software RGB effects write this at ~20 Hz.
-    """
+    """Set keyboard color on all zones, or on one zone when *zone* is given."""
     if zone is None:
-        response = _request_daemon(
-            f"keyboard-color\t{red}\t{green}\t{blue}\n", quiet=True,
-        )
+        logger.info("\u2192 daemon: keyboard-color %d %d %d", red, green, blue)
+        response = _request_daemon(f"keyboard-color\t{red}\t{green}\t{blue}\n")
     else:
+        logger.info(
+            "\u2192 daemon: keyboard-color zone %d %d %d %d",
+            zone, red, green, blue,
+        )
         response = _request_daemon(
-            f"keyboard-color\t{zone}\t{red}\t{green}\t{blue}\n", quiet=True,
+            f"keyboard-color\t{zone}\t{red}\t{green}\t{blue}\n",
         )
     return protocol.parse_status_response(response)
 

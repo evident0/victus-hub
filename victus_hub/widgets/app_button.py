@@ -9,6 +9,8 @@ from PySide6.QtGui import QFont
 from victus_hub.app.icon_utils import load_icon
 from victus_hub.app.theme import COLORS
 
+_ICON_PX = 24
+
 
 class AppButton(QToolButton):
     """Selectable tile button.
@@ -40,10 +42,10 @@ class AppButton(QToolButton):
 
         image_exts = (".png", ".ico", ".svg", ".bmp", ".jpg", ".jpeg")
         if icon and any(icon.lower().endswith(ext) for ext in image_exts):
-            ico = load_icon(icon, size=32)
+            ico = load_icon(icon, size=_ICON_PX)
             if not ico.isNull():
                 self.setIcon(ico)
-                self.setIconSize(QSize(32, 32))
+                self.setIconSize(QSize(_ICON_PX, _ICON_PX))
                 self.setText(label)
                 self.setToolButtonStyle(Qt.ToolButtonTextUnderIcon)
                 self._has_image_icon = True

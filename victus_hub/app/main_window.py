@@ -3,14 +3,16 @@
 import logging
 
 from PySide6.QtCore import Qt, QSettings, QTimer, QEvent
-from PySide6.QtGui import QAction, QCloseEvent, QIcon, QHideEvent, QShowEvent
+from PySide6.QtGui import QAction, QActionGroup, QCloseEvent, QIcon, QHideEvent, QShowEvent
 from PySide6.QtWidgets import (
     QApplication, QFrame, QHBoxLayout, QMainWindow, QScrollArea,
     QStackedWidget, QSystemTrayIcon, QWidget,
 )
 
 from victus_hub.app.theme import COLORS
+from victus_hub.app.icon_utils import load_icon
 from victus_hub.widgets.popup_menu import PopupMenu
+from victus_hub.widgets.profile_section import FAN_MODES, PROFILES
 from victus_hub.widgets.sidebar import Sidebar
 from victus_hub.pages.home_page import HomePage
 from victus_hub.pages.processes_page import ProcessesPage
@@ -39,7 +41,6 @@ class MainWindow(QMainWindow):
         self.resize(960, 640)
 
         # App icon — logoV.png with native colors (no tint, no solid background)
-        from victus_hub.app.icon_utils import load_icon
         self._app_icon = load_icon("logoV.png", size=48)
         self.setWindowIcon(self._app_icon)
 
@@ -114,21 +115,14 @@ class MainWindow(QMainWindow):
         # Sidebar -> stack sync
         self._sidebar.tab_changed.connect(self._on_tab_changed)
 
+        self._selected_profile = 1
+        self._selected_fan_mode = "auto"
+
         # ── System tray ──
         self._tray = QSystemTrayIcon(self._app_icon, self)
         self._tray.setToolTip("Victus Hub")
         self._tray.activated.connect(self._on_tray_activated)
-
-        tray_menu = PopupMenu()
-        show_action = QAction("Show/Hide", self)
-        show_action.triggered.connect(self._toggle_visible)
-        tray_menu.addAction(show_action)
-
-        quit_action = QAction("Quit", self)
-        quit_action.triggered.connect(self._quit_app)
-        tray_menu.addAction(quit_action)
-
-        self._tray.setContextMenu(tray_menu)
+        self._tray.setContextMenu(self._build_tray_menu())
         self._tray.show()
 
         # ── Settings ──
@@ -137,7 +131,6 @@ class MainWindow(QMainWindow):
 
         # ── State ──
         self._stats_by_key: dict[str, dict] = {}
-        self._selected_profile = 1
         self._quitting = False
 
         # ── Signal connections ──
@@ -196,18 +189,22 @@ class MainWindow(QMainWindow):
         try:
             _cfg = api.get_fan_config()
             if _cfg.custom_enabled:
+                self._selected_fan_mode = "custom"
                 self._home_page.set_selected_fan_mode("custom")
                 try:
                     api.set_fan_manual()
                 except Exception:
                     logger.exception("set fan manual (restore custom) failed")
             elif _cfg.manual_preset == "max":
+                self._selected_fan_mode = "max"
                 self._home_page.set_selected_fan_mode("max")
                 self._set_fan_max()
             else:
+                self._selected_fan_mode = "auto"
                 self._home_page.set_selected_fan_mode("auto")
         except Exception:
             logger.exception("init fan config check failed")
+        self._sync_tray_checks()
 
         # ── Power state watcher (suspend/shutdown cleanup) ──
         self._power_state = PowerStateWatcher(self)
@@ -292,6 +289,68 @@ class MainWindow(QMainWindow):
         if event.type() == QEvent.Type.WindowStateChange:
             self._update_ui_active()
     # ── Tray ──
+
+    def _tray_header(self, text: str) -> QAction:
+        action = QAction(text, self)
+        action.setEnabled(False)
+        return action
+
+    def _build_tray_menu(self) -> PopupMenu:
+        menu = PopupMenu()
+        show_action = QAction("Show/Hide", self)
+        show_action.triggered.connect(self._toggle_visible)
+        menu.addAction(show_action)
+        menu.addSeparator()
+
+        menu.addAction(self._tray_header("Performance"))
+        profile_group = QActionGroup(self)
+        profile_group.setExclusive(True)
+        self._tray_profile_actions: list[QAction] = []
+        for i, (label, icon, _accent) in enumerate(PROFILES):
+            action = QAction(label, self)
+            action.setCheckable(True)
+            action.setIcon(load_icon(icon, size=16))
+            action.triggered.connect(
+                lambda _checked=False, idx=i: self._on_profile_select(idx)
+            )
+            profile_group.addAction(action)
+            menu.addAction(action)
+            self._tray_profile_actions.append(action)
+
+        menu.addSeparator()
+        menu.addAction(self._tray_header("Fan Mode"))
+        fan_group = QActionGroup(self)
+        fan_group.setExclusive(True)
+        self._tray_fan_actions: dict[str, QAction] = {}
+        for key, label, icon, _accent, _has_action in FAN_MODES:
+            action = QAction(label, self)
+            action.setCheckable(True)
+            action.setIcon(load_icon(icon, size=16))
+            action.triggered.connect(
+                lambda _checked=False, mode=key: self._on_tray_fan_mode(mode)
+            )
+            fan_group.addAction(action)
+            menu.addAction(action)
+            self._tray_fan_actions[key] = action
+
+        menu.addSeparator()
+        quit_action = QAction("Quit", self)
+        quit_action.triggered.connect(self._quit_app)
+        menu.addAction(quit_action)
+
+        self._sync_tray_checks()
+        return menu
+
+    def _sync_tray_checks(self) -> None:
+        for i, action in enumerate(getattr(self, "_tray_profile_actions", [])):
+            action.setChecked(i == self._selected_profile)
+        for key, action in getattr(self, "_tray_fan_actions", {}).items():
+            action.setChecked(key == self._selected_fan_mode)
+
+    def _on_tray_fan_mode(self, mode: str) -> None:
+        self._home_page.set_selected_fan_mode(mode)
+        self._on_fan_mode(mode)
+
     def _on_tray_activated(self, reason):
         if reason in (QSystemTrayIcon.Trigger, QSystemTrayIcon.DoubleClick):
             self._show_all_windows()
@@ -453,6 +512,7 @@ class MainWindow(QMainWindow):
         if profile is not None and profile != self._selected_profile:
             self._selected_profile = profile
             self._home_page.set_selected_profile(profile)
+            self._sync_tray_checks()
             if self._fan_curves_window is not None:
                 self._fan_curves_window.set_edit_profile(profile)
 
@@ -461,6 +521,7 @@ class MainWindow(QMainWindow):
     def _on_profile_select(self, index: int):
         self._selected_profile = index
         self._home_page.set_selected_profile(index)
+        self._sync_tray_checks()
         if self._fan_curves_window is not None:
             self._fan_curves_window.set_edit_profile(index)
         try:
@@ -472,6 +533,8 @@ class MainWindow(QMainWindow):
 
     def _on_fan_mode(self, mode: str):
         """Handle Auto/Max/Custom fan mode button clicks."""
+        self._selected_fan_mode = mode
+        self._sync_tray_checks()
         if mode == "auto":
             self._set_fan_auto()
         elif mode == "max":

@@ -229,8 +229,9 @@ class LightingController(QObject):
                 self._backlight_on = None
 
         # Determine the desired hardware state for this frame.
-        # "Off" is achieved via brightness=0 (the proper LED off path);
-        # "On" is achieved by sending the color (which forces on at full).
+        # "Off" is brightness=0 (the LED off path). "On" restores the
+        # user brightness through the same logged daemon command, then
+        # writes color (which reapplies that brightness atomically).
         want_off = (not settings.enabled) or self._dimmed
 
         if want_off:
@@ -250,6 +251,13 @@ class LightingController(QObject):
                 self.frame_changed.emit([RgbColor(0, 0, 0)] * self._zone_count)
             return
 
+        if self._last_sent_brightness != settings.brightness:
+            try:
+                api.set_keyboard_brightness(settings.brightness)
+                self._last_sent_brightness = settings.brightness
+            except Exception:
+                self._last_sent_brightness = None
+
         frames = lighting_frames(settings, self._zone_count, self._anim_step)
         min_interval = self._hw_min_interval(animated)
 
@@ -258,9 +266,6 @@ class LightingController(QObject):
         else:
             self._tick_multi_zone(now, frames, min_interval)
 
-        # Brightness is applied atomically by the daemon's _write_led_color
-        # (using the user-brightness synced via set_keyboard_user_brightness),
-        # so no separate brightness write is needed here.
         # Always update visual keyboard (responsive UI)
         if self._ui_active:
             self.frame_changed.emit(frames)

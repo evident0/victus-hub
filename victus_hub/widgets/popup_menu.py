@@ -51,6 +51,9 @@ class PopupMenu(QMenu):
                 background-color: transparent;
                 color: {muted};
             }}
+            QMenu#popupMenu::item:checked {{
+                font-weight: 600;
+            }}
             QMenu#popupMenu::separator {{
                 height: 1px;
                 background: {border};

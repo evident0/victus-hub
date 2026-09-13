@@ -9,11 +9,13 @@ from PySide6.QtCore import Qt
 
 from victus_hub.app.main_window import MainWindow
 from victus_hub.app.single_instance import SingleInstanceGuard, default_socket_path
+from victus_hub.backend.session_log import install as install_session_log
 
 
 # Surface daemon-traffic logs in the terminal; daemon_client + main_window
 # both rely on this being configured at startup.
 logging.basicConfig(level=logging.INFO, format="%(message)s")
+install_session_log()
 
 
 def main():

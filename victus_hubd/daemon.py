@@ -312,7 +312,7 @@ def _make_dispatch(sampler: RaplPowerSampler, sampler_lock: threading.Lock | Non
         n = len(body.split("\t"))
         if n == 3:
             r, g, b = _parse_rgb(body)
-            logger.debug("[keyboard-rgb] daemon request: color %d %d %d", r, g, b)
+            logger.info("[keyboard-rgb] daemon request: color %d %d %d", r, g, b)
             try:
                 result = sysfs.write_keyboard_color(r, g, b)
             except RuntimeError as e:
@@ -320,7 +320,7 @@ def _make_dispatch(sampler: RaplPowerSampler, sampler_lock: threading.Lock | Non
             return protocol.format_status_response((True, result))
         if n == 4:
             zone, r, g, b = _parse_zone_rgb(body)
-            logger.debug(
+            logger.info(
                 "[keyboard-rgb] daemon request: zone %d color %d %d %d",
                 zone, r, g, b,
             )
