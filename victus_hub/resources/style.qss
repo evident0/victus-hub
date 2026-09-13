@@ -166,13 +166,13 @@ QComboBox::drop-down {
 QComboBox::down-arrow,
 QComboBox::down-arrow:off,
 QComboBox::down-arrow:disabled {
-    image: url(icons/chevron-down.png);
+    image: url("@chevron_down");
     width: 14px;
     height: 14px;
 }
 
 QComboBox::down-arrow:on {
-    image: url(icons/chevron-up.png);
+    image: url("@chevron_up");
     width: 14px;
     height: 14px;
 }
@@ -191,15 +191,28 @@ QComboBox QAbstractItemView {
 QSpinBox, QDoubleSpinBox {
     background-color: @sunken;
     color: @text;
-    border: none;
+    border: 1px solid @edge;
     border-radius: 8px;
     padding: 4px 24px 4px 8px;
     selection-background-color: @accent;
     font-family: "@mono_font";
 }
 
+QSpinBox#embedSpin, QDoubleSpinBox#embedSpin {
+    background-color: transparent;
+    border: none;
+}
+
+QSpinBox QLineEdit, QDoubleSpinBox QLineEdit {
+    background-color: transparent;
+    color: @text;
+    border: none;
+    selection-background-color: @accent;
+}
+
 QSpinBox:focus, QDoubleSpinBox:focus {
     background-color: @well;
+    border-color: @border_focus;
 }
 
 QSpinBox::up-button, QDoubleSpinBox::up-button {
@@ -228,7 +241,7 @@ QSpinBox::down-button:hover, QDoubleSpinBox::down-button:hover {
 QSpinBox::up-arrow, QDoubleSpinBox::up-arrow,
 QSpinBox::up-arrow:off, QDoubleSpinBox::up-arrow:off,
 QSpinBox::up-arrow:disabled, QDoubleSpinBox::up-arrow:disabled {
-    image: url(icons/chevron-up.png);
+    image: url("@chevron_up");
     width: 14px;
     height: 14px;
 }
@@ -236,7 +249,7 @@ QSpinBox::up-arrow:disabled, QDoubleSpinBox::up-arrow:disabled {
 QSpinBox::down-arrow, QDoubleSpinBox::down-arrow,
 QSpinBox::down-arrow:off, QDoubleSpinBox::down-arrow:off,
 QSpinBox::down-arrow:disabled, QDoubleSpinBox::down-arrow:disabled {
-    image: url(icons/chevron-down.png);
+    image: url("@chevron_down");
     width: 14px;
     height: 14px;
 }

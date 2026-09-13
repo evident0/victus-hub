@@ -4,13 +4,13 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QSpinBox, QDoubleSpinBox, QMessageBox, QScrollArea,
 )
-from PySide6.QtGui import QColor, QPalette, QDesktopServices
+from PySide6.QtGui import QDesktopServices
 from PySide6.QtCore import Qt, QUrl
 
 from victus_hub.app.theme import COLORS, mono_font, ui_font
 from victus_hub.backend import fan_config
 from victus_hub.backend.diagnostics import write_diagnostics_report
-from victus_hub.backend.hardware import hardware_title
+from victus_hub.backend.hardware import board_title
 from victus_hub.features.keyboard.shortcut import (
     KeybindSettings,
     keybind_from_event,
@@ -18,7 +18,7 @@ from victus_hub.features.keyboard.shortcut import (
     read_keybind_settings,
     write_keybind_settings,
 )
-from victus_hub.widgets.chrome import PageHead, SettingsRow, hairline, section_label
+from victus_hub.widgets.chrome import PageHead, SettingsRow, hairline
 from victus_hub.widgets.toggle_switch import ToggleSwitch
 
 
@@ -38,11 +38,43 @@ def make_card_title(text: str) -> QLabel:
     return lbl
 
 
+def _style_action_btn(btn: QPushButton) -> None:
+    btn.setCursor(Qt.PointingHandCursor)
+    btn.setFixedHeight(34)
+    btn.setStyleSheet(
+        f"QPushButton {{"
+        f" background-color: {COLORS['pill']}; color: {COLORS['text']};"
+        f" border: 1px solid {COLORS['edge']}; border-radius: 8px;"
+        f" padding: 0 12px; font-size: 13px;"
+        f"}}"
+        f"QPushButton:hover {{ background-color: {COLORS['edge']}; }}"
+        f"QPushButton:disabled {{"
+        f" color: {COLORS['foot']}; background-color: {COLORS['sunken']};"
+        f"}}"
+    )
+
+
 def _style_native_spinbox(spin: QSpinBox | QDoubleSpinBox) -> None:
-    palette = spin.palette()
-    palette.setColor(QPalette.ColorRole.Base, QColor(COLORS["sunken"]))
-    spin.setPalette(palette)
+    spin.setObjectName("embedSpin")
+    spin.setAttribute(Qt.WA_StyledBackground, True)
     spin.setFixedHeight(34)
+
+
+def _spin_well(spin: QSpinBox | QDoubleSpinBox) -> QWidget:
+    """Sunken chip behind a spinbox so the field reads darker than the page."""
+    well = QWidget()
+    well.setAttribute(Qt.WA_StyledBackground, True)
+    well.setFixedHeight(34)
+    well.setStyleSheet(
+        f"background-color: {COLORS['sunken']};"
+        f" border: 1px solid {COLORS['edge']};"
+        f" border-radius: 8px;"
+    )
+    lay = QHBoxLayout(well)
+    lay.setContentsMargins(0, 0, 0, 0)
+    lay.setSpacing(0)
+    lay.addWidget(spin)
+    return well
 
 
 def make_spin(label: str, suffix: str, value: int,
@@ -62,29 +94,32 @@ def make_spin(label: str, suffix: str, value: int,
     spin.setFixedWidth(90)
     _style_native_spinbox(spin)
     row._spin = spin
-    row.addWidget(spin)
+    row.addWidget(_spin_well(spin))
     return row
 
 
 def make_double_spin(label: str, suffix: str, value: float,
                      vmin: float, vmax: float, step: float) -> QHBoxLayout:
     row = QHBoxLayout()
-    lbl = QLabel(f"{label} ({suffix})")
-    lbl.setFont(ui_font(12))
-    lbl.setStyleSheet(
-        f"color: {COLORS['sub']}; background: transparent;"
-    )
-    row.addWidget(lbl)
-    row.addStretch()
+    if label:
+        lbl = QLabel(f"{label} ({suffix})" if suffix else label)
+        lbl.setFont(ui_font(12))
+        lbl.setStyleSheet(
+            f"color: {COLORS['sub']}; background: transparent;"
+        )
+        row.addWidget(lbl)
+        row.addStretch()
     spin = QDoubleSpinBox()
     spin.setRange(vmin, vmax)
     spin.setSingleStep(step)
     spin.setDecimals(1)
     spin.setValue(value)
-    spin.setFixedWidth(90)
+    if suffix:
+        spin.setSuffix(f" {suffix}" if not suffix.startswith(" ") else suffix)
+    spin.setFixedWidth(110)
     _style_native_spinbox(spin)
     row._spin = spin
-    row.addWidget(spin)
+    row.addWidget(_spin_well(spin))
     return row
 
 
@@ -102,10 +137,9 @@ class SettingsPage(QWidget):
         head_l.setContentsMargins(24, 24, 24, 16)
         self._head = PageHead("Settings")
         try:
-            machine = hardware_title()
+            self._head.set_status(board_title())
         except Exception:
-            machine = ""
-        self._head.set_status(machine)
+            self._head.set_status("")
         head_l.addWidget(self._head)
         outer.addWidget(head_wrap)
 
@@ -126,9 +160,6 @@ class SettingsPage(QWidget):
             self._kb = KeybindSettings(enabled=True, mods=self._kb.mods, key=self._kb.key)
             write_keybind_settings(self._kb)
 
-        layout.addWidget(section_label("SHORTCUT"))
-        layout.addSpacing(12)
-
         kb_ctrl = QWidget()
         kb_l = QHBoxLayout(kb_ctrl)
         kb_l.setContentsMargins(0, 0, 0, 0)
@@ -142,15 +173,11 @@ class SettingsPage(QWidget):
         self._kb_value.setMinimumWidth(120)
         kb_l.addWidget(self._kb_value)
         self._kb_set_btn = QPushButton("Set")
-        self._kb_set_btn.setObjectName("linkBtn")
-        self._kb_set_btn.setCursor(Qt.PointingHandCursor)
-        self._kb_set_btn.setFlat(True)
+        _style_action_btn(self._kb_set_btn)
         self._kb_set_btn.clicked.connect(self._on_set_shortcut)
         kb_l.addWidget(self._kb_set_btn)
         self._kb_clear_btn = QPushButton("Clear")
-        self._kb_clear_btn.setObjectName("linkBtn")
-        self._kb_clear_btn.setFlat(True)
-        self._kb_clear_btn.setCursor(Qt.PointingHandCursor)
+        _style_action_btn(self._kb_clear_btn)
         self._kb_clear_btn.setEnabled(self._kb.key != 0)
         self._kb_clear_btn.clicked.connect(self._on_clear_shortcut)
         kb_l.addWidget(self._kb_clear_btn)
@@ -161,8 +188,6 @@ class SettingsPage(QWidget):
         ))
 
         layout.addWidget(hairline())
-        layout.addWidget(section_label("FANS"))
-        layout.addSpacing(6)
 
         cfg = fan_config.load()
         fan_ctrl = QWidget()
@@ -180,9 +205,6 @@ class SettingsPage(QWidget):
             fan_ctrl,
         ))
 
-        layout.addWidget(hairline())
-        layout.addWidget(section_label("APP"))
-        layout.addSpacing(6)
         layout.addStretch()
         scroll.setWidget(body)
         outer.addWidget(scroll, 1)

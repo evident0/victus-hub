@@ -176,6 +176,9 @@ def stylesheet() -> str:
     tokens = dict(COLORS)
     tokens["ui_font"] = UI_FONT
     tokens["mono_font"] = MONO_FONT
+    icons = path.parent / "icons"
+    tokens["chevron_up"] = str(icons / "chevron-up.png")
+    tokens["chevron_down"] = str(icons / "chevron-down.png")
     # longer keys first so @accent_hi is not eaten by @accent
     for key in sorted(tokens, key=len, reverse=True):
         text = text.replace("@" + key, str(tokens[key]))
