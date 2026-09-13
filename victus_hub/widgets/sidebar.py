@@ -9,7 +9,7 @@ from victus_hub.app.theme import COLORS
 # (icon file, short label shown in the rail)
 TABS = [
     ("laptop.png", "Home"),
-    ("fan.png", "Fans"),
+    ("zap.png", "Power"),
     ("keyboard.png", "Keyboard"),
     ("thermometer.png", "Sensors"),
     ("list.png", "Processes"),

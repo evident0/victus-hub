@@ -17,6 +17,32 @@ from victus_hub.features.keyboard.shortcut import (
 )
 
 
+def make_settings_card() -> tuple[QWidget, QVBoxLayout]:
+    """Rounded surface card used on Settings and Power."""
+    card = QWidget()
+    card.setProperty("settingsCard", True)
+    card.setStyleSheet(f"""
+        QWidget[settingsCard="true"] {{
+            background-color: {COLORS['surface']};
+            border: 1px solid {COLORS['border']};
+            border-radius: 14px;
+        }}
+    """)
+    layout = QVBoxLayout(card)
+    layout.setContentsMargins(16, 14, 16, 14)
+    layout.setSpacing(12)
+    return card, layout
+
+
+def make_card_title(text: str) -> QLabel:
+    lbl = QLabel(text)
+    lbl.setStyleSheet(
+        f"color: {COLORS['text']}; font-size: 13px; font-weight: bold;"
+        f"background: transparent;"
+    )
+    return lbl
+
+
 def _style_native_spinbox(spin: QSpinBox | QDoubleSpinBox) -> None:
     palette = spin.palette()
     palette.setColor(QPalette.ColorRole.Base, QColor(COLORS["surface_raised"]))
@@ -28,7 +54,9 @@ def make_spin(label: str, suffix: str, value: int,
               vmin: int, vmax: int, compact: bool = False) -> QHBoxLayout:
     row = QHBoxLayout()
     lbl = QLabel(f"{label} ({suffix})")
-    lbl.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 12px;")
+    lbl.setStyleSheet(
+        f"color: {COLORS['text_secondary']}; font-size: 12px; background: transparent;"
+    )
     row.addWidget(lbl)
     if not compact:
         row.addStretch()
@@ -46,7 +74,9 @@ def make_double_spin(label: str, suffix: str, value: float,
                      vmin: float, vmax: float, step: float) -> QHBoxLayout:
     row = QHBoxLayout()
     lbl = QLabel(f"{label} ({suffix})")
-    lbl.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 12px;")
+    lbl.setStyleSheet(
+        f"color: {COLORS['text_secondary']}; font-size: 12px; background: transparent;"
+    )
     row.addWidget(lbl)
     row.addStretch()
     spin = QDoubleSpinBox()
@@ -70,27 +100,10 @@ class SettingsPage(QWidget):
         layout.setContentsMargins(16, 16, 16, 16)
         layout.setSpacing(12)
 
-        card_style = f"""
-            QWidget[settingsCard="true"] {{
-                background-color: {COLORS['surface']};
-                border: 1px solid {COLORS['border']};
-                border-radius: 14px;
-            }}
-        """
-
-        fan_panel = QWidget()
-        fan_panel.setProperty("settingsCard", True)
-        fan_panel.setStyleSheet(card_style)
-        fan_layout = QVBoxLayout(fan_panel)
-        fan_layout.setContentsMargins(16, 14, 16, 14)
-        fan_layout.setSpacing(12)
+        fan_panel, fan_layout = make_settings_card()
 
         cfg = fan_config.load()
-        fan_label = QLabel("Fan Control")
-        fan_label.setStyleSheet(
-            f"color: {COLORS['text']}; font-size: 13px; font-weight: bold;"
-        )
-        fan_layout.addWidget(fan_label)
+        fan_layout.addWidget(make_card_title("Fan Control"))
         self._min_fan_change = make_double_spin(
             "Minimum fan change", "%",
             cfg.min_fan_change_pct, 0.0, 20.0, 0.5,
@@ -106,17 +119,8 @@ class SettingsPage(QWidget):
             self._kb = KeybindSettings(enabled=True, mods=self._kb.mods, key=self._kb.key)
             write_keybind_settings(self._kb)
 
-        shortcut_panel = QWidget()
-        shortcut_panel.setProperty("settingsCard", True)
-        shortcut_panel.setStyleSheet(card_style)
-        shortcut_layout = QVBoxLayout(shortcut_panel)
-        shortcut_layout.setContentsMargins(16, 14, 16, 14)
-        shortcut_layout.setSpacing(12)
-
-        shortcut_label = QLabel("Program Shortcut")
-        shortcut_label.setStyleSheet(
-            f"color: {COLORS['text']}; font-size: 13px; font-weight: bold;"
-        )
+        shortcut_panel, shortcut_layout = make_settings_card()
+        shortcut_label = make_card_title("Program Shortcut")
 
         shortcut_row = QHBoxLayout()
         shortcut_row.setSpacing(16)

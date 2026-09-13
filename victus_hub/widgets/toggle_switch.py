@@ -31,7 +31,7 @@ class ToggleSwitch(QWidget):
 
         self._label = QLabel(text) if text else None
         if self._label:
-            self._label.setStyleSheet("color: #ffffff; font-size: 13px;")
+            self._label.setStyleSheet("color: #ffffff; font-size: 13px; background: transparent;")
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)

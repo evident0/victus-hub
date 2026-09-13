@@ -13,7 +13,7 @@ from victus_hub.app.theme import COLORS
 from victus_hub.widgets.sidebar import Sidebar
 from victus_hub.pages.home_page import HomePage
 from victus_hub.pages.processes_page import ProcessesPage
-from victus_hub.pages.fans_power_page import FansPowerPage
+from victus_hub.pages.power_page import PowerPage
 from victus_hub.pages.sensors_page import SensorsPage
 from victus_hub.pages.keyboard_page import KeyboardPage
 from victus_hub.pages.settings_page import SettingsPage
@@ -73,7 +73,7 @@ class MainWindow(QMainWindow):
 
         self._home_page = HomePage()
         self._processes_page = ProcessesPage()
-        self._fans_page = FansPowerPage()
+        self._power_page = PowerPage()
         self._sensors_page = SensorsPage()
         self._keyboard_page = KeyboardPage()
         self._settings_page = SettingsPage()
@@ -81,7 +81,7 @@ class MainWindow(QMainWindow):
 
         self._pages = [
             self._home_page,
-            self._fans_page,
+            self._power_page,
             self._keyboard_page,
             self._sensors_page,
             self._processes_page,
@@ -136,9 +136,6 @@ class MainWindow(QMainWindow):
         self._home_page.profile_selected.connect(self._on_profile_select)
         self._home_page.fan_mode_selected.connect(self._on_fan_mode)
         self._home_page.fan_curves_popout_requested.connect(self._open_fan_curves_window)
-
-        # Fans: pop-out request
-        self._fans_page.fan_curves_popout_requested.connect(self._open_fan_curves_window)
 
         # Sensors: graph pop-out requests
         self._sensors_page.open_graph_requested.connect(self._open_sensor_graph)
@@ -443,7 +440,6 @@ class MainWindow(QMainWindow):
         if profile is not None and profile != self._selected_profile:
             self._selected_profile = profile
             self._home_page.set_selected_profile(profile)
-            self._fans_page.set_edit_profile(profile)
             if self._fan_curves_window is not None:
                 self._fan_curves_window.set_edit_profile(profile)
 
@@ -452,7 +448,6 @@ class MainWindow(QMainWindow):
     def _on_profile_select(self, index: int):
         self._selected_profile = index
         self._home_page.set_selected_profile(index)
-        self._fans_page.set_edit_profile(index)
         if self._fan_curves_window is not None:
             self._fan_curves_window.set_edit_profile(index)
         try:
@@ -543,9 +538,6 @@ class MainWindow(QMainWindow):
         win.setAttribute(Qt.WA_DeleteOnClose)
         def _on_destroyed(obj=None):
             self._fan_curves_window = None
-            self._fans_page.set_fan_curves_window_open(False)
-            self._fans_page.refresh_fan_curves()
         win.destroyed.connect(_on_destroyed)
         self._fan_curves_window = win
-        self._fans_page.set_fan_curves_window_open(True)
         win.show()

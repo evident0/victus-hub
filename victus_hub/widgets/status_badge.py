@@ -21,6 +21,6 @@ class StatusBadge(QLabel):
         super().__init__(f"\u25cf  {text.upper()}", parent)  # ●
         self.setStyleSheet(
             f"color: {color}; font-size: 10px; font-weight: 700; "
-            f"background-color: {COLORS['bg']}; border: 1px solid {COLORS['border']}; "
+            f"background-color: {COLORS['surface']}; border: 1px solid {COLORS['border']}; "
             "border-radius: 8px; padding: 3px 8px;"
         )
