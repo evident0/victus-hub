@@ -41,6 +41,10 @@ class FanChart(QWidget):
         self.setCursor(Qt.CrossCursor)
         self.setStyleSheet(f"background-color: {COLORS['bg']};")
 
+    def set_accent(self, accent: QColor) -> None:
+        self._accent = accent
+        self.update()
+
     # ── Properties ──
 
     @property

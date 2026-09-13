@@ -17,11 +17,11 @@ from victus_hub.widgets.sidebar import Sidebar
 from victus_hub.pages.home_page import HomePage
 from victus_hub.pages.processes_page import ProcessesPage
 from victus_hub.pages.power_page import PowerPage
+from victus_hub.pages.fans_page import FansPage
 from victus_hub.pages.sensors_page import SensorsPage
 from victus_hub.pages.keyboard_page import KeyboardPage
 from victus_hub.pages.settings_page import SettingsPage
 from victus_hub.windows.sensor_graph_window import SensorGraphWindow
-from victus_hub.windows.fan_curves_window import FanCurvesWindow
 from victus_hub import api
 from victus_hub.services.fan_control import start_fan_control, set_suspended
 from victus_hub.services.lighting_controller import LightingController
@@ -77,6 +77,7 @@ class MainWindow(QMainWindow):
         self._home_page = HomePage()
         self._processes_page = ProcessesPage()
         self._power_page = PowerPage()
+        self._fans_page = FansPage()
         self._sensors_page = SensorsPage()
         self._keyboard_page = KeyboardPage()
         self._settings_page = SettingsPage()
@@ -85,6 +86,7 @@ class MainWindow(QMainWindow):
         self._pages = [
             self._home_page,
             self._power_page,
+            self._fans_page,
             self._keyboard_page,
             self._sensors_page,
             self._processes_page,
@@ -130,8 +132,8 @@ class MainWindow(QMainWindow):
         # Home: profile selection + fan modes
         self._home_page.profile_selected.connect(self._on_profile_select)
         self._home_page.fan_mode_selected.connect(self._on_fan_mode)
-        self._home_page.fan_curves_popout_requested.connect(self._open_fan_curves_window)
-        self._home_page.lighting_clicked.connect(lambda: self.set_active_tab(2))
+        self._home_page.fans_clicked.connect(lambda: self.set_active_tab(2))
+        self._home_page.lighting_clicked.connect(lambda: self.set_active_tab(3))
         self._home_page.power_clicked.connect(lambda: self.set_active_tab(1))
 
         # Sensors: graph pop-out requests
@@ -139,7 +141,6 @@ class MainWindow(QMainWindow):
 
         # Window tracking
         self._graph_windows: dict[str, SensorGraphWindow] = {}
-        self._fan_curves_window: FanCurvesWindow | None = None
         self._lighting = LightingController(self)
         self._lighting.frame_changed.connect(self._keyboard_page.apply_frame)
         self._lighting.frame_changed.connect(self._home_page.apply_frame)
@@ -241,9 +242,10 @@ class MainWindow(QMainWindow):
         0: (460, 740),
         1: (460, 680),
         2: (700, 680),
-        3: (720, 640),
+        3: (700, 680),
         4: (720, 640),
-        5: (460, 640),
+        5: (720, 640),
+        6: (460, 640),
     }
 
     def _morph_to_page(self, index: int, _animate: bool) -> None:
@@ -258,6 +260,8 @@ class MainWindow(QMainWindow):
         self._sidebar.refresh_accent()
         if hasattr(self._home_page, "refresh_accent"):
             self._home_page.refresh_accent()
+        if hasattr(self._fans_page, "refresh_accent"):
+            self._fans_page.refresh_accent()
 
 
     def _is_keyboard_tab_current(self) -> bool:
@@ -385,8 +389,6 @@ class MainWindow(QMainWindow):
         """Hide main window + all currently open child windows to tray."""
         for win in list(self._graph_windows.values()):
             win.hide()
-        if self._fan_curves_window is not None:
-            self._fan_curves_window.hide()
         self.hide()
         self._update_ui_active()
 
@@ -397,9 +399,6 @@ class MainWindow(QMainWindow):
         for win in list(self._graph_windows.values()):
             win.showNormal()
             win.raise_()
-        if self._fan_curves_window is not None:
-            self._fan_curves_window.showNormal()
-            self._fan_curves_window.raise_()
         self.showNormal()
         self.raise_()
         self.activateWindow()
@@ -538,8 +537,7 @@ class MainWindow(QMainWindow):
             self._home_page.set_selected_profile(profile)
             self._apply_accent(profile)
             self._sync_tray_checks()
-            if self._fan_curves_window is not None:
-                self._fan_curves_window.set_edit_profile(profile)
+            self._fans_page.set_edit_profile(profile)
 
     # ── Profile selection ──
 
@@ -548,8 +546,7 @@ class MainWindow(QMainWindow):
         self._home_page.set_selected_profile(index)
         self._apply_accent(index)
         self._sync_tray_checks()
-        if self._fan_curves_window is not None:
-            self._fan_curves_window.set_edit_profile(index)
+        self._fans_page.set_edit_profile(index)
         try:
             api.set_system_profile(index)
         except Exception:
@@ -626,20 +623,4 @@ class MainWindow(QMainWindow):
             self._graph_windows.pop(k, None)
         win.destroyed.connect(_on_destroyed)
         self._graph_windows[key] = win
-        win.show()
-
-    def _open_fan_curves_window(self):
-        """Open or focus the standalone fan curves window."""
-        if self._fan_curves_window is not None:
-            self._fan_curves_window.show()
-            self._fan_curves_window.raise_()
-            self._fan_curves_window.activateWindow()
-            return
-        win = FanCurvesWindow()
-        win.set_edit_profile(self._selected_profile)
-        win.setAttribute(Qt.WA_DeleteOnClose)
-        def _on_destroyed(obj=None):
-            self._fan_curves_window = None
-        win.destroyed.connect(_on_destroyed)
-        self._fan_curves_window = win
         win.show()

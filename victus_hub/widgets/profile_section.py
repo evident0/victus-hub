@@ -35,7 +35,7 @@ class ProfileSection(QWidget):
 
     profile_selected = Signal(int)
     fan_mode_selected = Signal(str)
-    fan_curves_popout_requested = Signal()
+    fan_curves_requested = Signal()
 
     def __init__(self, hide_title: bool = False, parent=None):
         super().__init__(parent)
@@ -113,7 +113,7 @@ class ProfileSection(QWidget):
 
     def _on_curve_click(self, event) -> None:
         if event.button() == Qt.LeftButton:
-            self.fan_curves_popout_requested.emit()
+            self.fan_curves_requested.emit()
 
     def _build_mux_buttons(self) -> None:
         self._mux_modes = ()
@@ -165,7 +165,7 @@ class ProfileSection(QWidget):
         mode = FAN_MODES[index][0]
         if mode == self._selected_fan_mode:
             if mode == "custom":
-                self.fan_curves_popout_requested.emit()
+                self.fan_curves_requested.emit()
             return
         self.set_selected_fan_mode(mode)
         self.fan_mode_selected.emit(mode)

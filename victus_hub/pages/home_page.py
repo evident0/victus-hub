@@ -30,7 +30,7 @@ class HomePage(QWidget):
 
     profile_selected = Signal(int)
     fan_mode_selected = Signal(str)
-    fan_curves_popout_requested = Signal()
+    fans_clicked = Signal()
     lighting_clicked = Signal()
     power_clicked = Signal()
 
@@ -69,8 +69,7 @@ class HomePage(QWidget):
         self._profile_section.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self._profile_section.profile_selected.connect(self.profile_selected.emit)
         self._profile_section.fan_mode_selected.connect(self.fan_mode_selected.emit)
-        self._profile_section.fan_curves_popout_requested.connect(
-            self.fan_curves_popout_requested.emit)
+        self._profile_section.fan_curves_requested.connect(self.fans_clicked.emit)
         wrap = QWidget()
         wrap_l = QVBoxLayout(wrap)
         wrap_l.setContentsMargins(0, 24, 0, 0)
