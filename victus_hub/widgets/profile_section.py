@@ -19,24 +19,19 @@ from victus_hub.backend.modules import platform_profile_backend, mux_module, fan
 
 logger = logging.getLogger(__name__)
 
+_OUTLINE = COLORS["accent_green"]
+
 PROFILES = [
-    ("Power Saver", "leaf.png", COLORS["accent_green"]),
-    ("Balanced", "scale.png", COLORS["accent_blue"]),
-    ("Performance", "rocket.png", COLORS["accent_red"]),
+    ("Power Saver", "leaf.png", _OUTLINE),
+    ("Balanced", "scale.png", _OUTLINE),
+    ("Performance", "rocket.png", _OUTLINE),
 ]
 
 FAN_MODES = [
-    ("auto", "Auto", "wind.png", COLORS["accent_green"], False),
-    ("max", "Max", "flame.png", COLORS["accent_red"], False),
-    ("custom", "Custom", "sparkles.png", COLORS["accent_blue"], True),
+    ("auto", "Auto", "wind.png", _OUTLINE, False),
+    ("max", "Max", "flame.png", _OUTLINE, False),
+    ("custom", "Custom", "sparkles.png", _OUTLINE, True),
 ]
-
-_MUX_ACCENTS = (
-    COLORS["accent_green"],
-    COLORS["accent_blue"],
-    COLORS["accent_red"],
-    COLORS["accent_blue"],
-)
 
 # Icon-above-label tiles for known MUX modes (white monochrome assets)
 _MUX_ICONS: dict[str, str] = {
@@ -190,13 +185,12 @@ class ProfileSection(QWidget):
 
         self._mux_modes = state.modes
         self._mux_selected = state.current_index
-        for i, mode in enumerate(self._mux_modes):
-            accent = _MUX_ACCENTS[i % len(_MUX_ACCENTS)]
+        for mode in self._mux_modes:
             icon = _MUX_ICONS.get(mode.name.lower())
             btn = AppButton(
                 mode.label,
                 icon,
-                accent,
+                _OUTLINE,
                 selected=(mode.index == self._mux_selected),
             )
             btn.clicked.connect(lambda _, m=mode: self._on_mux_click(m))
