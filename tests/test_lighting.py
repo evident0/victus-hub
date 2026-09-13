@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import math
+import os
 import unittest
+from unittest.mock import patch
 
 from victus_hub.features.keyboard.lighting import (
     LightingSettings,
@@ -126,6 +128,27 @@ class TestLightingFrames(unittest.TestCase):
     def test_step_increment_matches_omen_space_rate(self):
         # 50 ms tick at speed 50 → (50/100)*0.25 = 0.125
         self.assertAlmostEqual(step_increment(50, 0.050), 0.125)
+
+
+class TestEmulatedZones(unittest.TestCase):
+    def test_env_overrides_sysfs_and_marks_module_emulated(self):
+        from victus_hub.api import get_keyboard_zone_count, set_keyboard_color
+        from victus_hub.backend.modules import (
+            emulated_keyboard_zone_count,
+            keyboard_rgb_module,
+        )
+
+        with patch.dict(os.environ, {"VICTUS_HUB_EMULATE_ZONES": "4"}):
+            self.assertEqual(emulated_keyboard_zone_count(), 4)
+            self.assertEqual(get_keyboard_zone_count(), 4)
+            self.assertEqual(keyboard_rgb_module()[0], "emulated")
+            self.assertEqual(set_keyboard_color(255, 0, 0, zone=2), "ok")
+
+    def test_invalid_env_is_ignored(self):
+        from victus_hub.backend.modules import emulated_keyboard_zone_count
+
+        with patch.dict(os.environ, {"VICTUS_HUB_EMULATE_ZONES": "nope"}):
+            self.assertIsNone(emulated_keyboard_zone_count())
 
 
 if __name__ == "__main__":

@@ -154,10 +154,16 @@ def get_keyboard_zone_count() -> int:
     """Return keyboard RGB zone count from the kernel module (1 or 4).
 
     zone_count is world-readable under the platform device; no daemon needed.
+    ``VICTUS_HUB_EMULATE_ZONES`` overrides sysfs (ui-test uses this).
     Falls back to 1 when the module is absent.
     """
     from pathlib import Path
 
+    from victus_hub.backend.modules import emulated_keyboard_zone_count
+
+    emulated = emulated_keyboard_zone_count()
+    if emulated is not None:
+        return emulated
     try:
         raw = Path("/sys/devices/platform/hp-kbd-rgb/zone_count").read_text().strip()
         count = int(raw)
@@ -170,15 +176,27 @@ def set_keyboard_color(
     red: int, green: int, blue: int, zone: int | None = None,
 ) -> str:
     """Set keyboard color on all zones, or on one zone when *zone* is given."""
+    from victus_hub.backend.modules import emulated_keyboard_zone_count
+
+    if emulated_keyboard_zone_count() is not None:
+        return "ok"
     return daemon_client.request_keyboard_color(red, green, blue, zone=zone)
 
 
 def set_keyboard_brightness(level: int) -> str:
+    from victus_hub.backend.modules import emulated_keyboard_zone_count
+
+    if emulated_keyboard_zone_count() is not None:
+        return "ok"
     return daemon_client.request_keyboard_brightness(level)
 
 def set_keyboard_user_brightness(level: int) -> str:
     """Set the user-preferred brightness — stored by the daemon and applied
     atomically on subsequent color writes (prevents the 100% flash)."""
+    from victus_hub.backend.modules import emulated_keyboard_zone_count
+
+    if emulated_keyboard_zone_count() is not None:
+        return "ok"
     return daemon_client.request_keyboard_user_brightness(level)
 
 def get_keyboard_idle_elapsed() -> float:

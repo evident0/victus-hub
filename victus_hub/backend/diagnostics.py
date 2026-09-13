@@ -11,6 +11,7 @@ from pathlib import Path
 
 from victus_hub.backend.daemon_client import SOCKET_PATH
 from victus_hub.backend.modules import (
+    emulated_keyboard_zone_count,
     fan_control_module,
     keyboard_rgb_module,
     mux_module,
@@ -158,7 +159,10 @@ def collect_capabilities() -> list[Capability]:
         mux_ok, mux_details = False, "hp-gpu-mux not loaded"
 
     kbd_label, _kbd_color = keyboard_rgb_module()
-    if kbd_label != "not supported" and _KBD_RGB.is_dir():
+    emulated_zones = emulated_keyboard_zone_count()
+    if emulated_zones is not None:
+        kbd_ok, kbd_details = True, f"{emulated_zones} zone(s), emulated"
+    elif kbd_label != "not supported" and _KBD_RGB.is_dir():
         zones = read_text(_KBD_RGB / "zone_count") or "unknown"
         kbd_type = read_text(_KBD_RGB / "keyboard_type") or "unknown"
         kbd_ok, kbd_details = True, f"{zones} zone(s), type {kbd_type}"
