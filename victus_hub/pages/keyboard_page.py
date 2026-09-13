@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
-    QPushButton, QColorDialog, QSlider, QComboBox, QStyleFactory,
+    QPushButton, QColorDialog, QSlider,
 )
 from PySide6.QtCore import Qt, Signal, QRectF
 from PySide6.QtGui import QPainter, QColor, QFont
@@ -17,6 +17,7 @@ from PySide6.QtGui import QPainter, QColor, QFont
 from victus_hub import api
 from victus_hub.app.theme import COLORS
 from victus_hub.pages.settings_page import make_spin
+from victus_hub.widgets.app_combo import AppComboBox
 from victus_hub.widgets.toggle_switch import ToggleSwitch
 from victus_hub.widgets.status_badge import StatusBadge
 from victus_hub.backend.modules import keyboard_rgb_module
@@ -307,58 +308,6 @@ class KeyboardPage(QWidget):
         self._enable_check.toggled.connect(self._on_enabled_changed)
         row1.addWidget(self._enable_check)
 
-        effect_label = QLabel("Effect")
-        effect_label.setStyleSheet(
-            f"color: {COLORS['text_secondary']}; font-size: 11px;"
-        )
-        row1.addWidget(effect_label)
-
-        self._effect_combo = QComboBox()
-        self._effect_combo.setMinimumWidth(148)
-        self._effect_combo.setFixedHeight(28)
-        self._effect_combo.setMaxVisibleItems(12)
-        fusion = QStyleFactory.create("Fusion")
-        if fusion is not None:
-            fusion.setParent(self._effect_combo)
-            self._effect_combo.setStyle(fusion)
-        for value, label in effects_for_zone_count(self._zone_count):
-            self._effect_combo.addItem(label, value)
-        effect_idx = self._effect_combo.findData(s.effect)
-        self._effect_combo.setCurrentIndex(max(0, effect_idx))
-        self._effect_combo.currentIndexChanged.connect(self._on_effect_changed)
-        row1.addWidget(self._effect_combo)
-
-        speed_label = QLabel("Speed")
-        speed_label.setStyleSheet(
-            f"color: {COLORS['text_secondary']}; font-size: 11px;"
-        )
-        row1.addWidget(speed_label)
-
-        self._speed_slider = QSlider(Qt.Horizontal)
-        self._speed_slider.setRange(1, 100)
-        self._speed_slider.setValue(s.speed)
-        self._speed_slider.setFixedWidth(120)
-        self._speed_slider.setToolTip(f"Effect speed: {s.speed}/100")
-        self._speed_slider.valueChanged.connect(self._on_speed_changed)
-        row1.addWidget(self._speed_slider)
-
-        # Brightness
-        brightness_label = QLabel("Brightness")
-        brightness_label.setStyleSheet(
-            f"color: {COLORS['text_secondary']}; font-size: 11px;"
-        )
-        row1.addWidget(brightness_label)
-
-        self._brightness_slider = QSlider(Qt.Horizontal)
-        self._brightness_slider.setRange(0, 255)
-        self._brightness_slider.setValue(s.brightness)
-        self._brightness_slider.setFixedWidth(120)
-        self._brightness_slider.setToolTip(f"Backlight brightness: {s.brightness}/255")
-        self._brightness_slider.valueChanged.connect(self._on_brightness_changed)
-        row1.addWidget(self._brightness_slider)
-        row1.addStretch()
-        ctrl_layout.addLayout(row1)
-
         self._colors_row = QWidget()
         row2 = QHBoxLayout(self._colors_row)
         row2.setContentsMargins(0, 0, 0, 0)
@@ -408,14 +357,13 @@ class KeyboardPage(QWidget):
         zone_row.setSpacing(14)
         if self._zone_count > 1:
             for zone_idx, name in enumerate(ZONE_NAMES[: self._zone_count]):
-                zone_box = QVBoxLayout()
+                zone_box = QHBoxLayout()
                 zone_box.setContentsMargins(0, 0, 0, 0)
-                zone_box.setSpacing(2)
+                zone_box.setSpacing(8)
                 zone_label = QLabel(name)
                 zone_label.setStyleSheet(
                     f"color: {COLORS['text_secondary']}; font-size: 11px;"
                 )
-                zone_label.setAlignment(Qt.AlignCenter)
                 zone_box.addWidget(zone_label)
 
                 btn = QPushButton()
@@ -430,8 +378,55 @@ class KeyboardPage(QWidget):
                 self._zone_btns.append(btn)
                 zone_row.addLayout(zone_box)
         row2.addWidget(self._zone_wrap)
-        row2.addStretch()
-        ctrl_layout.addWidget(self._colors_row)
+        row1.addWidget(self._colors_row)
+
+        effect_label = QLabel("Effect")
+        effect_label.setStyleSheet(
+            f"color: {COLORS['text_secondary']}; font-size: 11px;"
+        )
+        row1.addWidget(effect_label)
+
+        self._effect_combo = AppComboBox()
+        self._effect_combo.setMinimumWidth(148)
+        self._effect_combo.setFixedHeight(28)
+        self._effect_combo.setMaxVisibleItems(12)
+        for value, label in effects_for_zone_count(self._zone_count):
+            self._effect_combo.addItem(label, value)
+        effect_idx = self._effect_combo.findData(s.effect)
+        self._effect_combo.setCurrentIndex(max(0, effect_idx))
+        self._effect_combo.currentIndexChanged.connect(self._on_effect_changed)
+        row1.addWidget(self._effect_combo)
+
+        speed_label = QLabel("Speed")
+        speed_label.setStyleSheet(
+            f"color: {COLORS['text_secondary']}; font-size: 11px;"
+        )
+        row1.addWidget(speed_label)
+
+        self._speed_slider = QSlider(Qt.Horizontal)
+        self._speed_slider.setRange(1, 100)
+        self._speed_slider.setValue(s.speed)
+        self._speed_slider.setFixedWidth(120)
+        self._speed_slider.setToolTip(f"Effect speed: {s.speed}/100")
+        self._speed_slider.valueChanged.connect(self._on_speed_changed)
+        row1.addWidget(self._speed_slider)
+
+        # Brightness
+        brightness_label = QLabel("Brightness")
+        brightness_label.setStyleSheet(
+            f"color: {COLORS['text_secondary']}; font-size: 11px;"
+        )
+        row1.addWidget(brightness_label)
+
+        self._brightness_slider = QSlider(Qt.Horizontal)
+        self._brightness_slider.setRange(0, 255)
+        self._brightness_slider.setValue(s.brightness)
+        self._brightness_slider.setFixedWidth(120)
+        self._brightness_slider.setToolTip(f"Backlight brightness: {s.brightness}/255")
+        self._brightness_slider.valueChanged.connect(self._on_brightness_changed)
+        row1.addWidget(self._brightness_slider)
+        row1.addStretch()
+        ctrl_layout.addLayout(row1)
         layout.addWidget(controls)
         self._sync_effect_controls()
 

@@ -30,7 +30,7 @@ PROFILES = [
 FAN_MODES = [
     ("auto", "Auto", "wind.png", _OUTLINE, False),
     ("max", "Max", "flame.png", _OUTLINE, False),
-    ("custom", "Custom", "sparkles.png", _OUTLINE, True),
+    ("custom", "Custom", "fan.png", _OUTLINE, True),
 ]
 
 # Icon-above-label tiles for known MUX modes (white monochrome assets)
