@@ -129,6 +129,66 @@ QComboBox QAbstractItemView {
     outline: none;
 }
 
+/* ── SpinBox ── */
+QSpinBox, QDoubleSpinBox {
+    background-color: #303030;
+    color: #ffffff;
+    border: 1px solid #3a3a3a;
+    border-radius: 6px;
+    padding: 4px 24px 4px 8px;
+    selection-background-color: #3aaeef;
+}
+
+QSpinBox:focus, QDoubleSpinBox:focus {
+    border-color: #555555;
+}
+
+QSpinBox::up-button, QDoubleSpinBox::up-button {
+    subcontrol-origin: border;
+    subcontrol-position: top right;
+    background-color: transparent;
+    border: none;
+    border-left: 1px solid #3a3a3a;
+    border-top-right-radius: 5px;
+    width: 22px;
+}
+
+QSpinBox::down-button, QDoubleSpinBox::down-button {
+    subcontrol-origin: border;
+    subcontrol-position: bottom right;
+    background-color: transparent;
+    border: none;
+    border-left: 1px solid #3a3a3a;
+    border-bottom-right-radius: 5px;
+    width: 22px;
+}
+
+QSpinBox::up-button:hover, QDoubleSpinBox::up-button:hover,
+QSpinBox::down-button:hover, QDoubleSpinBox::down-button:hover {
+    background-color: #3a3a3a;
+}
+
+QSpinBox::up-button:pressed, QDoubleSpinBox::up-button:pressed,
+QSpinBox::down-button:pressed, QDoubleSpinBox::down-button:pressed {
+    background-color: #444444;
+}
+
+QSpinBox::up-arrow, QDoubleSpinBox::up-arrow,
+QSpinBox::up-arrow:off, QDoubleSpinBox::up-arrow:off,
+QSpinBox::up-arrow:disabled, QDoubleSpinBox::up-arrow:disabled {
+    image: url(icons/chevron-up.png);
+    width: 14px;
+    height: 14px;
+}
+
+QSpinBox::down-arrow, QDoubleSpinBox::down-arrow,
+QSpinBox::down-arrow:off, QDoubleSpinBox::down-arrow:off,
+QSpinBox::down-arrow:disabled, QDoubleSpinBox::down-arrow:disabled {
+    image: url(icons/chevron-down.png);
+    width: 14px;
+    height: 14px;
+}
+
 /* ── ScrollBar ── */
 QScrollBar:vertical {
     background: #171717;
