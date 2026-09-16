@@ -285,7 +285,7 @@ class MainWindow(QMainWindow):
         hidden to tray or minimized; hardware control (fan-control thread,
         power-limit reapply, shortcut hotkey poll, keyboard-backlight
         hardware writes) keeps running in all states."""
-        active = self.isVisible() and not self.isMinimized()
+        active = self._ui_is_shown()
         if active == self._ui_active:
             return
         self._ui_active = active
@@ -379,8 +379,13 @@ class MainWindow(QMainWindow):
     def _on_tray_activated(self, reason):
         if reason in (QSystemTrayIcon.Trigger, QSystemTrayIcon.DoubleClick):
             self._show_all_windows()
+
+    def _ui_is_shown(self) -> bool:
+        """True when the main window is on screen, not minimized to the taskbar."""
+        return self.isVisible() and not self.isMinimized()
+
     def _toggle_visible(self):
-        if self.isVisible():
+        if self._ui_is_shown():
             self._hide_all_windows()
         else:
             self._show_all_windows()
