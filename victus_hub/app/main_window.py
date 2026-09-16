@@ -39,7 +39,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("Victus Hub")
         self.resize(460, 740)
-        self.setMinimumSize(420, 520)
+        self.setMinimumSize(420, 720)
 
         # App icon — logoV.png with native colors (no tint, no solid background)
         self._app_icon = load_icon("logoV.png", size=48)
@@ -58,10 +58,8 @@ class MainWindow(QMainWindow):
         self._sidebar = Sidebar()
         layout.addWidget(self._sidebar)
 
-        # Stacked pages — wrapped in a scroll area so corner-tiling (KDE)
-        # scrolls instead of squishing the content below its minimum size.
-        # The minimum height is updated per-page (see _update_min_height)
-        # so each page gets exactly the space it needs.
+        # Stacked pages — wrapped in a scroll area so a page taller than the
+        # window (min height is a fixed 720) scrolls instead of squishing.
         self._stack = QStackedWidget()
         self._stack.setObjectName("pageStack")
         self._stack.setMinimumWidth(360)
@@ -102,8 +100,8 @@ class MainWindow(QMainWindow):
         self._processes_timer.setInterval(2000)
         self._processes_timer.timeout.connect(self._processes_page.refresh)
 
-        # Update the scroll area's minimum height when the page changes so
-        # each page gets exactly the vertical space it needs (no squishing).
+        # Keep the stack's inner min height in sync so a tall page scrolls
+        # instead of squishing. Window min height stays 720.
         self._stack.currentChanged.connect(self._on_current_page_changed)
 
         # Sidebar -> stack sync
@@ -213,7 +211,6 @@ class MainWindow(QMainWindow):
         self._power_state.resuming.connect(self._on_system_resume)
         self._power_state.shutting_down.connect(self._on_system_shutdown)
 
-        # Set initial minimum height for the first page.
         self._update_min_height(0)
         self._apply_accent(self._selected_profile, animate=False)
         self._morph_to_page(0, False)
@@ -233,25 +230,25 @@ class MainWindow(QMainWindow):
         self._update_processes_timer()
 
     def _update_min_height(self, index: int) -> None:
-        """Set the stack's minimum height to the current page's minimum
-        height hint so the scroll area gives it enough vertical space."""
+        """Give the current page enough inner height to avoid squishing.
+        Does not change the window minimum (always 720)."""
         page = self._stack.widget(index)
         if page is not None:
             self._stack.setMinimumHeight(page.minimumSizeHint().height())
 
-    _PAGE_SIZE = {
-        0: (460, 740),
-        1: (460, 680),
-        2: (700, 680),
-        3: (700, 680),
-        4: (720, 640),
-        5: (720, 640),
-        6: (460, 640),
+    _PAGE_WIDTH = {
+        0: 460,
+        1: 460,
+        2: 700,
+        3: 700,
+        4: 720,
+        5: 720,
+        6: 460,
     }
 
     def _morph_to_page(self, index: int, _animate: bool) -> None:
-        w, h = self._PAGE_SIZE.get(index, (460, 700))
-        self.resize(w, h)
+        w = self._PAGE_WIDTH.get(index, 460)
+        self.resize(w, self.height())
 
     def _apply_accent(self, index: int, animate: bool = True) -> None:
         set_accent(index)
