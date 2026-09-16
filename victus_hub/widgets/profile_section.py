@@ -25,6 +25,7 @@ PROFILES = [
 
 FAN_MODES = [
     ("auto", "Auto", "wind.png", ECO, False),
+    ("smart", "Smart", "sparkles.png", BALANCED, False),
     ("max", "Max", "flame.png", PERF, False),
     ("custom", "Custom", "fan.png", BALANCED, True),
 ]

@@ -5,10 +5,13 @@ from __future__ import annotations
 import unittest
 from unittest.mock import patch
 
+from victus_hub.backend.fan_config import interpolate_fan, smart_cpu_points, smart_gpu_points
 from victus_hub.backend.types import FanPoint, FanProfileConfig
 from victus_hub.services.fan_control import (
     FanController,
     LoopState,
+    SMART_EWMA_LAMBDA_DECREASE,
+    SMART_EWMA_LAMBDA_INCREASE,
     _pct_to_pwm,
     _profile_idx,
     compute_ewma,
@@ -47,6 +50,18 @@ class TestEwma(unittest.TestCase):
         ema = compute_ewma(ema, 60.0)
         ema = compute_ewma(ema, 41.0)
         self.assertEqual(ema, 50.0)
+
+    def test_smart_lambda_on_increase(self):
+        self.assertEqual(
+            compute_ewma(50.0, 60.0, SMART_EWMA_LAMBDA_INCREASE, SMART_EWMA_LAMBDA_DECREASE),
+            57.0,
+        )
+
+    def test_smart_lambda_on_decrease(self):
+        self.assertEqual(
+            compute_ewma(50.0, 40.0, SMART_EWMA_LAMBDA_INCREASE, SMART_EWMA_LAMBDA_DECREASE),
+            49.5,
+        )
 
 
 class TestCurveHysteresis(unittest.TestCase):
@@ -241,6 +256,39 @@ class TestLoopState(unittest.TestCase):
         self.assertIsNone(state.gpu_demand)
         self.assertTrue(state.overheat_active)
         self.assertEqual(state.curve_signature, signature)
+
+
+class TestSmartCurve(unittest.TestCase):
+    def test_cpu_idle_is_off(self):
+        self.assertEqual(interpolate_fan(smart_cpu_points(), 58), 0)
+
+    def test_cpu_spinup_skips_stall_band(self):
+        self.assertEqual(interpolate_fan(smart_cpu_points(), 60), 32)
+
+    def test_cpu_gaming_cruise(self):
+        self.assertEqual(interpolate_fan(smart_cpu_points(), 80), 62)
+
+    def test_gpu_spinup(self):
+        self.assertEqual(interpolate_fan(smart_gpu_points(), 54), 32)
+
+    def test_gpu_gaming_cruise(self):
+        self.assertEqual(interpolate_fan(smart_gpu_points(), 75), 68)
+
+    def test_first_sample_at_cruise_uses_smart_table(self):
+        state = LoopState()
+        target = update_curve_target(
+            state,
+            FanProfileConfig(
+                cpu_points=smart_cpu_points(),
+                gpu_points=smart_gpu_points(),
+            ),
+            cpu_sample=80.0,
+            gpu_sample=None,
+            now=0.0,
+            lambda_increase=SMART_EWMA_LAMBDA_INCREASE,
+            lambda_decrease=SMART_EWMA_LAMBDA_DECREASE,
+        )
+        self.assertEqual(target, 62.0)
 
 
 class TestSmallHelpers(unittest.TestCase):

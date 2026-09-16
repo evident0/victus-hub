@@ -14,9 +14,10 @@ with Fedora. Other HP Omen/Victus laptops should work.
 ## What it does
 - **System profiles** — maps the three UI profiles to `tuned-adm` (tested on fedora acpi profile is set correctly)
    or `power-profilesctl` if available.
-- **Custom fan control** — Three modes:
-  *auto* (hands control back to the EC), *max* (100%), and *custom* (your
-  temperature curves with ramp-up/down).
+- **Custom fan control** — Four modes:
+  *auto* (hands control back to the EC), *smart* (built-in curve, fast
+  on heat / slow on cooldown), *max* (100%), and *custom* (your
+  temperature curves).
 - **Mux switch** Hardware Mux switch support for Victus Laptops, OMEN Laptops should also work (untested).  PRIME laptops can also try [envycontrol](https://github.com/bayasdev/envycontrol) (not included yet).  
 - **Keyboard RGB** — static color and brightness via a custom
   `hp-kbd-rgb` kernel module (a companion to the upstream hp-wmi RGB

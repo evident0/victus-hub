@@ -42,6 +42,7 @@ __all__ = [
     "KeyEvent",
     "save_fan_profile",
     "set_custom_fan_enabled",
+    "set_smart_fan_enabled",
     "set_manual_preset",
     "apply_power_limits",
     "set_gpu_mux_mode",
@@ -232,6 +233,10 @@ def save_fan_profile(profile: int, cpu_points: list[FanPoint],
 
 def set_custom_fan_enabled(enabled: bool) -> FanConfig:
     return fan_config.save_custom_enabled(enabled)
+
+
+def set_smart_fan_enabled(enabled: bool) -> FanConfig:
+    return fan_config.save_smart_enabled(enabled)
 
 
 def set_manual_preset(preset: str | None) -> FanConfig:

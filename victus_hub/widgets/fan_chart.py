@@ -45,6 +45,14 @@ class FanChart(QWidget):
         self._accent = accent
         self.update()
 
+    def set_title(self, title: str) -> None:
+        self._title = title
+        self.update()
+
+    def set_temp_max(self, temp_max: int) -> None:
+        self._temp_max = temp_max
+        self.update()
+
     # ── Properties ──
 
     @property

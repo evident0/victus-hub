@@ -30,6 +30,30 @@ def default_gpu_points() -> list[FanPoint]:
     return [FanPoint(temp=TEMP_MIN_C, speed=0), FanPoint(temp=GPU_TEMP_MAX_C, speed=100)]
 
 
+# Smart mode: zero-RPM idle, skip the ~30% stall band, quiet midrange,
+# then steep near the thermal wall. GPU comes on a little earlier.
+SMART_CPU_CURVE = (
+    (30, 0), (58, 0), (60, 32), (70, 42), (80, 62), (90, 85), (100, 100),
+)
+SMART_GPU_CURVE = (
+    (30, 0), (52, 0), (54, 32), (65, 48), (75, 68), (82, 88), (90, 100),
+)
+
+
+def smart_cpu_points() -> list[FanPoint]:
+    return normalize_fan_points(
+        [FanPoint(temp=t, speed=s) for t, s in SMART_CPU_CURVE],
+        CPU_TEMP_MAX_C,
+    )
+
+
+def smart_gpu_points() -> list[FanPoint]:
+    return normalize_fan_points(
+        [FanPoint(temp=t, speed=s) for t, s in SMART_GPU_CURVE],
+        GPU_TEMP_MAX_C,
+    )
+
+
 # ── Normalization ──
 
 def normalize_fan_points(points: list[FanPoint], temp_max: int) -> list[FanPoint]:
@@ -79,6 +103,7 @@ def load() -> FanConfig:
     custom_enabled = stored.get("custom_curve_enabled", False) or False
     manual_preset = stored.get("manual_preset") or None
     min_fan_change_pct = max(float(stored.get("min_fan_change_pct", 2.0)), 0.0)
+    smart_enabled = bool(stored.get("smart_curve_enabled", False)) and custom_enabled
 
     profiles = []
     for key in PROFILE_KEYS:
@@ -100,6 +125,7 @@ def load() -> FanConfig:
         custom_enabled=custom_enabled,
         manual_preset=manual_preset,
         min_fan_change_pct=min_fan_change_pct,
+        smart_enabled=smart_enabled,
     )
 
 
@@ -117,6 +143,18 @@ def save_profile(profile: int, cpu_points: list[FanPoint], gpu_points: list[FanP
 def save_custom_enabled(enabled: bool) -> FanConfig:
     config = load()
     config.custom_enabled = enabled
+    if not enabled:
+        config.smart_enabled = False
+    save_all(config)
+    return config
+
+
+def save_smart_enabled(enabled: bool) -> FanConfig:
+    config = load()
+    config.smart_enabled = enabled
+    if enabled:
+        config.custom_enabled = True
+        config.manual_preset = None
     save_all(config)
     return config
 
@@ -149,6 +187,7 @@ def save_all(config: FanConfig) -> None:
     stored = {
         "custom_tuned_profile": "balanced",
         "custom_curve_enabled": config.custom_enabled,
+        "smart_curve_enabled": config.smart_enabled,
         "manual_preset": config.manual_preset,
         "min_fan_change_pct": config.min_fan_change_pct,
         "curve_points_by_profile": cpu_map,

@@ -12,10 +12,15 @@ from victus_hub.backend import fan_config
 from victus_hub.widgets.chrome import PageHead
 from victus_hub.widgets.fan_chart import FanChart
 from victus_hub.widgets.profile_section import PROFILES as _PROFILE_NAMES_SRC
+from victus_hub.widgets.seg import LinkSeg
+
+
+_CURVE_CPU = 0
+_CURVE_GPU = 1
 
 
 class FansPage(QWidget):
-    """Tab hosting the CPU and GPU fan-curve charts."""
+    """Tab hosting one fan-curve chart, switched between CPU and GPU."""
 
     _PROFILE_NAMES = [p[0] for p in _PROFILE_NAMES_SRC]
 
@@ -28,34 +33,38 @@ class FansPage(QWidget):
         self._gpu_points = list(fan_config.default_gpu_points())
         self._cpu_selected = -1
         self._gpu_selected = -1
+        self._curve_idx = _CURVE_CPU
         self._dirty = False
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(24, 24, 24, 20)
-        layout.setSpacing(12)
+        layout.setSpacing(0)
 
         self._head = PageHead("Fans")
         layout.addWidget(self._head)
 
-        self._cpu_chart = FanChart(
+        links_col = QVBoxLayout()
+        links_col.setContentsMargins(0, 24, 0, 0)
+        links_col.setSpacing(0)
+        self._curve_links = LinkSeg(["CPU", "GPU"], gap=16, size=14)
+        self._curve_links.picked.connect(self._on_curve_link)
+        links_col.addWidget(self._curve_links)
+        layout.addLayout(links_col)
+        self._curve_links.select(_CURVE_CPU, False)
+
+        self._chart = FanChart(
             "CPU curve", QColor(COLORS["accent"]), fan_config.CPU_TEMP_MAX_C,
         )
-        self._cpu_chart.point_added.connect(self._on_cpu_point_added)
-        self._cpu_chart.point_moved.connect(self._on_cpu_point_moved)
-        self._cpu_chart.point_deleted.connect(self._on_cpu_point_deleted)
-        self._cpu_chart.point_selected.connect(self._on_cpu_point_selected)
-        self._cpu_chart.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        layout.addWidget(self._cpu_chart, 1)
-
-        self._gpu_chart = FanChart(
-            "GPU curve", QColor(COLORS["perf"]), fan_config.GPU_TEMP_MAX_C,
-        )
-        self._gpu_chart.point_added.connect(self._on_gpu_point_added)
-        self._gpu_chart.point_moved.connect(self._on_gpu_point_moved)
-        self._gpu_chart.point_deleted.connect(self._on_gpu_point_deleted)
-        self._gpu_chart.point_selected.connect(self._on_gpu_point_selected)
-        self._gpu_chart.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        layout.addWidget(self._gpu_chart, 1)
+        self._chart.point_added.connect(self._on_point_added)
+        self._chart.point_moved.connect(self._on_point_moved)
+        self._chart.point_deleted.connect(self._on_point_deleted)
+        self._chart.point_selected.connect(self._on_point_selected)
+        self._chart.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        chart_wrap = QWidget()
+        chart_l = QVBoxLayout(chart_wrap)
+        chart_l.setContentsMargins(0, 22, 0, 0)
+        chart_l.addWidget(self._chart)
+        layout.addWidget(chart_wrap, 1)
 
         self._save_timer = QTimer(self)
         self._save_timer.setSingleShot(True)
@@ -66,7 +75,9 @@ class FansPage(QWidget):
         self._update_profile_label()
 
     def refresh_accent(self) -> None:
-        self._cpu_chart.set_accent(QColor(COLORS["accent"]))
+        self._curve_links.refresh_accent()
+        if self._curve_idx == _CURVE_CPU:
+            self._chart.set_accent(QColor(COLORS["accent"]))
 
     def set_edit_profile(self, index: int) -> None:
         """Switch which profile's fan curves are shown."""
@@ -75,6 +86,44 @@ class FansPage(QWidget):
         self._edit_profile = index
         self._hydrate_editor()
         self._update_profile_label()
+
+    def _is_cpu(self) -> bool:
+        return self._curve_idx == _CURVE_CPU
+
+    def _temp_max(self) -> int:
+        return fan_config.CPU_TEMP_MAX_C if self._is_cpu() else fan_config.GPU_TEMP_MAX_C
+
+    def _active_points(self) -> list[FanPoint]:
+        return self._cpu_points if self._is_cpu() else self._gpu_points
+
+    def _set_active_points(self, pts: list[FanPoint], selected: int | None = None) -> None:
+        if self._is_cpu():
+            self._cpu_points = pts
+            if selected is not None:
+                self._cpu_selected = selected
+        else:
+            self._gpu_points = pts
+            if selected is not None:
+                self._gpu_selected = selected
+        self._chart.points = pts
+        if selected is not None:
+            self._chart.selected_point = selected
+
+    def _apply_chart(self) -> None:
+        cpu = self._is_cpu()
+        self._chart.set_title("CPU curve" if cpu else "GPU curve")
+        self._chart.set_temp_max(
+            fan_config.CPU_TEMP_MAX_C if cpu else fan_config.GPU_TEMP_MAX_C,
+        )
+        self._chart.set_accent(QColor(COLORS["accent"] if cpu else COLORS["perf"]))
+        self._chart.points = self._cpu_points if cpu else self._gpu_points
+        self._chart.selected_point = self._cpu_selected if cpu else self._gpu_selected
+
+    def _on_curve_link(self, index: int) -> None:
+        if index not in (_CURVE_CPU, _CURVE_GPU) or index == self._curve_idx:
+            return
+        self._curve_idx = index
+        self._apply_chart()
 
     def _update_profile_label(self) -> None:
         idx = min(max(self._edit_profile, 0), len(self._PROFILE_NAMES) - 1)
@@ -106,122 +155,61 @@ class FansPage(QWidget):
             )
             self._cpu_selected = -1
             self._gpu_selected = -1
-            self._cpu_chart.points = self._cpu_points
-            self._gpu_chart.points = self._gpu_points
-            self._cpu_chart.selected_point = -1
-            self._gpu_chart.selected_point = -1
+            self._apply_chart()
 
-    def _on_cpu_point_added(self, temp: int, speed: int) -> None:
-        if temp <= fan_config.TEMP_MIN_C or temp >= fan_config.CPU_TEMP_MAX_C:
+    def _on_point_added(self, temp: int, speed: int) -> None:
+        temp_max = self._temp_max()
+        pts = self._active_points()
+        if temp <= fan_config.TEMP_MIN_C or temp >= temp_max:
             return
-        if any(p.temp == temp for p in self._cpu_points):
+        if any(p.temp == temp for p in pts):
             return
         self._dirty = True
-        new_speed = fan_config.interpolate_fan(self._cpu_points, temp)
+        new_speed = fan_config.interpolate_fan(pts, temp)
         norm = fan_config.normalize_fan_points(
-            self._cpu_points + [FanPoint(temp, new_speed)], fan_config.CPU_TEMP_MAX_C,
+            pts + [FanPoint(temp, new_speed)], temp_max,
         )
-        self._cpu_points = norm
-        self._cpu_chart.points = norm
         idx = next((i for i, p in enumerate(norm) if p.temp == temp), -1)
-        self._cpu_chart.selected_point = idx
-        self._cpu_selected = idx
+        self._set_active_points(norm, idx)
         self._schedule_save()
 
-    def _on_cpu_point_moved(self, index: int, temp: int, speed: int) -> None:
-        if index < 0 or index >= len(self._cpu_points):
+    def _on_point_moved(self, index: int, temp: int, speed: int) -> None:
+        pts = list(self._active_points())
+        temp_max = self._temp_max()
+        if index < 0 or index >= len(pts):
             return
         self._dirty = True
-        pts = list(self._cpu_points)
-        nt = max(fan_config.TEMP_MIN_C, min(fan_config.CPU_TEMP_MAX_C, temp))
+        nt = max(fan_config.TEMP_MIN_C, min(temp_max, temp))
         ns = max(0, min(100, speed))
         if index == 0:
             nt = fan_config.TEMP_MIN_C
             ns = max(0, min(ns, pts[1].speed if len(pts) > 1 else 100))
         elif index == len(pts) - 1:
-            nt = fan_config.CPU_TEMP_MAX_C
+            nt = temp_max
             ns = max(pts[index - 1].speed, min(ns, 100))
         else:
             nt = max(pts[index - 1].temp + 1, min(nt, pts[index + 1].temp - 1))
             ns = max(pts[index - 1].speed, min(ns, pts[index + 1].speed))
         pts[index] = FanPoint(nt, ns)
-        norm = fan_config.normalize_fan_points(pts, fan_config.CPU_TEMP_MAX_C)
-        self._cpu_points = norm
-        self._cpu_chart.points = norm
+        self._set_active_points(fan_config.normalize_fan_points(pts, temp_max))
         self._schedule_save()
 
-    def _on_cpu_point_deleted(self, index: int) -> None:
-        if index <= 0 or index >= len(self._cpu_points) - 1:
+    def _on_point_deleted(self, index: int) -> None:
+        pts = self._active_points()
+        if index <= 0 or index >= len(pts) - 1:
             return
         self._dirty = True
-        pts = [p for i, p in enumerate(self._cpu_points) if i != index]
-        norm = fan_config.normalize_fan_points(pts, fan_config.CPU_TEMP_MAX_C)
-        self._cpu_points = norm
-        self._cpu_chart.points = norm
-        self._cpu_chart.selected_point = -1
-        self._cpu_selected = -1
-        self._schedule_save()
-
-    def _on_cpu_point_selected(self, index: int) -> None:
-        self._cpu_selected = index
-        self._gpu_chart.selected_point = -1
-        self._gpu_selected = -1
-
-    def _on_gpu_point_added(self, temp: int, speed: int) -> None:
-        if temp <= fan_config.TEMP_MIN_C or temp >= fan_config.GPU_TEMP_MAX_C:
-            return
-        if any(p.temp == temp for p in self._gpu_points):
-            return
-        self._dirty = True
-        new_speed = fan_config.interpolate_fan(self._gpu_points, temp)
-        norm = fan_config.normalize_fan_points(
-            self._gpu_points + [FanPoint(temp, new_speed)], fan_config.GPU_TEMP_MAX_C,
+        kept = [p for i, p in enumerate(pts) if i != index]
+        self._set_active_points(
+            fan_config.normalize_fan_points(kept, self._temp_max()), -1,
         )
-        self._gpu_points = norm
-        self._gpu_chart.points = norm
-        idx = next((i for i, p in enumerate(norm) if p.temp == temp), -1)
-        self._gpu_chart.selected_point = idx
-        self._gpu_selected = idx
         self._schedule_save()
 
-    def _on_gpu_point_moved(self, index: int, temp: int, speed: int) -> None:
-        if index < 0 or index >= len(self._gpu_points):
-            return
-        self._dirty = True
-        pts = list(self._gpu_points)
-        nt = max(fan_config.TEMP_MIN_C, min(fan_config.GPU_TEMP_MAX_C, temp))
-        ns = max(0, min(100, speed))
-        if index == 0:
-            nt = fan_config.TEMP_MIN_C
-            ns = max(0, min(ns, pts[1].speed if len(pts) > 1 else 100))
-        elif index == len(pts) - 1:
-            nt = fan_config.GPU_TEMP_MAX_C
-            ns = max(pts[index - 1].speed, min(ns, 100))
+    def _on_point_selected(self, index: int) -> None:
+        if self._is_cpu():
+            self._cpu_selected = index
         else:
-            nt = max(pts[index - 1].temp + 1, min(nt, pts[index + 1].temp - 1))
-            ns = max(pts[index - 1].speed, min(ns, pts[index + 1].speed))
-        pts[index] = FanPoint(nt, ns)
-        norm = fan_config.normalize_fan_points(pts, fan_config.GPU_TEMP_MAX_C)
-        self._gpu_points = norm
-        self._gpu_chart.points = norm
-        self._schedule_save()
-
-    def _on_gpu_point_deleted(self, index: int) -> None:
-        if index <= 0 or index >= len(self._gpu_points) - 1:
-            return
-        self._dirty = True
-        pts = [p for i, p in enumerate(self._gpu_points) if i != index]
-        norm = fan_config.normalize_fan_points(pts, fan_config.GPU_TEMP_MAX_C)
-        self._gpu_points = norm
-        self._gpu_chart.points = norm
-        self._gpu_chart.selected_point = -1
-        self._gpu_selected = -1
-        self._schedule_save()
-
-    def _on_gpu_point_selected(self, index: int) -> None:
-        self._gpu_selected = index
-        self._cpu_chart.selected_point = -1
-        self._cpu_selected = -1
+            self._gpu_selected = index
 
     def _schedule_save(self) -> None:
         if self._config_loaded and self._dirty:

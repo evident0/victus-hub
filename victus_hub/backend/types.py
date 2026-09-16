@@ -79,6 +79,9 @@ class FanConfig:
     manual_preset: str | None = None
     # Ignore non-forced PWM target changes at or below this percentage.
     min_fan_change_pct: float = 2.0
+    # Smart uses the built-in curve and faster EWMA. Only applies while
+    # custom_enabled is True (the loop is driving PWM).
+    smart_enabled: bool = False
 
 # Re-export list for api.py convenience
 __all__ = [

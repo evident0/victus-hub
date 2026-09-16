@@ -23,6 +23,8 @@ POLL_INTERVAL = 1.0
 
 EWMA_LAMBDA_INCREASE = 0.1
 EWMA_LAMBDA_DECREASE = 0.1
+SMART_EWMA_LAMBDA_INCREASE = 0.7
+SMART_EWMA_LAMBDA_DECREASE = 0.05
 CURVE_HYSTERESIS_C = 5.0
 
 OVERHEAT_THRESHOLD_C = 90.0
@@ -94,9 +96,11 @@ def hysteretic_curve_target(
     return previous_demand
 
 
-def _profile_signature(profile_idx: int, profile: FanProfileConfig) -> tuple:
+def _profile_signature(
+    profile_idx: int, profile: FanProfileConfig, smart: bool = False,
+) -> tuple:
     return (
-        profile_idx,
+        "smart" if smart else profile_idx,
         tuple((point.temp, point.speed) for point in profile.cpu_points),
         tuple((point.temp, point.speed) for point in profile.gpu_points),
     )
@@ -206,13 +210,17 @@ def update_curve_target(
     cpu_sample: float | None,
     gpu_sample: float | None,
     now: float,
+    lambda_increase: float = EWMA_LAMBDA_INCREASE,
+    lambda_decrease: float = EWMA_LAMBDA_DECREASE,
 ) -> float | None:
     """Update EWMAs and return the merged hysteretic target with safety floor."""
     previous_cpu = state.ema_cpu
     previous_gpu = state.ema_gpu
 
     if cpu_sample is not None:
-        state.ema_cpu = compute_ewma(state.ema_cpu, cpu_sample)
+        state.ema_cpu = compute_ewma(
+            state.ema_cpu, cpu_sample, lambda_increase, lambda_decrease,
+        )
         state.cpu_demand = hysteretic_curve_target(
             profile.cpu_points,
             state.ema_cpu,
@@ -220,7 +228,9 @@ def update_curve_target(
             state.cpu_demand,
         )
     if gpu_sample is not None:
-        state.ema_gpu = compute_ewma(state.ema_gpu, gpu_sample)
+        state.ema_gpu = compute_ewma(
+            state.ema_gpu, gpu_sample, lambda_increase, lambda_decrease,
+        )
         state.gpu_demand = hysteretic_curve_target(
             profile.gpu_points,
             state.ema_gpu,
@@ -287,6 +297,12 @@ class FanController:
 
         config = _fan_config.load()
         profile = config.profiles[profile_idx]
+        smart = bool(config.smart_enabled)
+        if smart:
+            profile = FanProfileConfig(
+                cpu_points=_fan_config.smart_cpu_points(),
+                gpu_points=_fan_config.smart_gpu_points(),
+            )
 
         if config.manual_preset is not None:
             state.on_manual_preset()
@@ -304,7 +320,8 @@ class FanController:
         if not state.was_custom:
             state.on_enter_custom(read_hp_pwm_pct())
             _fan_logger.info(
-                "fan-control: entering custom (fan-manual + force first write)",
+                "fan-control: entering %s (fan-manual + force first write)",
+                "smart" if smart else "custom",
             )
             try:
                 _daemon_client.request_fan_manual()
@@ -312,7 +329,7 @@ class FanController:
                 pass
         state.was_custom = True
 
-        signature = _profile_signature(profile_idx, profile)
+        signature = _profile_signature(profile_idx, profile, smart)
         if signature != state.curve_signature:
             state.reset_curve_hysteresis(signature)
 
@@ -322,6 +339,8 @@ class FanController:
             snapshot.gpu_temp_c,
             time.monotonic(),
             config.min_fan_change_pct,
+            SMART_EWMA_LAMBDA_INCREASE if smart else EWMA_LAMBDA_INCREASE,
+            SMART_EWMA_LAMBDA_DECREASE if smart else EWMA_LAMBDA_DECREASE,
         )
 
     def _control_tick(
@@ -331,6 +350,8 @@ class FanController:
         gpu_sample: float | None,
         now: float,
         min_fan_change_pct: float = 2.0,
+        lambda_increase: float = EWMA_LAMBDA_INCREASE,
+        lambda_decrease: float = EWMA_LAMBDA_DECREASE,
     ) -> None:
         state = self._st
         target = update_curve_target(
@@ -339,6 +360,8 @@ class FanController:
             cpu_sample,
             gpu_sample,
             now,
+            lambda_increase,
+            lambda_decrease,
         )
         if target is None:
             return

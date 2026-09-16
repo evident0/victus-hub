@@ -187,7 +187,14 @@ class MainWindow(QMainWindow):
         # config said custom — fan loop could skip writes when duty matched).
         try:
             _cfg = api.get_fan_config()
-            if _cfg.custom_enabled:
+            if _cfg.custom_enabled and _cfg.smart_enabled:
+                self._selected_fan_mode = "smart"
+                self._home_page.set_selected_fan_mode("smart")
+                try:
+                    api.set_fan_manual()
+                except Exception:
+                    logger.exception("set fan manual (restore smart) failed")
+            elif _cfg.custom_enabled:
                 self._selected_fan_mode = "custom"
                 self._home_page.set_selected_fan_mode("custom")
                 try:
@@ -549,17 +556,23 @@ class MainWindow(QMainWindow):
     # ── Fan mode ──
 
     def _on_fan_mode(self, mode: str):
-        """Handle Auto/Max/Custom fan mode button clicks."""
+        """Handle Auto/Smart/Max/Custom fan mode button clicks."""
         self._selected_fan_mode = mode
         self._sync_tray_checks()
         if mode == "auto":
             self._set_fan_auto()
+        elif mode == "smart":
+            self._set_fan_smart()
         elif mode == "max":
             self._set_fan_max()
         elif mode == "custom":
             self._set_fan_custom()
 
     def _set_fan_auto(self):
+        try:
+            api.set_smart_fan_enabled(False)
+        except Exception:
+            logger.exception("set smart fan enabled (auto) failed")
         try:
             api.set_manual_preset("auto")
         except Exception:
@@ -576,6 +589,10 @@ class MainWindow(QMainWindow):
     def _set_fan_max(self):
         """Engage BIOS/EC max-fan mode (hp-wmi: pwm1_enable=0)."""
         try:
+            api.set_smart_fan_enabled(False)
+        except Exception:
+            logger.exception("set smart fan enabled (max) failed")
+        try:
             api.set_manual_preset("max")
         except Exception:
             logger.exception("set manual preset (max) failed")
@@ -588,7 +605,26 @@ class MainWindow(QMainWindow):
         except Exception:
             logger.exception("set fan max failed")
 
+    def _set_fan_smart(self):
+        """Software curve with the built-in Smart table and faster EWMA."""
+        try:
+            api.set_smart_fan_enabled(True)
+        except Exception:
+            logger.exception("set smart fan enabled failed")
+        try:
+            api.set_custom_fan_enabled(True)
+        except Exception:
+            logger.exception("set custom fan enabled (smart) failed")
+        try:
+            api.set_fan_manual()
+        except Exception:
+            logger.exception("set fan manual (smart) failed")
+
     def _set_fan_custom(self):
+        try:
+            api.set_smart_fan_enabled(False)
+        except Exception:
+            logger.exception("set smart fan enabled (custom) failed")
         try:
             api.set_manual_preset(None)
         except Exception:
