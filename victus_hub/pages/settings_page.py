@@ -2,7 +2,7 @@
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QSpinBox, QDoubleSpinBox, QMessageBox, QScrollArea,
+    QSpinBox, QDoubleSpinBox, QMessageBox, QScrollArea, QSizePolicy,
 )
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtCore import Qt, QUrl
@@ -58,6 +58,7 @@ def _style_native_spinbox(spin: QSpinBox | QDoubleSpinBox) -> None:
     spin.setObjectName("embedSpin")
     spin.setAttribute(Qt.WA_StyledBackground, True)
     spin.setFixedHeight(34)
+    spin.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
 
 
 def _spin_well(spin: QSpinBox | QDoubleSpinBox) -> QWidget:
@@ -65,6 +66,7 @@ def _spin_well(spin: QSpinBox | QDoubleSpinBox) -> QWidget:
     well = QWidget()
     well.setAttribute(Qt.WA_StyledBackground, True)
     well.setFixedHeight(34)
+    well.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
     well.setStyleSheet(
         f"background-color: {COLORS['sunken']};"
         f" border: 1px solid {COLORS['edge']};"
@@ -91,7 +93,6 @@ def make_spin(label: str, suffix: str, value: int,
     spin = QSpinBox()
     spin.setRange(vmin, vmax)
     spin.setValue(value)
-    spin.setFixedWidth(90)
     _style_native_spinbox(spin)
     row._spin = spin
     row.addWidget(_spin_well(spin))
@@ -116,7 +117,6 @@ def make_double_spin(label: str, suffix: str, value: float,
     spin.setValue(value)
     if suffix:
         spin.setSuffix(f" {suffix}" if not suffix.startswith(" ") else suffix)
-    spin.setFixedWidth(110)
     _style_native_spinbox(spin)
     row._spin = spin
     row.addWidget(_spin_well(spin))

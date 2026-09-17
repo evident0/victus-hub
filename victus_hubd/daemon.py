@@ -13,7 +13,7 @@ import time
 
 from victus_hub.backend import protocol
 from victus_hub.backend.rapl import RaplPowerSampler
-from victus_hubd import ryzenadj, sysfs
+from victus_hubd import cpufreq, ryzenadj, sysfs
 
 SOCKET_PATH = "/run/victus-hubd/victus-hub.sock"
 
@@ -364,6 +364,15 @@ def _make_dispatch(sampler: RaplPowerSampler, sampler_lock: threading.Lock | Non
         result = ryzenadj.apply_power_limits(s, f, sl, tctl)
         return protocol.format_status_response((True, result))
 
+    def _cpu_frequency_limits(body: str) -> str:
+        parts = body.split("\t")
+        if len(parts) != 2:
+            raise RuntimeError("expected 2 integers (minimum, maximum in kHz)")
+        minimum = _parse_int(parts[0], "minimum frequency")
+        maximum = _parse_int(parts[1], "maximum frequency")
+        result = cpufreq.apply_frequency_limits(minimum, maximum)
+        return protocol.format_status_response((True, result))
+
     def _keyboard_last_input(_body: str) -> str:
         logger.info("[keyboard-rgb] daemon request: keyboard-last-input")
         elapsed = kbd_elapsed_since_last_input()
@@ -378,6 +387,7 @@ def _make_dispatch(sampler: RaplPowerSampler, sampler_lock: threading.Lock | Non
         ("fan-manual", _fan_manual),
         ("keyboard-color\t", _keyboard_color),
         ("power-limits\t", _power_limits),
+        ("cpu-frequency-limits\t", _cpu_frequency_limits),
         ("keyboard-brightness\t", _keyboard_brightness),
         ("keyboard-user-brightness\t", _keyboard_user_brightness),
         ("keyboard-last-input", _keyboard_last_input),

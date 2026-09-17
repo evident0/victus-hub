@@ -1,15 +1,18 @@
-"""Power page — ryzenadj power limit controls, Ohman rows."""
+"""Power page — ryzenadj power limits and CPU frequency controls."""
 
 import threading
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QSizePolicy, QLabel, QSlider,
+    QSpinBox, QDoubleSpinBox,
 )
 from PySide6.QtCore import Qt, Signal
 
 from victus_hub.app.theme import COLORS, mono_font, ui_font
 from victus_hub.widgets.toggle_switch import ToggleSwitch
 from victus_hub.backend.modules import ryzenadj_available
+from victus_hub.backend.cpufreq import read_frequency_policies
+from victus_hub.backend.daemon_client import request_cpu_frequency_limits
 from victus_hub.widgets.chrome import PageHead, hairline
 from victus_hub.features.power.limits import (
     POWER_MIN_MW, POWER_MAX_MW,
@@ -23,34 +26,45 @@ from victus_hub.api import apply_power_limits
 
 
 class _SliderRow(QWidget):
-    """Label, slider, mono value — Ohman power-gain row."""
+    """Label, slider, and synchronized numeric stepper."""
 
     def __init__(self, title: str, vmin: int, vmax: int, value: int, suffix: str,
-                 parent=None):
+                 parent=None, *, scale: int = 1):
         super().__init__(parent)
+        self._scale = scale
         row = QHBoxLayout(self)
         row.setContentsMargins(0, 14, 0, 14)
-        row.setSpacing(18)
+        row.setSpacing(12)
         lbl = QLabel(title)
         lbl.setFont(ui_font(14))
         lbl.setStyleSheet(f"color: {COLORS['text']}; background: transparent;")
-        lbl.setFixedWidth(110)
+        lbl.setFixedWidth(90)
         row.addWidget(lbl)
         self.slider = QSlider(Qt.Horizontal)
         self.slider.setRange(vmin, vmax)
+        self.slider.setSingleStep(scale)
+        self.slider.setPageStep(10 * scale)
         self.slider.setValue(value)
         row.addWidget(self.slider, 1)
-        self.value = QLabel(f"{value} {suffix}")
+        self.value = QDoubleSpinBox() if scale != 1 else QSpinBox()
+        if scale != 1:
+            self.value.setDecimals(3)
+            self.value.setRange(vmin / scale, vmax / scale)
+        else:
+            self.value.setRange(vmin, vmax)
+        self.value.setSingleStep(1)
+        self.value.setSuffix(f" {suffix}")
+        self.value.setKeyboardTracking(False)
+        self.value.setValue(value / scale if scale != 1 else value)
         self.value.setFont(mono_font(13))
-        self.value.setFixedWidth(56)
+        self.value.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         self.value.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        self.value.setStyleSheet(f"color: {COLORS['text']}; background: transparent;")
         row.addWidget(self.value)
-        self._suffix = suffix
         self.slider.valueChanged.connect(self._on_slide)
+        self.value.valueChanged.connect(lambda v: self.slider.setValue(round(v * scale)))
 
     def _on_slide(self, v: int) -> None:
-        self.value.setText(f"{v} {self._suffix}")
+        self.value.setValue(v / self._scale if self._scale != 1 else v)
 
     def setValue(self, v: int) -> None:
         self.slider.setValue(v)
@@ -60,6 +74,7 @@ class PowerPage(QWidget):
     """Power tab: limit sliders, apply, and auto-reapply."""
 
     limits_applied = Signal()
+    _frequency_applied = Signal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -145,8 +160,96 @@ class PowerPage(QWidget):
         apply_row.addStretch()
         layout.addLayout(apply_row)
 
+        layout.addSpacing(16)
+        layout.addWidget(hairline())
+        self._frequency_min = _SliderRow("CPU min", 0, 1, 0, "MHz", scale=1000)
+        self._frequency_max = _SliderRow("CPU max", 0, 1, 0, "MHz", scale=1000)
+        layout.addWidget(self._frequency_min)
+        layout.addWidget(self._frequency_max)
+        self._frequency_min.slider.valueChanged.connect(self._on_frequency_min_changed)
+        self._frequency_max.slider.valueChanged.connect(self._on_frequency_max_changed)
+        self._frequency_btn = QPushButton("Apply CPU frequency")
+        self._frequency_btn.setObjectName("accentBtn")
+        self._frequency_btn.setCursor(Qt.PointingHandCursor)
+        self._frequency_btn.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Fixed)
+        self._frequency_btn.clicked.connect(self._on_apply_frequency)
+        layout.addWidget(self._frequency_btn)
+        self._frequency_status = QLabel()
+        self._frequency_status.setWordWrap(True)
+        self._frequency_status.setFont(ui_font(12))
+        self._frequency_status.setStyleSheet(f"color: {COLORS['sub']}; padding-top: 8px;")
+        layout.addWidget(self._frequency_status)
+        self._frequency_applied.connect(self._on_frequency_applied)
+        self._load_frequency_limits()
+
         self._update_apply_enabled()
         layout.addStretch()
+
+    def _load_frequency_limits(self):
+        try:
+            policies = read_frequency_policies()
+            lower = max(p.hardware_min for p in policies)
+            upper = min(p.hardware_max for p in policies)
+            if lower > upper:
+                raise RuntimeError("CPU policies have no common frequency range")
+        except RuntimeError as exc:
+            self._frequency_min.setEnabled(False)
+            self._frequency_max.setEnabled(False)
+            self._frequency_btn.setEnabled(False)
+            self._frequency_status.setText(str(exc))
+            return
+        minimum = max(lower, min(upper, max(p.minimum for p in policies)))
+        maximum = max(minimum, min(upper, min(p.maximum for p in policies)))
+        for row, value in ((self._frequency_min, minimum), (self._frequency_max, maximum)):
+            row.slider.blockSignals(True)
+            row.value.blockSignals(True)
+            row.slider.setRange(lower, upper)
+            row.value.setRange(lower / 1000, upper / 1000)
+            row.setValue(value)
+            row.value.setValue(value / 1000)
+            row.value.blockSignals(False)
+            row.slider.blockSignals(False)
+            row.setEnabled(True)
+        self._frequency_btn.setEnabled(True)
+        mixed = len({(p.minimum, p.maximum) for p in policies}) > 1
+        self._frequency_status.setText(
+            f"Applies to all {len(policies)} CPU policies. "
+            + ("Current limits differ between policies. " if mixed else "")
+            + "Hardware range: "
+            f"{lower / 1000:.3f}–{upper / 1000:.3f} MHz."
+        )
+
+    def _on_frequency_min_changed(self, value: int):
+        if value > self._frequency_max.slider.value():
+            self._frequency_max.setValue(value)
+
+    def _on_frequency_max_changed(self, value: int):
+        if value < self._frequency_min.slider.value():
+            self._frequency_min.setValue(value)
+
+    def _on_apply_frequency(self):
+        minimum = self._frequency_min.slider.value()
+        maximum = self._frequency_max.slider.value()
+        self._frequency_btn.setEnabled(False)
+        self._frequency_min.setEnabled(False)
+        self._frequency_max.setEnabled(False)
+        self._frequency_status.setText("Applying CPU frequency limits…")
+
+        def _apply():
+            error = ""
+            try:
+                request_cpu_frequency_limits(minimum, maximum)
+            except Exception as exc:
+                error = str(exc)
+            self._frequency_applied.emit(error)
+
+        threading.Thread(target=_apply, daemon=True, name="frequency-apply").start()
+
+    def _on_frequency_applied(self, error: str):
+        # Read back the kernel's accepted limits, including after a partial failure.
+        self._load_frequency_limits()
+        if error:
+            self._frequency_status.setText(f"Could not apply CPU frequency: {error}")
 
     def _on_stapm_changed(self, value_w: int):
         self._stapm_limit = clamp_power_limit(value_w * 1000)

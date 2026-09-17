@@ -138,6 +138,11 @@ def request_keyboard_last_event() -> tuple[list[int], int, int]:
     return mods, int(parts[2]), int(parts[3])
 
 
+def request_cpu_frequency_limits(minimum: int, maximum: int) -> str:
+    response = _request_daemon(f"cpu-frequency-limits\t{minimum}\t{maximum}\n")
+    return protocol.parse_status_response(response)
+
+
 def request_power_limits(
     stapm_limit: int,
     fast_limit: int,

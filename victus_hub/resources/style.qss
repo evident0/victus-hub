@@ -193,7 +193,7 @@ QSpinBox, QDoubleSpinBox {
     color: @text;
     border: 1px solid @edge;
     border-radius: 8px;
-    padding: 4px 24px 4px 8px;
+    padding: 4px;
     selection-background-color: @accent;
     font-family: "@mono_font";
 }
@@ -207,6 +207,7 @@ QSpinBox QLineEdit, QDoubleSpinBox QLineEdit {
     background-color: transparent;
     color: @text;
     border: none;
+    padding: 0;
     selection-background-color: @accent;
 }
 
@@ -221,7 +222,7 @@ QSpinBox::up-button, QDoubleSpinBox::up-button {
     background-color: transparent;
     border: none;
     border-top-right-radius: 8px;
-    width: 22px;
+    width: 18px;
 }
 
 QSpinBox::down-button, QDoubleSpinBox::down-button {
@@ -230,7 +231,7 @@ QSpinBox::down-button, QDoubleSpinBox::down-button {
     background-color: transparent;
     border: none;
     border-bottom-right-radius: 8px;
-    width: 22px;
+    width: 18px;
 }
 
 QSpinBox::up-button:hover, QDoubleSpinBox::up-button:hover,
