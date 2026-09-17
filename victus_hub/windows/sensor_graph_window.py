@@ -31,7 +31,7 @@ class SensorGraphWindow(QMainWindow):
     def __init__(self, sensor_key: str, parent=None):
         super().__init__(parent)
         self._sensor_key = sensor_key
-        self._definition: SensorDefinition = sensor_definition_for_key(sensor_key)
+        self._definition: SensorDefinition = sensor_definition_for_key(sensor_key, api.read_sensors())
         self._started = False
         self._ram_max_set = False
 
@@ -135,7 +135,9 @@ class SensorGraphWindow(QMainWindow):
             return
 
         # Re-resolve definition in case extra sensors appeared
-        self._definition = sensor_definition_for_key(self._sensor_key, snap)
+        definition = sensor_definition_for_key(self._sensor_key, snap)
+        if definition.key == self._sensor_key:
+            self._definition = definition
         reading = self._definition.reading(snap)
         value = self._definition.numeric_value(snap)
 

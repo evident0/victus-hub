@@ -28,6 +28,7 @@ from victus_hub.backend.util import command_path
 
 # Skip tiny system partitions (EFI, small /boot) from the Storage card
 _DISK_MIN_TOTAL_BYTES = 2 * 1024 ** 3  # 2 GiB
+CPU_ROOT = Path("/sys/devices/system/cpu")
 
 
 def reading(value: str, source: str = "") -> SensorReading:
@@ -277,6 +278,36 @@ class SensorReader:
                 )
             return self._format_cpu_power_sample(direct, "direct RAPL")
 
+    def _read_cpu_frequencies(self) -> list[ExtraSensor]:
+        """Read current frequency per logical CPU; sysfs reports kHz."""
+        sensors = []
+        cpus = sorted(
+            (path for path in CPU_ROOT.glob("cpu[0-9]*") if path.name[3:].isdigit()),
+            key=lambda path: int(path.name[3:]),
+        )
+        for cpu in cpus:
+            freq_dir = cpu / "cpufreq"
+            source = freq_dir / "scaling_cur_freq"
+            value = read_int(source)
+            if value is None or value <= 0:
+                source = freq_dir / "cpuinfo_cur_freq"
+                value = read_int(source)
+            if value is None or value <= 0:
+                continue
+            mhz = value / 1000.0
+            maximum = read_int(freq_dir / "cpuinfo_max_freq")
+            sensors.append(ExtraSensor(
+                key=f"cpu-frequency-{cpu.name[3:]}",
+                group="CPU",
+                name=f"CPU {cpu.name[3:]} Frequency",
+                unit="MHz",
+                value_min=0,
+                value_max=max(mhz, maximum / 1000.0 if maximum else 6000.0),
+                numeric_value=mhz,
+                reading=reading(f"{mhz:.1f} MHz", str(source)),
+            ))
+        return sensors
+
     # ── GPU power (power.rs) ──
 
     def _read_gpu_power(self, nvidia: NvidiaMetrics | None) -> SensorReading:
@@ -518,7 +549,7 @@ class SensorReader:
             ram_total_gb=ram_total_gb,
             disks=self._read_disks(),
             profile=self._read_current_profile(),
-            extra_sensors=self._read_lm_sensors(),
+            extra_sensors=self._read_cpu_frequencies() + self._read_lm_sensors(),
         )
 
 

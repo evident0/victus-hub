@@ -116,40 +116,56 @@ class PowerPage(QWidget):
         enable_row.addStretch()
         layout.addLayout(enable_row)
 
+        self._power_disabled_note = QLabel(
+            "To reset power limits to firmware defaults a reboot is required."
+        )
+        self._power_disabled_note.setWordWrap(True)
+        self._power_disabled_note.setFont(ui_font(12))
+        self._power_disabled_note.setStyleSheet(
+            f"color: {COLORS['sub']}; padding-top: 8px;"
+        )
+        layout.addWidget(self._power_disabled_note)
+
+        self._power_settings = QWidget()
+        power_layout = QVBoxLayout(self._power_settings)
+        power_layout.setContentsMargins(0, 0, 0, 0)
+        power_layout.setSpacing(0)
+        layout.addWidget(self._power_settings)
+
         self._stapm_spin = _SliderRow(
             "STAPM", power_min_w, power_max_w,
             round(self._stapm_limit / 1000), "W",
         )
         self._stapm_spin.slider.valueChanged.connect(self._on_stapm_changed)
-        layout.addWidget(self._stapm_spin)
+        power_layout.addWidget(self._stapm_spin)
 
         self._fast_spin = _SliderRow(
             "Fast", power_min_w, power_max_w,
             round(self._fast_limit / 1000), "W",
         )
         self._fast_spin.slider.valueChanged.connect(self._on_fast_changed)
-        layout.addWidget(self._fast_spin)
+        power_layout.addWidget(self._fast_spin)
 
         self._slow_spin = _SliderRow(
             "Slow", power_min_w, power_max_w,
             round(self._slow_limit / 1000), "W",
         )
         self._slow_spin.slider.valueChanged.connect(self._on_slow_changed)
-        layout.addWidget(self._slow_spin)
+        power_layout.addWidget(self._slow_spin)
 
         self._tctl_spin = _SliderRow(
             "Tctl", TCTL_TEMP_MIN_C, TCTL_TEMP_MAX_C,
             self._tctl_temp, "°C",
         )
         self._tctl_spin.slider.valueChanged.connect(self._on_tctl_changed)
-        layout.addWidget(self._tctl_spin)
+        power_layout.addWidget(self._tctl_spin)
 
         self._reapply_spin = _SliderRow(
             "Reapply", REAPPLY_MIN_S, REAPPLY_MAX_S,
             clamp_reapply_seconds(self._reapply_seconds), "s",
         )
         self._reapply_spin.slider.valueChanged.connect(self._on_reapply_changed)
-        layout.addWidget(self._reapply_spin)
+        power_layout.addWidget(self._reapply_spin)
 
         self._apply_btn = QPushButton("Apply")
         self._apply_btn.setObjectName("accentBtn")
@@ -160,7 +176,7 @@ class PowerPage(QWidget):
         apply_row.setContentsMargins(0, 16, 0, 0)
         apply_row.addWidget(self._apply_btn)
         apply_row.addStretch()
-        layout.addLayout(apply_row)
+        power_layout.addLayout(apply_row)
 
         layout.addSpacing(16)
         layout.addWidget(hairline())
@@ -315,7 +331,9 @@ class PowerPage(QWidget):
         )
 
     def _update_apply_enabled(self):
-        can_apply = (not self._power_enabled) or self._power_values_dirty()
+        self._power_settings.setVisible(self._power_enabled)
+        self._power_disabled_note.setVisible(not self._power_enabled)
+        can_apply = self._power_enabled and self._power_values_dirty()
         self._apply_btn.setEnabled(can_apply)
         self._apply_btn.setCursor(
             Qt.PointingHandCursor if can_apply else Qt.ArrowCursor
