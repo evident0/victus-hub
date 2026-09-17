@@ -13,7 +13,7 @@ import time
 
 from victus_hub.backend import protocol
 from victus_hub.backend.rapl import RaplPowerSampler
-from victus_hubd import cpufreq, ryzenadj, sysfs
+from victus_hubd import cpufreq, intel, ryzenadj, sysfs
 
 SOCKET_PATH = "/run/victus-hubd/victus-hub.sock"
 
@@ -364,6 +364,24 @@ def _make_dispatch(sampler: RaplPowerSampler, sampler_lock: threading.Lock | Non
         result = ryzenadj.apply_power_limits(s, f, sl, tctl)
         return protocol.format_status_response((True, result))
 
+    def _intel_power_limits(body: str) -> str:
+        parts = body.split("\t")
+        if len(parts) != 2:
+            raise RuntimeError("expected 2 integers (PL1, PL2 in mW)")
+        result = intel.apply_power_limits(
+            _parse_int(parts[0], "PL1"), _parse_int(parts[1], "PL2"),
+        )
+        return protocol.format_status_response((True, result))
+
+    def _intel_undervolt(body: str) -> str:
+        parts = body.split("\t")
+        if len(parts) != 2:
+            raise RuntimeError("expected 2 integers (core, cache in mV)")
+        result = intel.apply_undervolt(
+            _parse_int(parts[0], "core offset"), _parse_int(parts[1], "cache offset"),
+        )
+        return protocol.format_status_response((True, result))
+
     def _cpu_frequency_limits(body: str) -> str:
         parts = body.split("\t")
         if len(parts) != 2:
@@ -387,6 +405,8 @@ def _make_dispatch(sampler: RaplPowerSampler, sampler_lock: threading.Lock | Non
         ("fan-manual", _fan_manual),
         ("keyboard-color\t", _keyboard_color),
         ("power-limits\t", _power_limits),
+        ("intel-power-limits\t", _intel_power_limits),
+        ("intel-undervolt\t", _intel_undervolt),
         ("cpu-frequency-limits\t", _cpu_frequency_limits),
         ("keyboard-brightness\t", _keyboard_brightness),
         ("keyboard-user-brightness\t", _keyboard_user_brightness),

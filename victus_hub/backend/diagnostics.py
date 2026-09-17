@@ -10,6 +10,7 @@ from importlib.metadata import PackageNotFoundError, version as pkg_version
 from pathlib import Path
 
 from victus_hub.backend.daemon_client import SOCKET_PATH
+from victus_hub.backend.cpu import is_intel_cpu
 from victus_hub.backend.modules import (
     emulated_keyboard_zone_count,
     fan_control_module,
@@ -169,9 +170,21 @@ def collect_capabilities() -> list[Capability]:
     else:
         kbd_ok, kbd_details = False, "hp-kbd-rgb not loaded"
 
-    ry_label, _ry_color = ryzenadj_available()
-    ry_ok = ry_label != "not supported"
-    ry_details = "ryzenadj found" if ry_ok else "ryzenadj not found"
+    if is_intel_cpu():
+        rapl = [
+            path for path in Path("/sys/class/powercap").glob("intel-rapl:*")
+            if path.name.count(":") == 1
+        ]
+        power_capability = Capability(
+            "Power limits (Intel RAPL)", bool(rapl),
+            "RAPL packages exposed; write support checked on apply" if rapl else "Intel RAPL unavailable",
+        )
+    else:
+        ry_label, _ry_color = ryzenadj_available()
+        ry_ok = ry_label != "not supported"
+        power_capability = Capability(
+            "Power limits (ryzenadj)", ry_ok, "ryzenadj found" if ry_ok else "ryzenadj not found",
+        )
 
     hp_wmi = Path("/sys/module/hp_wmi").is_dir()
     acpi_ec = _acpi_ec_present()
@@ -200,7 +213,7 @@ def collect_capabilities() -> list[Capability]:
         Capability("Embedded Controller (hp-wmi)", ec_ok, ec_details),
         Capability("GPU MUX", mux_ok, mux_details),
         Capability("Keyboard RGB", kbd_ok, kbd_details),
-        Capability("Power limits (ryzenadj)", ry_ok, ry_details),
+        power_capability,
         Capability("Daemon (victus-hubd)", daemon_ok, daemon_details),
     ]
 

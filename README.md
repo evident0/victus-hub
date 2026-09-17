@@ -25,7 +25,16 @@ with Fedora. Other HP Omen/Victus laptops should work.
   driver stays loaded for hotkeys and fan hwmon). Optional idle-dim when
   you stop typing.
 - **Power limits** — set Sustained (sPPT), Fast (fPPT), and Slow limits,
-  plus Tctl temperature, through `ryzenadj` for amd cpus.
+  plus Tctl temperature, through `ryzenadj` for AMD CPUs. Intel CPUs show
+  PL1 (long-term) and PL2 (short-term) limits using Linux RAPL, with the
+  same automatic reapply interval. Intel and AMD power settings are stored separately.
+- **CPU frequency limits** — minimum/maximum frequencies across all Linux
+  CPU frequency policies, including `intel_pstate` and `acpi-cpufreq`.
+- **Intel undervolt** — core and cache voltage offsets below the frequency
+  controls, from -250 to 0 mV. Requires the `msr` kernel module
+  (`sudo modprobe msr`) and unlocked firmware voltage control. Apply errors
+  are shown in the panel; successful offsets are saved but only applied on
+  clicking **Apply undervolt**. Set both offsets to 0 mV to reset them.
 - **Sensors** — live CPU/GPU temperatures, fan RPM, power draw, and
   utilization. Included "task manager"+right click to stop processes, tracks cpu and ram (PSS).
 - **Suspend/shutdown cleanup** — send suspend and shutdown commands before and after.
@@ -47,6 +56,8 @@ After cloning the repository run:
 ```
 ./scripts/install
 ```
+After updating an existing installation, rerun the installer to update and
+restart the daemon, including the RAPL/MSR service permissions for Intel controls.
 For dev work (no .desktop entry etc. Run uninstall when done testing to remove just the daemon):
 
 ```

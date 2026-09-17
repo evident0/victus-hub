@@ -207,10 +207,15 @@ class HomePage(QWidget):
         self.refresh_lighting()
 
     def refresh_power(self) -> None:
+        from victus_hub.backend.cpu import is_intel_cpu
+
         if not read_power_enabled():
             self._power_sub.setText("Limits off")
             return
         pwr = read_power_limit_settings()
+        if is_intel_cpu():
+            self._power_sub.setText(f"PL1 {round(pwr.slow_limit / 1000)} W · PL2 {round(pwr.fast_limit / 1000)} W")
+            return
         watts = round(pwr.stapm_limit / 1000)
         self._power_sub.setText(f"STAPM {watts} W")
 

@@ -220,6 +220,10 @@ def get_keyboard_last_event() -> KeyEvent:
 
 
 def apply_power_limits(stapm: int, fast: int, slow: int, tctl_temp: int = 95) -> str:
+    from victus_hub.backend.cpu import is_intel_cpu
+
+    if is_intel_cpu():
+        return daemon_client.request_intel_power_limits(slow, fast)
     return daemon_client.request_power_limits(stapm, fast, slow, tctl_temp)
 
 

@@ -12,6 +12,7 @@ from PySide6.QtCore import QEventLoop, QTimer
 from PySide6.QtWidgets import QAbstractSpinBox, QApplication
 
 from victus_hub.backend.cpufreq import FrequencyPolicy
+from victus_hub.features.power.limits import PowerLimitSettings
 from victus_hub.pages.power_page import PowerPage, _SliderRow
 
 
@@ -21,6 +22,9 @@ class TestPowerPage(unittest.TestCase):
         cls.app = QApplication.instance() or QApplication([])
 
     def setUp(self):
+        vendor = patch("victus_hub.pages.power_page.is_intel_cpu", return_value=False)
+        vendor.start()
+        self.addCleanup(vendor.stop)
         saved = patch("victus_hub.pages.power_page.read_frequency_limits", return_value=None)
         self.saved = saved.start()
         self.addCleanup(saved.stop)
@@ -127,6 +131,71 @@ class TestPowerPage(unittest.TestCase):
         self.assertFalse(self.page._frequency_max.isEnabled())
         self.assertFalse(self.page._frequency_btn.isEnabled())
         self.assertIn("unavailable", self.page._frequency_status.text())
+
+    def make_intel_page(self):
+        with patch("victus_hub.pages.power_page.is_intel_cpu", return_value=True), \
+                patch("victus_hub.pages.power_page.read_power_limit_settings", return_value=PowerLimitSettings(
+                    fast_limit=65000, slow_limit=45000,
+                )), \
+                patch("victus_hub.pages.power_page.read_power_enabled", return_value=True), \
+                patch("victus_hub.pages.power_page.read_intel_undervolt", return_value=(-50, -25)):
+            page = PowerPage()
+        self.addCleanup(page.deleteLater)
+        return page
+
+    def test_vendor_specific_controls_and_undervolt_placement(self):
+        self.assertFalse(self.page._stapm_spin.isHidden())
+        self.assertFalse(self.page._tctl_spin.isHidden())
+        self.assertFalse(hasattr(self.page, "_undervolt_core"))
+        page = self.make_intel_page()
+        self.assertTrue(page._stapm_spin.isHidden())
+        self.assertTrue(page._tctl_spin.isHidden())
+        self.assertEqual(page._slow_spin.slider.value(), 45)
+        self.assertEqual(page._fast_spin.slider.value(), 65)
+        self.assertGreater(page.layout().indexOf(page._undervolt_core), page.layout().indexOf(page._frequency_status))
+        self.assertEqual(page._frequency_min.value.value(), 1100.980)
+        self.assertEqual(page._undervolt_core.slider.value(), -50)
+
+    def test_intel_pl1_pl2_ordering(self):
+        page = self.make_intel_page()
+        page._slow_spin.setValue(70)
+        self.assertEqual((page._slow_limit, page._fast_limit), (70000, 70000))
+        page._fast_spin.setValue(40)
+        self.assertEqual((page._slow_limit, page._fast_limit), (40000, 40000))
+
+    def test_undervolt_applies_and_saves_only_on_success(self):
+        page = self.make_intel_page()
+        loop = QEventLoop()
+        page._undervolt_applied.connect(loop.quit)
+        for error in (None, RuntimeError("firmware locked")):
+            with patch("victus_hub.pages.power_page.request_intel_undervolt", side_effect=error) as request, \
+                    patch("victus_hub.pages.power_page.write_intel_undervolt") as write:
+                page._on_apply_undervolt()
+                self.assertFalse(page._undervolt_btn.isEnabled())
+                QTimer.singleShot(2000, loop.quit)
+                loop.exec()
+                request.assert_called_once_with(-50, -25)
+                self.assertTrue(page._undervolt_btn.isEnabled())
+                if error:
+                    write.assert_not_called()
+                    self.assertIn("firmware locked", page._undervolt_status.text())
+                else:
+                    write.assert_called_once_with(-50, -25)
+                    self.assertIn("Undervolt applied", page._undervolt_status.text())
+
+    def test_intel_power_apply_error_is_visible_and_retryable(self):
+        page = self.make_intel_page()
+        page._slow_spin.setValue(40)
+        loop = QEventLoop()
+        page._power_result.connect(loop.quit)
+        with patch("victus_hub.pages.power_page.apply_power_limits", side_effect=RuntimeError("RAPL locked")) as apply, \
+                patch("victus_hub.pages.power_page.write_power_limit_settings"):
+            page._on_apply_power()
+            QTimer.singleShot(2000, loop.quit)
+            loop.exec()
+            self.assertEqual(apply.call_args.args[1:3], (65000, 40000))
+        self.assertIn("RAPL locked", page._power_status.text())
+        self.assertTrue(page._apply_btn.isEnabled())
 
 
 if __name__ == "__main__":

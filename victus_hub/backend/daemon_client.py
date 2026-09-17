@@ -146,6 +146,16 @@ def request_cpu_frequency_limits(minimum: int, maximum: int) -> str:
     return protocol.parse_status_response(response)
 
 
+def request_intel_power_limits(pl1_mw: int, pl2_mw: int) -> str:
+    response = _request_daemon(f"intel-power-limits\t{pl1_mw}\t{pl2_mw}\n")
+    return protocol.parse_status_response(response)
+
+
+def request_intel_undervolt(core_mv: int, cache_mv: int) -> str:
+    response = _request_daemon(f"intel-undervolt\t{core_mv}\t{cache_mv}\n")
+    return protocol.parse_status_response(response)
+
+
 def request_power_limits(
     stapm_limit: int,
     fast_limit: int,

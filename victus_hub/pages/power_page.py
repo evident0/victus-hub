@@ -1,4 +1,4 @@
-"""Power page — ryzenadj power limits and CPU frequency controls."""
+"""Power page — vendor-specific power limits, CPU frequency, and Intel undervolt."""
 
 import threading
 
@@ -12,7 +12,8 @@ from victus_hub.app.theme import COLORS, mono_font, ui_font
 from victus_hub.widgets.toggle_switch import ToggleSwitch
 from victus_hub.backend.types import SensorSnapshot
 from victus_hub.backend.cpufreq import read_frequency_policies
-from victus_hub.backend.daemon_client import request_cpu_frequency_limits
+from victus_hub.backend.cpu import is_intel_cpu
+from victus_hub.backend.daemon_client import request_cpu_frequency_limits, request_intel_undervolt
 from victus_hub.widgets.chrome import PageHead, hairline
 from victus_hub.features.power.limits import (
     POWER_MIN_MW, POWER_MAX_MW,
@@ -22,6 +23,7 @@ from victus_hub.features.power.limits import (
     read_power_enabled, write_power_enabled,
     read_power_limit_settings, write_power_limit_settings,
     read_frequency_limits, write_frequency_limits,
+    read_intel_undervolt, write_intel_undervolt,
 )
 from victus_hub.api import apply_power_limits
 
@@ -76,10 +78,13 @@ class PowerPage(QWidget):
 
     limits_applied = Signal()
     _frequency_applied = Signal(str)
+    _undervolt_applied = Signal(str)
+    _power_result = Signal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
 
+        self._intel = is_intel_cpu()
         pwr = read_power_limit_settings()
         self._stapm_limit = pwr.stapm_limit
         self._fast_limit = pwr.fast_limit
@@ -94,6 +99,8 @@ class PowerPage(QWidget):
         self._applied_reapply = pwr.reapply_seconds
         self._applied_frequency = None
         self._frequency_busy = False
+        self._intel_power_failed = False
+        self._power_busy = False
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(24, 24, 24, 20)
@@ -139,14 +146,14 @@ class PowerPage(QWidget):
         power_layout.addWidget(self._stapm_spin)
 
         self._fast_spin = _SliderRow(
-            "Fast", power_min_w, power_max_w,
+            "PL2 (short)" if self._intel else "Fast", power_min_w, power_max_w,
             round(self._fast_limit / 1000), "W",
         )
         self._fast_spin.slider.valueChanged.connect(self._on_fast_changed)
         power_layout.addWidget(self._fast_spin)
 
         self._slow_spin = _SliderRow(
-            "Slow", power_min_w, power_max_w,
+            "PL1 (long)" if self._intel else "Slow", power_min_w, power_max_w,
             round(self._slow_limit / 1000), "W",
         )
         self._slow_spin.slider.valueChanged.connect(self._on_slow_changed)
@@ -158,6 +165,11 @@ class PowerPage(QWidget):
         )
         self._tctl_spin.slider.valueChanged.connect(self._on_tctl_changed)
         power_layout.addWidget(self._tctl_spin)
+        if self._intel:
+            self._stapm_spin.hide()
+            self._tctl_spin.hide()
+            power_layout.removeWidget(self._slow_spin)
+            power_layout.insertWidget(0, self._slow_spin)
 
         self._reapply_spin = _SliderRow(
             "Reapply", REAPPLY_MIN_S, REAPPLY_MAX_S,
@@ -176,6 +188,13 @@ class PowerPage(QWidget):
         apply_row.addWidget(self._apply_btn)
         apply_row.addStretch()
         power_layout.addLayout(apply_row)
+        if self._intel:
+            self._power_status = QLabel()
+            self._power_status.setWordWrap(True)
+            self._power_status.setFont(ui_font(12))
+            self._power_status.setStyleSheet(f"color: {COLORS['sub']}; padding-top: 8px;")
+            power_layout.addWidget(self._power_status)
+            self._power_result.connect(self._on_power_result)
 
         layout.addSpacing(16)
         layout.addWidget(hairline())
@@ -205,8 +224,73 @@ class PowerPage(QWidget):
             self._frequency_min.setValue(minimum)
             self._on_apply_frequency()
 
+        if self._intel:
+            self._add_undervolt_controls(layout)
+
         self._update_apply_enabled()
         layout.addStretch()
+
+    def _add_undervolt_controls(self, layout: QVBoxLayout) -> None:
+        layout.addSpacing(16)
+        layout.addWidget(hairline())
+        core, cache = read_intel_undervolt()
+        self._undervolt_core = _SliderRow("Core offset", -250, 0, core, "mV")
+        self._undervolt_cache = _SliderRow("Cache offset", -250, 0, cache, "mV")
+        layout.addWidget(self._undervolt_core)
+        layout.addWidget(self._undervolt_cache)
+        self._undervolt_btn = QPushButton("Apply undervolt")
+        self._undervolt_btn.setObjectName("accentBtn")
+        self._undervolt_btn.setCursor(Qt.PointingHandCursor)
+        self._undervolt_btn.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Fixed)
+        self._undervolt_btn.clicked.connect(self._on_apply_undervolt)
+        layout.addWidget(self._undervolt_btn)
+        self._undervolt_status = QLabel(
+            "Intel core/cache offsets. Set both to 0 mV to reset. "
+            "Requires the msr kernel module and firmware voltage-control support. "
+            "Saved offsets are applied only when you click Apply undervolt."
+        )
+        self._undervolt_status.setWordWrap(True)
+        self._undervolt_status.setFont(ui_font(12))
+        self._undervolt_status.setStyleSheet(f"color: {COLORS['sub']}; padding-top: 8px;")
+        layout.addWidget(self._undervolt_status)
+        self._undervolt_applied.connect(self._on_undervolt_applied)
+
+    def _on_apply_undervolt(self) -> None:
+        self._pending_undervolt = (
+            self._undervolt_core.slider.value(), self._undervolt_cache.slider.value(),
+        )
+        for widget in (self._undervolt_core, self._undervolt_cache, self._undervolt_btn):
+            widget.setEnabled(False)
+        self._undervolt_status.setText("Applying Intel undervolt…")
+        offsets = self._pending_undervolt
+
+        def _apply():
+            error = ""
+            try:
+                request_intel_undervolt(*offsets)
+            except Exception as exc:
+                error = str(exc)
+            self._undervolt_applied.emit(error)
+
+        threading.Thread(target=_apply, daemon=True, name="undervolt-apply").start()
+
+    def _on_undervolt_applied(self, error: str) -> None:
+        for widget in (self._undervolt_core, self._undervolt_cache, self._undervolt_btn):
+            widget.setEnabled(True)
+        if error:
+            self._undervolt_status.setText(f"Could not apply Intel undervolt: {error}")
+        else:
+            core, cache = self._pending_undervolt
+            write_intel_undervolt(core, cache)
+            self._undervolt_status.setText(f"Undervolt applied: core {core} mV · cache {cache} mV")
+
+    def _on_power_result(self, error: str) -> None:
+        self._power_busy = False
+        self._intel_power_failed = bool(error)
+        self._power_status.setText(
+            f"Could not apply Intel power limits: {error}" if error else "Intel PL1/PL2 limits applied."
+        )
+        self._update_apply_enabled()
 
     def update_sensor_data(self, snapshot: SensorSnapshot) -> None:
         frequencies = [
@@ -308,10 +392,14 @@ class PowerPage(QWidget):
 
     def _on_fast_changed(self, value_w: int):
         self._fast_limit = clamp_power_limit(value_w * 1000)
+        if self._intel and self._fast_limit < self._slow_limit:
+            self._slow_spin.setValue(value_w)
         self._update_apply_enabled()
 
     def _on_slow_changed(self, value_w: int):
         self._slow_limit = clamp_power_limit(value_w * 1000)
+        if self._intel and self._slow_limit > self._fast_limit:
+            self._fast_spin.setValue(value_w)
         self._update_apply_enabled()
 
     def _on_tctl_changed(self, value: int):
@@ -340,7 +428,9 @@ class PowerPage(QWidget):
     def _update_apply_enabled(self):
         self._power_settings.setVisible(self._power_enabled)
         self._power_disabled_note.setVisible(not self._power_enabled)
-        can_apply = self._power_enabled and self._power_values_dirty()
+        can_apply = self._power_enabled and not self._power_busy and (
+            self._power_values_dirty() or self._intel_power_failed
+        )
         self._apply_btn.setEnabled(can_apply)
         self._apply_btn.setCursor(
             Qt.PointingHandCursor if can_apply else Qt.ArrowCursor
@@ -357,7 +447,13 @@ class PowerPage(QWidget):
         self._update_apply_enabled()
         self.limits_applied.emit()
 
+        if self._intel:
+            self._power_busy = True
+            self._update_apply_enabled()
+            self._power_status.setText("Applying Intel power limits…")
+
         def _apply():
+            error = ""
             try:
                 apply_power_limits(
                     settings.stapm_limit,
@@ -365,8 +461,10 @@ class PowerPage(QWidget):
                     settings.slow_limit,
                     settings.tctl_temp,
                 )
-            except Exception:
-                pass
+            except Exception as exc:
+                error = str(exc)
+            if self._intel:
+                self._power_result.emit(error)
 
         threading.Thread(target=_apply, daemon=True, name="power-apply").start()
 
