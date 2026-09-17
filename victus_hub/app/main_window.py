@@ -130,6 +130,7 @@ class MainWindow(QMainWindow):
         # Home: profile selection + fan modes
         self._home_page.profile_selected.connect(self._on_profile_select)
         self._home_page.fan_mode_selected.connect(self._on_fan_mode)
+        self._fans_page.fan_mode_selected.connect(self._on_fan_mode)
         self._home_page.fans_clicked.connect(lambda: self.set_active_tab(2))
         self._home_page.lighting_clicked.connect(lambda: self.set_active_tab(3))
         self._home_page.power_clicked.connect(lambda: self.set_active_tab(1))
@@ -189,25 +190,25 @@ class MainWindow(QMainWindow):
             _cfg = api.get_fan_config()
             if _cfg.custom_enabled and _cfg.smart_enabled:
                 self._selected_fan_mode = "smart"
-                self._home_page.set_selected_fan_mode("smart")
+                self._sync_fan_mode_ui("smart")
                 try:
                     api.set_fan_manual()
                 except Exception:
                     logger.exception("set fan manual (restore smart) failed")
             elif _cfg.custom_enabled:
                 self._selected_fan_mode = "custom"
-                self._home_page.set_selected_fan_mode("custom")
+                self._sync_fan_mode_ui("custom")
                 try:
                     api.set_fan_manual()
                 except Exception:
                     logger.exception("set fan manual (restore custom) failed")
             elif _cfg.manual_preset == "max":
                 self._selected_fan_mode = "max"
-                self._home_page.set_selected_fan_mode("max")
+                self._sync_fan_mode_ui("max")
                 self._set_fan_max()
             else:
                 self._selected_fan_mode = "auto"
-                self._home_page.set_selected_fan_mode("auto")
+                self._sync_fan_mode_ui("auto")
         except Exception:
             logger.exception("init fan config check failed")
         self._sync_tray_checks()
@@ -373,8 +374,11 @@ class MainWindow(QMainWindow):
             action.setChecked(key == self._selected_fan_mode)
 
     def _on_tray_fan_mode(self, mode: str) -> None:
-        self._home_page.set_selected_fan_mode(mode)
         self._on_fan_mode(mode)
+
+    def _sync_fan_mode_ui(self, mode: str) -> None:
+        self._home_page.set_selected_fan_mode(mode)
+        self._fans_page.set_selected_fan_mode(mode)
 
     def _on_tray_activated(self, reason):
         if reason in (QSystemTrayIcon.Trigger, QSystemTrayIcon.DoubleClick):
@@ -563,6 +567,7 @@ class MainWindow(QMainWindow):
     def _on_fan_mode(self, mode: str):
         """Handle Auto/Smart/Max/Custom fan mode button clicks."""
         self._selected_fan_mode = mode
+        self._sync_fan_mode_ui(mode)
         self._sync_tray_checks()
         if mode == "auto":
             self._set_fan_auto()
