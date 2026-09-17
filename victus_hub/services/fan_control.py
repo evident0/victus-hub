@@ -398,7 +398,7 @@ class FanController:
         try:
             _daemon_client.request_fan_pwm(pwm)
         except Exception as error:
-            _fan_logger.warning("fan PWM write failed: %s", error)
+            _fan_logger.error("fan PWM write failed: %s", error)
             return
 
         state.last_written_pct = target

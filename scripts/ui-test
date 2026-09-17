@@ -4,6 +4,8 @@
 set -euo pipefail
 
 ROOT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+# shellcheck source=debug-level.sh
+source "$ROOT_DIR/scripts/debug-level.sh"
 
 SERVICE_NAME=victus-hubd.service
 SERVICE_DST="/etc/systemd/system/$SERVICE_NAME"

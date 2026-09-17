@@ -8,6 +8,7 @@ import socket
 
 from victus_hub.backend import protocol
 from victus_hub.backend.rapl import CpuPowerSample
+from victus_hub.logging_config import message_debug_level
 
 SOCKET_PATH = "/run/victus-hubd/victus-hub.sock"
 
@@ -33,14 +34,16 @@ def _request_daemon(request: str, quiet: bool = False) -> str:
             response += chunk
         sock.close()
         resp = response.decode().strip()
-        if not quiet:
-            if resp.startswith("ERR"):
-                logger.info("%s\u2190 daemon: %s%s", _RED, resp, _RESET)
-            else:
-                logger.info("\u2190 daemon: %s", resp)
+        if resp.startswith("ERR"):
+            logger.error("%s\u2190 daemon: %s%s", _RED, resp, _RESET)
+        elif not quiet:
+            logger.info(
+                "\u2190 daemon: %s", resp,
+                extra={"debug_level": message_debug_level(request)},
+            )
         return resp
     except OSError as e:
-        logger.info("%s\u2190 daemon: ERROR %s%s", _RED, e, _RESET)
+        logger.error("%s\u2190 daemon: ERROR %s%s", _RED, e, _RESET)
         raise RuntimeError(str(e))
 
 def request_cpu_power() -> CpuPowerSample:

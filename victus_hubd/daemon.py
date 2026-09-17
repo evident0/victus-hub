@@ -461,7 +461,7 @@ def run_daemon() -> None:
 
     start_keyboard_watcher()
 
-    print(f"victus-hubd listening on {socket_path}")
+    logger.info("victus-hubd listening on %s", socket_path)
 
     while True:
         try:

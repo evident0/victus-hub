@@ -79,6 +79,26 @@ The app logs to the terminal it was launched from (so run it from a
 terminal or check the desktop entry's output). The daemon logs via
 `journalctl -u victus-hubd`.
 
+Both development scripts accept an optional terminal debug level:
+
+| Level | Terminal messages |
+| --- | --- |
+| `0` (default) | Errors only |
+| `1` | Errors + fan control |
+| `2` | Errors + fan control + power |
+| `3` | Errors + fan control + power + keyboard |
+
+```bash
+./scripts/dev-run 1
+./scripts/ui-test 3
+```
+
+From the `scripts/` directory, use `./dev-run 1` or `./ui-test 3`.
+These levels filter application log messages; script setup progress is still
+shown. The in-app diagnostics buffer retains the full session log.
+For a direct launch, use `VICTUS_HUB_DEBUG_LEVEL=2 victus-hub` (the same
+environment variable is supported by `python3 -m victus_hubd`).
+
 ## Project Structure
 
 - **`victus_hub/`** — the Qt GUI. The user runs this unprivileged. It
