@@ -1,4 +1,4 @@
-"""Program settings page — Ohman rows, hairlines, footer links."""
+"""Program settings page — shortcut and diagnostics."""
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
@@ -8,7 +8,6 @@ from PySide6.QtGui import QDesktopServices
 from PySide6.QtCore import Qt, QUrl
 
 from victus_hub.app.theme import COLORS, mono_font, ui_font
-from victus_hub.backend import fan_config
 from victus_hub.backend.diagnostics import write_diagnostics_report
 from victus_hub.backend.hardware import board_title
 from victus_hub.features.keyboard.shortcut import (
@@ -18,7 +17,7 @@ from victus_hub.features.keyboard.shortcut import (
     read_keybind_settings,
     write_keybind_settings,
 )
-from victus_hub.widgets.chrome import PageHead, SettingsRow, hairline
+from victus_hub.widgets.chrome import PageHead, SettingsRow
 from victus_hub.widgets.toggle_switch import ToggleSwitch
 
 
@@ -187,24 +186,6 @@ class SettingsPage(QWidget):
             kb_ctrl,
         ))
 
-        layout.addWidget(hairline())
-
-        cfg = fan_config.load()
-        fan_ctrl = QWidget()
-        fan_l = QHBoxLayout(fan_ctrl)
-        fan_l.setContentsMargins(0, 0, 0, 0)
-        self._min_fan_change = make_double_spin(
-            "", "%",
-            cfg.min_fan_change_pct, 0.0, 20.0, 0.5,
-        )
-        self._min_fan_change._spin.valueChanged.connect(self._save_min_fan_change)
-        fan_l.addLayout(self._min_fan_change)
-        layout.addWidget(SettingsRow(
-            "Minimum fan change",
-            "Ignore smaller PWM steps",
-            fan_ctrl,
-        ))
-
         layout.addStretch()
         scroll.setWidget(body)
         outer.addWidget(scroll, 1)
@@ -227,11 +208,6 @@ class SettingsPage(QWidget):
         fl.addWidget(self._diag_btn)
         fl.addStretch()
         outer.addWidget(foot)
-
-    def _save_min_fan_change(self, value: float) -> None:
-        cfg = fan_config.load()
-        cfg.min_fan_change_pct = max(float(value), 0.0)
-        fan_config.save_all(cfg)
 
     def set_shortcut_controller(self, ctrl) -> None:
         """Wire the shared ShortcutController (owned by MainWindow)."""

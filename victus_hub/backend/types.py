@@ -82,6 +82,9 @@ class FanConfig:
     # Smart uses the built-in curve and faster EWMA. Only applies while
     # custom_enabled is True (the loop is driving PWM).
     smart_enabled: bool = False
+    # Temperature response used by custom curves. Smart mode always uses its
+    # aggressive response regardless of this setting.
+    curve_response: str = "smooth"
 
 # Re-export list for api.py convenience
 __all__ = [

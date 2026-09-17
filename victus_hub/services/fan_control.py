@@ -333,14 +333,15 @@ class FanController:
         if signature != state.curve_signature:
             state.reset_curve_hysteresis(signature)
 
+        aggressive = smart or config.curve_response == _fan_config.CURVE_RESPONSE_AGGRESSIVE
         self._control_tick(
             profile,
             snapshot.cpu_temp_c,
             snapshot.gpu_temp_c,
             time.monotonic(),
-            config.min_fan_change_pct,
-            SMART_EWMA_LAMBDA_INCREASE if smart else EWMA_LAMBDA_INCREASE,
-            SMART_EWMA_LAMBDA_DECREASE if smart else EWMA_LAMBDA_DECREASE,
+            2.0 if smart else config.min_fan_change_pct,
+            SMART_EWMA_LAMBDA_INCREASE if aggressive else EWMA_LAMBDA_INCREASE,
+            SMART_EWMA_LAMBDA_DECREASE if aggressive else EWMA_LAMBDA_DECREASE,
         )
 
     def _control_tick(

@@ -2,15 +2,23 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import QTimer, Signal
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QColor
-from PySide6.QtWidgets import QLabel, QSizePolicy, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QHBoxLayout, QLabel, QSizePolicy, QVBoxLayout, QWidget
 
-from victus_hub.api import FanPoint, FanProfileConfig, get_fan_config, save_fan_profile
-from victus_hub.app.theme import COLORS
+from victus_hub.api import (
+    FanPoint,
+    FanProfileConfig,
+    get_fan_config,
+    save_fan_profile,
+    set_fan_curve_response,
+)
+from victus_hub.app.theme import COLORS, MONO_FONT, mono_font
 from victus_hub.backend import fan_config
 from victus_hub.backend.types import SensorSnapshot
-from victus_hub.widgets.chrome import PageHead
+from victus_hub.pages.settings_page import make_double_spin
+from victus_hub.widgets.app_combo import AppComboBox
+from victus_hub.widgets.chrome import PageHead, SettingsRow
 from victus_hub.widgets.fan_chart import FanChart
 from victus_hub.widgets.profile_section import FAN_MODES, PROFILES as _PROFILE_NAMES_SRC
 from victus_hub.widgets.seg import LinkSeg, Seg
@@ -71,17 +79,26 @@ class FansPage(QWidget):
         editor_layout = QVBoxLayout(self._curve_editor)
         editor_layout.setContentsMargins(0, 0, 0, 0)
         editor_layout.setSpacing(0)
-        links_col = QVBoxLayout()
+        links_col = QHBoxLayout()
         links_col.setContentsMargins(0, 24, 0, 0)
-        links_col.setSpacing(0)
-        self._curve_links = LinkSeg(["CPU", "GPU"], gap=16, size=14)
+        links_col.setSpacing(24)
+        self._curve_links = LinkSeg(["CPU curve", "GPU curve"], gap=16, size=14)
         self._curve_links.picked.connect(self._on_curve_link)
         links_col.addWidget(self._curve_links)
+        curve_hint = QLabel("Left-click to add points · Right-click to remove points")
+        curve_hint.setFont(mono_font(11))
+        curve_hint.setStyleSheet(
+            f"color: {COLORS['status']}; background: transparent; "
+            f"font-size: 11px; font-family: '{MONO_FONT}';"
+        )
+        curve_hint.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        curve_hint.setWordWrap(True)
+        links_col.addWidget(curve_hint, 1)
         editor_layout.addLayout(links_col)
         self._curve_links.select(_CURVE_CPU, False)
 
         self._chart = FanChart(
-            "CPU curve", QColor(COLORS["accent"]), fan_config.CPU_TEMP_MAX_C,
+            "", QColor(COLORS["accent"]), fan_config.CPU_TEMP_MAX_C,
         )
         self._chart.point_added.connect(self._on_point_added)
         self._chart.point_moved.connect(self._on_point_moved)
@@ -93,6 +110,31 @@ class FansPage(QWidget):
         chart_l.setContentsMargins(0, 22, 0, 0)
         chart_l.addWidget(self._chart)
         editor_layout.addWidget(chart_wrap, 1)
+
+        self._curve_response = AppComboBox()
+        self._curve_response.addItem("Smooth", fan_config.CURVE_RESPONSE_SMOOTH)
+        self._curve_response.addItem(
+            "Aggressive", fan_config.CURVE_RESPONSE_AGGRESSIVE,
+        )
+        self._curve_response.setMinimumWidth(140)
+        editor_layout.addWidget(SettingsRow(
+            "Fan response",
+            "How quickly fan speed follows temperature",
+            self._curve_response,
+        ))
+
+        self._min_fan_change = make_double_spin(
+            "", "%", 2.0, 0.0, 20.0, 0.5,
+        )
+        min_fan_control = QWidget()
+        min_fan_layout = QHBoxLayout(min_fan_control)
+        min_fan_layout.setContentsMargins(0, 0, 0, 0)
+        min_fan_layout.addLayout(self._min_fan_change)
+        editor_layout.addWidget(SettingsRow(
+            "Minimum fan change",
+            "Ignore smaller PWM steps",
+            min_fan_control,
+        ))
         layout.addWidget(self._curve_editor, 1)
 
         self._mode_info = QWidget()
@@ -111,6 +153,8 @@ class FansPage(QWidget):
         self._save_timer.timeout.connect(self._save_current_profile)
 
         self._load_config()
+        self._curve_response.currentIndexChanged.connect(self._save_curve_response)
+        self._min_fan_change._spin.valueChanged.connect(self._save_min_fan_change)
         self._update_profile_label()
         self._update_mode_content()
 
@@ -181,7 +225,6 @@ class FansPage(QWidget):
 
     def _apply_chart(self) -> None:
         cpu = self._is_cpu()
-        self._chart.set_title("CPU curve" if cpu else "GPU curve")
         self._chart.set_temp_max(
             fan_config.CPU_TEMP_MAX_C if cpu else fan_config.GPU_TEMP_MAX_C,
         )
@@ -213,7 +256,23 @@ class FansPage(QWidget):
             return
         self._profiles = config.profiles
         self._config_loaded = True
+        response_index = self._curve_response.findData(config.curve_response)
+        self._curve_response.blockSignals(True)
+        self._curve_response.setCurrentIndex(max(response_index, 0))
+        self._curve_response.blockSignals(False)
+        self._min_fan_change._spin.blockSignals(True)
+        self._min_fan_change._spin.setValue(config.min_fan_change_pct)
+        self._min_fan_change._spin.blockSignals(False)
         self._hydrate_editor()
+
+    def _save_curve_response(self, _index: int) -> None:
+        response = self._curve_response.currentData()
+        set_fan_curve_response(response)
+
+    def _save_min_fan_change(self, value: float) -> None:
+        config = fan_config.load()
+        config.min_fan_change_pct = max(float(value), 0.0)
+        fan_config.save_all(config)
 
     def _hydrate_editor(self) -> None:
         if not self._config_loaded:

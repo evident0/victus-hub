@@ -6,8 +6,10 @@ import unittest
 from unittest.mock import patch
 
 from victus_hub.backend.fan_config import interpolate_fan, smart_cpu_points, smart_gpu_points
-from victus_hub.backend.types import FanPoint, FanProfileConfig
+from victus_hub.backend.types import FanConfig, FanPoint, FanProfileConfig, SensorSnapshot
 from victus_hub.services.fan_control import (
+    EWMA_LAMBDA_DECREASE,
+    EWMA_LAMBDA_INCREASE,
     FanController,
     LoopState,
     SMART_EWMA_LAMBDA_DECREASE,
@@ -219,6 +221,58 @@ class TestControllerWrites(unittest.TestCase):
             controller._control_tick(low_profile(43), 50.0, None, 0.0)
         write.assert_called_once_with(109)
         self.assertEqual(controller._st.last_written_pct, 43.0)
+
+
+class TestCurveResponse(unittest.TestCase):
+    def _poll_once(self, *, response="smooth", smart=False, min_fan_change_pct=2.0):
+        controller = FanController()
+        config = FanConfig(
+            profiles=[linear_profile(), linear_profile(), linear_profile()],
+            custom_enabled=True,
+            smart_enabled=smart,
+            curve_response=response,
+            min_fan_change_pct=min_fan_change_pct,
+        )
+        with patch(
+            "victus_hub.services.fan_control.api.read_sensors",
+            return_value=SensorSnapshot(cpu_temp_c=50.0),
+        ), patch(
+            "victus_hub.services.fan_control.api.get_current_profile",
+            return_value=1,
+        ), patch(
+            "victus_hub.services.fan_control._fan_config.load",
+            return_value=config,
+        ), patch(
+            "victus_hub.services.fan_control.read_hp_pwm_pct",
+            return_value=20.0,
+        ), patch(
+            "victus_hub.services.fan_control._daemon_client.request_fan_manual",
+        ), patch.object(controller, "_control_tick") as control_tick:
+            controller._poll_once()
+        return control_tick.call_args.args
+
+    def test_aggressive_response_uses_smart_lambdas(self):
+        args = self._poll_once(response="aggressive")
+        self.assertEqual(args[5], SMART_EWMA_LAMBDA_INCREASE)
+        self.assertEqual(args[6], SMART_EWMA_LAMBDA_DECREASE)
+
+    def test_smart_mode_stays_aggressive(self):
+        args = self._poll_once(smart=True)
+        self.assertEqual(args[5], SMART_EWMA_LAMBDA_INCREASE)
+        self.assertEqual(args[6], SMART_EWMA_LAMBDA_DECREASE)
+
+    def test_smart_mode_uses_fixed_min_fan_change(self):
+        args = self._poll_once(smart=True, min_fan_change_pct=4.5)
+        self.assertEqual(args[4], 2.0)
+
+    def test_custom_mode_uses_configured_min_fan_change(self):
+        args = self._poll_once(min_fan_change_pct=4.5)
+        self.assertEqual(args[4], 4.5)
+
+    def test_smooth_response_uses_default_lambdas(self):
+        args = self._poll_once()
+        self.assertEqual(args[5], EWMA_LAMBDA_INCREASE)
+        self.assertEqual(args[6], EWMA_LAMBDA_DECREASE)
 
 
 class TestLoopState(unittest.TestCase):

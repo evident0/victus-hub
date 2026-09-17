@@ -43,6 +43,7 @@ __all__ = [
     "save_fan_profile",
     "set_custom_fan_enabled",
     "set_smart_fan_enabled",
+    "set_fan_curve_response",
     "set_manual_preset",
     "apply_power_limits",
     "set_gpu_mux_mode",
@@ -237,6 +238,10 @@ def set_custom_fan_enabled(enabled: bool) -> FanConfig:
 
 def set_smart_fan_enabled(enabled: bool) -> FanConfig:
     return fan_config.save_smart_enabled(enabled)
+
+
+def set_fan_curve_response(response: str) -> FanConfig:
+    return fan_config.save_curve_response(response)
 
 
 def set_manual_preset(preset: str | None) -> FanConfig:

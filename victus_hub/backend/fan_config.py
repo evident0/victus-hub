@@ -12,6 +12,9 @@ from victus_hub.backend.types import FanPoint, FanProfileConfig, FanConfig
 CONFIG_DIR_NAME = "victus-hub"
 CONFIG_FILE_NAME = "config.json"
 PROFILE_KEYS = ["power-saver", "balanced", "performance"]
+CURVE_RESPONSE_SMOOTH = "smooth"
+CURVE_RESPONSE_AGGRESSIVE = "aggressive"
+CURVE_RESPONSES = (CURVE_RESPONSE_SMOOTH, CURVE_RESPONSE_AGGRESSIVE)
 
 # ── Curve bounds (used by the chart and any page that needs them) ──
 
@@ -104,6 +107,9 @@ def load() -> FanConfig:
     manual_preset = stored.get("manual_preset") or None
     min_fan_change_pct = max(float(stored.get("min_fan_change_pct", 2.0)), 0.0)
     smart_enabled = bool(stored.get("smart_curve_enabled", False)) and custom_enabled
+    curve_response = stored.get("fan_curve_response", CURVE_RESPONSE_SMOOTH)
+    if curve_response not in CURVE_RESPONSES:
+        curve_response = CURVE_RESPONSE_SMOOTH
 
     profiles = []
     for key in PROFILE_KEYS:
@@ -126,6 +132,7 @@ def load() -> FanConfig:
         manual_preset=manual_preset,
         min_fan_change_pct=min_fan_change_pct,
         smart_enabled=smart_enabled,
+        curve_response=curve_response,
     )
 
 
@@ -159,6 +166,16 @@ def save_smart_enabled(enabled: bool) -> FanConfig:
     return config
 
 
+def save_curve_response(response: str) -> FanConfig:
+    """Persist the temperature response used by custom fan curves."""
+    config = load()
+    config.curve_response = (
+        response if response in CURVE_RESPONSES else CURVE_RESPONSE_SMOOTH
+    )
+    save_all(config)
+    return config
+
+
 def save_manual_preset(preset: str | None) -> FanConfig:
     """Record which preset the user clicked (auto / max) or clear it.
 
@@ -188,6 +205,7 @@ def save_all(config: FanConfig) -> None:
         "custom_tuned_profile": "balanced",
         "custom_curve_enabled": config.custom_enabled,
         "smart_curve_enabled": config.smart_enabled,
+        "fan_curve_response": config.curve_response,
         "manual_preset": config.manual_preset,
         "min_fan_change_pct": config.min_fan_change_pct,
         "curve_points_by_profile": cpu_map,
