@@ -2,6 +2,7 @@
 
 import os
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
@@ -46,6 +47,35 @@ class TestPowerPage(unittest.TestCase):
         self.assertEqual(maximum.value.value(), 4800)
         maximum.value.setValue(4000)
         self.assertEqual(minimum.value.value(), 4000)
+
+    def test_reapply_changes_wait_for_apply(self):
+        self.page._power_enabled = True
+        self.page._update_apply_enabled()
+        self.assertFalse(self.page._apply_btn.isEnabled())
+        original = self.page._reapply_spin.slider.value()
+        changed = 30 if original != 30 else 60
+        with patch("victus_hub.pages.power_page.write_power_limit_settings") as write, \
+                patch("victus_hub.pages.power_page.threading.Thread"):
+            self.page._reapply_spin.value.setValue(changed)
+            write.assert_not_called()
+            self.assertTrue(self.page._apply_btn.isEnabled())
+            self.page._reapply_spin.slider.setValue(original)
+            self.assertFalse(self.page._apply_btn.isEnabled())
+            self.page._reapply_spin.slider.setValue(changed)
+            self.page._apply_btn.click()
+            write.assert_called_once()
+            self.assertEqual(write.call_args.args[0].reapply_seconds, changed)
+            self.assertFalse(self.page._apply_btn.isEnabled())
+
+    def test_sync_reapply_does_not_write_settings(self):
+        settings = replace(self.page._make_power_settings(), reapply_seconds=45)
+        with patch("victus_hub.pages.power_page.read_power_limit_settings", return_value=settings), \
+                patch("victus_hub.pages.power_page.read_power_enabled", return_value=True), \
+                patch("victus_hub.pages.power_page.write_power_limit_settings") as write:
+            self.page.sync_power_from_settings()
+            write.assert_not_called()
+        self.assertEqual(self.page._reapply_spin.value.value(), 45)
+        self.assertFalse(self.page._apply_btn.isEnabled())
 
     def test_apply_sends_khz_and_reads_back_kernel_limits(self):
         self.page._frequency_max.value.setValue(4200)

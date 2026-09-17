@@ -90,6 +90,7 @@ class PowerPage(QWidget):
         self._applied_fast = pwr.fast_limit
         self._applied_slow = pwr.slow_limit
         self._applied_tctl = pwr.tctl_temp
+        self._applied_reapply = pwr.reapply_seconds
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(24, 24, 24, 20)
@@ -139,8 +140,6 @@ class PowerPage(QWidget):
         )
         self._tctl_spin.slider.valueChanged.connect(self._on_tctl_changed)
         layout.addWidget(self._tctl_spin)
-
-        layout.addWidget(hairline())
 
         self._reapply_spin = _SliderRow(
             "Reapply", REAPPLY_MIN_S, REAPPLY_MAX_S,
@@ -269,14 +268,7 @@ class PowerPage(QWidget):
 
     def _on_reapply_changed(self, value: int):
         self._reapply_seconds = clamp_reapply_seconds(value)
-        applied = read_power_limit_settings()
-        write_power_limit_settings(PowerLimitSettings(
-            stapm_limit=applied.stapm_limit,
-            fast_limit=applied.fast_limit,
-            slow_limit=applied.slow_limit,
-            tctl_temp=applied.tctl_temp,
-            reapply_seconds=clamp_reapply_seconds(self._reapply_seconds),
-        ))
+        self._update_apply_enabled()
 
     def _on_power_enabled_changed(self, checked: bool):
         self._power_enabled = checked
@@ -290,6 +282,7 @@ class PowerPage(QWidget):
             or self._fast_limit != self._applied_fast
             or self._slow_limit != self._applied_slow
             or self._tctl_temp != self._applied_tctl
+            or self._reapply_seconds != self._applied_reapply
         )
 
     def _update_apply_enabled(self):
@@ -306,6 +299,7 @@ class PowerPage(QWidget):
         self._applied_fast = settings.fast_limit
         self._applied_slow = settings.slow_limit
         self._applied_tctl = settings.tctl_temp
+        self._applied_reapply = settings.reapply_seconds
         self._update_apply_enabled()
         self.limits_applied.emit()
 
@@ -342,6 +336,7 @@ class PowerPage(QWidget):
         self._applied_fast = pwr.fast_limit
         self._applied_slow = pwr.slow_limit
         self._applied_tctl = pwr.tctl_temp
+        self._applied_reapply = pwr.reapply_seconds
         self._power_enabled = read_power_enabled()
         self._power_check.blockSignals(True)
         self._power_check.setChecked(self._power_enabled)
