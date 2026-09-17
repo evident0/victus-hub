@@ -41,6 +41,16 @@ with Fedora. Other HP Omen/Victus laptops should work.
 
 Settings persist under `~/.config/victus-hub/`.
 
+Enable **Settings → Keyboard control shortcuts**, then hold **Left Ctrl + Left Shift**:
+- **Up/Down:** keyboard brightness (0%, 25%, 50%, 75%, 100%).
+- **Left/Right:** previous/next lighting effect, including Off.
+- **M:** cycle Eco (Power Save) → Balanced → Performance.
+
+Both modifiers must be the left-hand keys. Shortcuts work while the app is running,
+including in the tray.
+Shortcut delivery uses a persistent daemon event stream, with no keyboard
+polling timer. Restart `victus-hubd` and the app after upgrading to this version.
+
 ## Install (One-Liner)
 ```
 curl -sL https://raw.githubusercontent.com/evident0/victus-hub/master/install.sh | sudo bash

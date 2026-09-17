@@ -5,13 +5,14 @@ from PySide6.QtWidgets import (
     QSpinBox, QDoubleSpinBox, QMessageBox, QScrollArea, QSizePolicy,
 )
 from PySide6.QtGui import QDesktopServices
-from PySide6.QtCore import Qt, QUrl
+from PySide6.QtCore import Qt, QUrl, QSettings, Signal
 
 from victus_hub.app.theme import COLORS, mono_font, ui_font
 from victus_hub.backend.diagnostics import write_diagnostics_report
 from victus_hub.backend.hardware import board_title
 from victus_hub.features.keyboard.shortcut import (
     KeybindSettings,
+    HARDWARE_SHORTCUTS_KEY,
     keybind_from_event,
     keybind_label,
     read_keybind_settings,
@@ -19,6 +20,7 @@ from victus_hub.features.keyboard.shortcut import (
 )
 from victus_hub.widgets.chrome import PageHead, SettingsRow
 from victus_hub.widgets.toggle_switch import ToggleSwitch
+from victus_hub.services.battery_power import BATTERY_POWER_SAVE_KEY
 
 
 def make_settings_card() -> tuple[QWidget, QVBoxLayout]:
@@ -125,6 +127,9 @@ def make_double_spin(label: str, suffix: str, value: float,
 class SettingsPage(QWidget):
     """Settings tab: fan constants, program shortcut, diagnostics."""
 
+    battery_power_save_changed = Signal(bool)
+    hardware_shortcuts_changed = Signal(bool)
+
     def __init__(self, parent=None):
         super().__init__(parent)
         outer = QVBoxLayout(self)
@@ -152,6 +157,30 @@ class SettingsPage(QWidget):
         layout = QVBoxLayout(body)
         layout.setContentsMargins(24, 4, 16, 8)
         layout.setSpacing(0)
+
+        self._battery_power_save = ToggleSwitch()
+        self._battery_power_save.setChecked(
+            QSettings().value(BATTERY_POWER_SAVE_KEY, False, type=bool)
+        )
+        self._battery_power_save.toggled.connect(self.battery_power_save_changed.emit)
+        layout.addWidget(SettingsRow(
+            "Power save on battery",
+            "Switch to Power Save when unplugged while Victus Hub is running",
+            self._battery_power_save,
+        ))
+
+        self._hardware_shortcuts = ToggleSwitch()
+        self._hardware_shortcuts.setChecked(
+            QSettings().value(HARDWARE_SHORTCUTS_KEY, False, type=bool)
+        )
+        self._hardware_shortcuts.toggled.connect(self.hardware_shortcuts_changed.emit)
+        layout.addWidget(SettingsRow(
+            "Keyboard control shortcuts",
+            "Left Ctrl + Left Shift + ↑ / ↓: brightness in 25% steps\n"
+            "Left Ctrl + Left Shift + ← / →: previous / next lighting effect (including Off)\n"
+            "Left Ctrl + Left Shift + M: cycle performance mode",
+            self._hardware_shortcuts,
+        ))
 
         self._shortcut_ctrl = None
         self._kb = read_keybind_settings()

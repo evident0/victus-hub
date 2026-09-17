@@ -446,6 +446,32 @@ class KeyboardPage(QWidget):
         self._shade.set_current(s.color)
         self._sync_effect_controls()
 
+    def step_brightness(self, direction: int) -> None:
+        """Move to the next 0/25/50/75/100% level, including from slider values."""
+        levels = (0, 64, 128, 191, 255)
+        current = self._settings.brightness if self._settings.enabled else 0
+        if direction > 0:
+            level = next((v for v in levels if v > current), 255)
+        else:
+            level = next((v for v in reversed(levels) if v < current), 0)
+        self._brightness_slider.setValue(level)
+        if level > 0 and not self._settings.enabled:
+            index = next((i for i, (value, _) in enumerate(self._effect_items)
+                          if value == self._settings.effect), 1)
+            self._on_effect_link(index)
+
+    def step_animation(self, direction: int) -> None:
+        """Cycle supported lighting effects, including Off, in UI order."""
+        effects = [value for value, _ in self._effect_items]
+        if not effects:
+            return
+        current = self._settings.effect if self._settings.enabled else "off"
+        if current not in effects:
+            index = 0 if direction > 0 else len(effects) - 1
+        else:
+            index = (effects.index(current) + direction) % len(effects)
+        self._on_effect_link(index)
+
     def _select_effect_link(self, index: int, animate: bool) -> None:
         for seg, offset in zip(self._effect_links, self._effect_offset):
             local = index - offset

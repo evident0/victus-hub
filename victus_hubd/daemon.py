@@ -35,6 +35,7 @@ _MODIFIER_CODES = frozenset({
     100,  # KEY_RIGHTALT
     125,  # KEY_LEFTMETA
     126,  # KEY_RIGHTMETA
+    464,  # KEY_FN (where exposed by firmware)
 })
 
 _kbd_last_input: float = 0.0
@@ -48,6 +49,62 @@ _held_mods: set[int] = set()
 _last_press_mods: tuple[int, ...] = ()
 _last_press_key: int = 0
 _last_press_seq: int = 0
+_kbd_subscribers: set[socket.socket] = set()
+_kbd_subscribers_lock = threading.Lock()
+
+
+def _publish_keypress(mods: tuple[int, ...], key: int, seq: int) -> None:
+    """Push each press without letting a slow subscriber block input reading."""
+    payload = f"KEY\t{','.join(map(str, mods))}\t{key}\t{seq}\n".encode()
+    with _kbd_subscribers_lock:
+        for stream in tuple(_kbd_subscribers):
+            try:
+                sent = stream.send(payload, socket.MSG_DONTWAIT | socket.MSG_NOSIGNAL)
+                if sent == len(payload):
+                    continue
+            except OSError:
+                pass
+            _kbd_subscribers.discard(stream)
+            try:
+                stream.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+
+
+def _stream_keyboard_events(stream: socket.socket) -> None:
+    """Subscribe until disconnect; never replay the last (possibly stale) key."""
+    try:
+        with _kbd_subscribers_lock:
+            stream.sendall(b"OK\tkeyboard-events\n")
+            _kbd_subscribers.add(stream)
+        # The client sends no more requests. This blocks until it disconnects.
+        stream.recv(1)
+    except OSError:
+        pass
+    finally:
+        with _kbd_subscribers_lock:
+            _kbd_subscribers.discard(stream)
+        stream.close()
+
+
+def _record_key_event(code: int, value: int) -> None:
+    """Track physical presses; releases update modifiers, repeats do not act."""
+    global _kbd_last_input, _last_press_mods, _last_press_key, _last_press_seq
+    press = None
+    with _kbd_lock:
+        if value == 1:
+            _kbd_last_input = time.monotonic()
+            if code in _MODIFIER_CODES:
+                _held_mods.add(code)
+            else:
+                _last_press_mods = tuple(sorted(_held_mods))
+                _last_press_key = code
+                _last_press_seq += 1
+                press = (_last_press_mods, _last_press_key, _last_press_seq)
+        elif value == 0 and code in _MODIFIER_CODES:
+            _held_mods.discard(code)
+    if press is not None:
+        _publish_keypress(*press)
 
 
 def _kbd_watcher_loop() -> None:
@@ -63,7 +120,6 @@ def _kbd_watcher_loop() -> None:
     watcher for the daemon's entire lifetime.
     """
     global _kbd_last_input, _kbd_watcher_running
-    global _held_mods, _last_press_mods, _last_press_key, _last_press_seq
     while not _kbd_stop.is_set():
         dev_paths = _discover_keyboard_devices()
         if not dev_paths:
@@ -90,9 +146,7 @@ def _kbd_watcher_loop() -> None:
         logger.info("kbd-watch: monitoring %s", ", ".join(opened))
         try:
             while not _kbd_stop.is_set():
-                r, _, _ = select.select(fds, [], [], 1.0)
-                if not r:
-                    continue
+                r, _, _ = select.select(fds, [], [])
                 reopen = False
                 for fd in r:
                     try:
@@ -102,25 +156,12 @@ def _kbd_watcher_loop() -> None:
                         reopen = True
                         break
                     if len(data) < _EVENT_SIZE:
-                        continue
+                        reopen = True
+                        break
                     _, _, ev_type, code, ev_value = struct.unpack(_EVENT_FORMAT, data)
                     if ev_type != _EV_KEY:
                         continue
-                    if ev_value == 1:
-                        with _kbd_lock:
-                            # Any key — including bare modifiers (Ctrl, Win,
-                            # Shift, Alt) — counts as activity for the idle /
-                            # backlight-dim timer.
-                            _kbd_last_input = time.monotonic()
-                            if code in _MODIFIER_CODES:
-                                _held_mods.add(code)
-                            else:
-                                _last_press_mods = tuple(sorted(_held_mods))
-                                _last_press_key = code
-                                _last_press_seq += 1
-                    elif ev_value == 0 and code in _MODIFIER_CODES:
-                        with _kbd_lock:
-                            _held_mods.discard(code)
+                    _record_key_event(code, ev_value)
                 if reopen:
                     break
         finally:
@@ -428,6 +469,9 @@ def handle_client(stream: socket.socket, sampler: RaplPowerSampler, sampler_lock
         return
 
     request = data.decode().rstrip("\n")
+    if request == "keyboard-events":
+        _stream_keyboard_events(stream)
+        return
     dispatch = _make_dispatch(sampler, sampler_lock)
     matched_prefix: str | None = None
     handler = None

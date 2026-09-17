@@ -26,6 +26,7 @@ from victus_hub import api
 from victus_hub.services.fan_control import start_fan_control, set_suspended
 from victus_hub.services.lighting_controller import LightingController
 from victus_hub.services.power_controller import PowerLimitController
+from victus_hub.services.battery_power import BatteryPowerController
 from victus_hub.app.power_state import PowerStateWatcher
 from victus_hub.services.shortcut_controller import ShortcutController
 from victus_hub.features.sensors.stats import next_stats, build_rows
@@ -163,6 +164,11 @@ class MainWindow(QMainWindow):
         # Program shortcut (global hotkey to unhide/restore the window)
         self._shortcut = ShortcutController(self)
         self._shortcut.triggered.connect(self._show_all_windows)
+        self._shortcut.brightness_step.connect(self._keyboard_page.step_brightness)
+        self._shortcut.animation_step.connect(self._keyboard_page.step_animation)
+        self._shortcut.performance_cycle.connect(self._cycle_profile)
+        self._settings_page.hardware_shortcuts_changed.connect(self._shortcut.set_hardware_enabled)
+        QApplication.instance().aboutToQuit.connect(self._shortcut.shutdown)
         self._settings_page.set_shortcut_controller(self._shortcut)
 
         # ── Timers ──
@@ -218,6 +224,12 @@ class MainWindow(QMainWindow):
         self._power_state.suspending.connect(self._on_system_suspend)
         self._power_state.resuming.connect(self._on_system_resume)
         self._power_state.shutting_down.connect(self._on_system_shutdown)
+
+        self._battery_power = BatteryPowerController(self)
+        self._battery_power.power_save_requested.connect(lambda: self._on_profile_select(0))
+        self._settings_page.battery_power_save_changed.connect(self._battery_power.set_enabled)
+        self._power_state.resuming.connect(self._battery_power.refresh)
+        self._battery_power.refresh()
 
         self._update_min_height(0)
         self._apply_accent(self._selected_profile, animate=False)
@@ -284,7 +296,7 @@ class MainWindow(QMainWindow):
     def _update_ui_active(self) -> None:
         """Central visibility switch. Pauses UI-only work when the window is
         hidden to tray or minimized; hardware control (fan-control thread,
-        power-limit reapply, shortcut hotkey poll, keyboard-backlight
+        power-limit reapply, shortcut event stream, keyboard-backlight
         hardware writes) keeps running in all states."""
         active = self._ui_is_shown()
         if active == self._ui_active:
@@ -551,6 +563,17 @@ class MainWindow(QMainWindow):
             self._fans_page.set_edit_profile(profile)
 
     # ── Profile selection ──
+
+    def _cycle_profile(self) -> None:
+        # The UI profile poll is paused in the tray; read the actual profile
+        # once per shortcut so an external change does not leave this stale.
+        try:
+            current = api.get_current_profile()
+        except Exception:
+            current = None
+        if current not in range(len(PROFILES)):
+            current = self._selected_profile
+        self._on_profile_select((current + 1) % len(PROFILES))
 
     def _on_profile_select(self, index: int):
         self._selected_profile = index
