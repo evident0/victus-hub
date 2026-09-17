@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from PySide6.QtCore import QTimer, Signal
 from PySide6.QtGui import QColor
-from PySide6.QtWidgets import QSizePolicy, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QLabel, QSizePolicy, QVBoxLayout, QWidget
 
 from victus_hub.api import FanPoint, FanProfileConfig, get_fan_config, save_fan_profile
 from victus_hub.app.theme import COLORS
@@ -64,13 +64,17 @@ class FansPage(QWidget):
         layout.addLayout(mode_col)
         self._mode_seg.select(0, False)
 
+        self._curve_editor = QWidget()
+        editor_layout = QVBoxLayout(self._curve_editor)
+        editor_layout.setContentsMargins(0, 0, 0, 0)
+        editor_layout.setSpacing(0)
         links_col = QVBoxLayout()
         links_col.setContentsMargins(0, 24, 0, 0)
         links_col.setSpacing(0)
         self._curve_links = LinkSeg(["CPU", "GPU"], gap=16, size=14)
         self._curve_links.picked.connect(self._on_curve_link)
         links_col.addWidget(self._curve_links)
-        layout.addLayout(links_col)
+        editor_layout.addLayout(links_col)
         self._curve_links.select(_CURVE_CPU, False)
 
         self._chart = FanChart(
@@ -85,7 +89,18 @@ class FansPage(QWidget):
         chart_l = QVBoxLayout(chart_wrap)
         chart_l.setContentsMargins(0, 22, 0, 0)
         chart_l.addWidget(self._chart)
-        layout.addWidget(chart_wrap, 1)
+        editor_layout.addWidget(chart_wrap, 1)
+        layout.addWidget(self._curve_editor, 1)
+
+        self._mode_info = QWidget()
+        info_layout = QVBoxLayout(self._mode_info)
+        info_layout.setContentsMargins(0, 24, 0, 0)
+        self._mode_description = QLabel()
+        self._mode_description.setWordWrap(True)
+        self._mode_description.setStyleSheet(f"color: {COLORS['text']};")
+        info_layout.addWidget(self._mode_description)
+        info_layout.addStretch(1)
+        layout.addWidget(self._mode_info, 1)
 
         self._save_timer = QTimer(self)
         self._save_timer.setSingleShot(True)
@@ -94,6 +109,7 @@ class FansPage(QWidget):
 
         self._load_config()
         self._update_profile_label()
+        self._update_mode_content()
 
     def refresh_accent(self) -> None:
         self._mode_seg.refresh_accent()
@@ -108,6 +124,17 @@ class FansPage(QWidget):
             self._mode_seg.select(self._FAN_KEYS.index(mode), True)
         except ValueError:
             pass
+        self._update_mode_content()
+
+    def _update_mode_content(self) -> None:
+        custom = self._fan_mode == "custom"
+        self._curve_editor.setVisible(custom)
+        self._mode_info.setVisible(not custom)
+        self._mode_description.setText({
+            "auto": "Automatic fan control follows the firmware's own fan curve.",
+            "smart": "Smart fan control follows the built-in curve with faster smoothing.",
+            "max": "Both fans run at full speed. Select another mode to return to automatic or curve-based control.",
+        }.get(self._fan_mode, "Select Custom to edit this profile's CPU and GPU fan curves."))
 
     def set_edit_profile(self, index: int) -> None:
         """Switch which profile's fan curves are shown."""
@@ -124,6 +151,7 @@ class FansPage(QWidget):
         if mode == self._fan_mode:
             return
         self._fan_mode = mode
+        self._update_mode_content()
         self.fan_mode_selected.emit(mode)
 
     def _is_cpu(self) -> bool:

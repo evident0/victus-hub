@@ -21,6 +21,7 @@ from victus_hub.features.power.limits import (
     PowerLimitSettings, clamp_power_limit, clamp_reapply_seconds, clamp_tctl_temp,
     read_power_enabled, write_power_enabled,
     read_power_limit_settings, write_power_limit_settings,
+    read_frequency_limits, write_frequency_limits,
 )
 from victus_hub.api import apply_power_limits
 
@@ -91,6 +92,8 @@ class PowerPage(QWidget):
         self._applied_slow = pwr.slow_limit
         self._applied_tctl = pwr.tctl_temp
         self._applied_reapply = pwr.reapply_seconds
+        self._applied_frequency = None
+        self._frequency_busy = False
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(24, 24, 24, 20)
@@ -180,6 +183,12 @@ class PowerPage(QWidget):
         layout.addWidget(self._frequency_status)
         self._frequency_applied.connect(self._on_frequency_applied)
         self._load_frequency_limits()
+        saved_frequency = read_frequency_limits()
+        if saved_frequency is not None and self._frequency_min.isEnabled():
+            minimum, maximum = saved_frequency
+            self._frequency_max.setValue(maximum)
+            self._frequency_min.setValue(minimum)
+            self._on_apply_frequency()
 
         self._update_apply_enabled()
         layout.addStretch()
@@ -209,7 +218,7 @@ class PowerPage(QWidget):
             row.value.blockSignals(False)
             row.slider.blockSignals(False)
             row.setEnabled(True)
-        self._frequency_btn.setEnabled(True)
+        self._update_frequency_apply_enabled()
         mixed = len({(p.minimum, p.maximum) for p in policies}) > 1
         self._frequency_status.setText(
             f"Applies to all {len(policies)} CPU policies. "
@@ -221,14 +230,24 @@ class PowerPage(QWidget):
     def _on_frequency_min_changed(self, value: int):
         if value > self._frequency_max.slider.value():
             self._frequency_max.setValue(value)
+        self._update_frequency_apply_enabled()
 
     def _on_frequency_max_changed(self, value: int):
         if value < self._frequency_min.slider.value():
             self._frequency_min.setValue(value)
+        self._update_frequency_apply_enabled()
+
+    def _update_frequency_apply_enabled(self):
+        current = (self._frequency_min.slider.value(), self._frequency_max.slider.value())
+        enabled = not self._frequency_busy and current != self._applied_frequency
+        self._frequency_btn.setEnabled(enabled)
+        self._frequency_btn.setCursor(Qt.PointingHandCursor if enabled else Qt.ArrowCursor)
 
     def _on_apply_frequency(self):
         minimum = self._frequency_min.slider.value()
         maximum = self._frequency_max.slider.value()
+        self._pending_frequency = (minimum, maximum)
+        self._frequency_busy = True
         self._frequency_btn.setEnabled(False)
         self._frequency_min.setEnabled(False)
         self._frequency_max.setEnabled(False)
@@ -245,10 +264,20 @@ class PowerPage(QWidget):
         threading.Thread(target=_apply, daemon=True, name="frequency-apply").start()
 
     def _on_frequency_applied(self, error: str):
+        self._frequency_busy = False
+        if not error:
+            write_frequency_limits(*self._pending_frequency)
         # Read back the kernel's accepted limits, including after a partial failure.
         self._load_frequency_limits()
         if error:
+            self._applied_frequency = None
             self._frequency_status.setText(f"Could not apply CPU frequency: {error}")
+        else:
+            self._applied_frequency = (
+                self._frequency_min.slider.value(), self._frequency_max.slider.value(),
+            )
+        if self._frequency_min.isEnabled():
+            self._update_frequency_apply_enabled()
 
     def _on_stapm_changed(self, value_w: int):
         self._stapm_limit = clamp_power_limit(value_w * 1000)

@@ -17,6 +17,19 @@ TCTL_TEMP_MAX_C = 95
 DEFAULT_TCTL_TEMP_C = 95
 
 
+def read_frequency_limits() -> tuple[int, int] | None:
+    value = QSettings().value("cpuFrequency/limits")
+    try:
+        minimum, maximum = map(int, value)
+    except (TypeError, ValueError):
+        return None
+    return (minimum, maximum) if 0 < minimum <= maximum else None
+
+
+def write_frequency_limits(minimum: int, maximum: int):
+    QSettings().setValue("cpuFrequency/limits", [minimum, maximum])
+
+
 @dataclass
 class PowerLimitSettings:
     stapm_limit: int = DEFAULT_POWER_LIMIT_MW

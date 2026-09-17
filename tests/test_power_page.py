@@ -21,6 +21,12 @@ class TestPowerPage(unittest.TestCase):
         cls.app = QApplication.instance() or QApplication([])
 
     def setUp(self):
+        saved = patch("victus_hub.pages.power_page.read_frequency_limits", return_value=None)
+        self.saved = saved.start()
+        self.addCleanup(saved.stop)
+        writer = patch("victus_hub.pages.power_page.write_frequency_limits")
+        self.writer = writer.start()
+        self.addCleanup(writer.stop)
         self.policies = [FrequencyPolicy(Path("policy0"), 1100980, 5137904, 1100980, 4600000)]
         reader = patch("victus_hub.pages.power_page.read_frequency_policies", return_value=self.policies)
         self.reader = reader.start()
@@ -91,12 +97,29 @@ class TestPowerPage(unittest.TestCase):
             QTimer.singleShot(2000, loop.quit)
             loop.exec()
             request.assert_called_once_with(1100980, 4200000)
-        self.assertTrue(self.page._frequency_btn.isEnabled())
+        self.assertFalse(self.page._frequency_btn.isEnabled())
         self.assertEqual(self.page._frequency_max.value.value(), 4199)
+        self.writer.assert_called_once_with(1100980, 4200000)
+        self.page._frequency_max.value.setValue(4300)
+        self.assertTrue(self.page._frequency_btn.isEnabled())
+        self.page._frequency_max.value.setValue(4199)
+        self.assertFalse(self.page._frequency_btn.isEnabled())
+
+    def test_saved_frequency_is_applied_once_at_initialization(self):
+        self.saved.return_value = (1200000, 4200000)
+        with patch.object(PowerPage, "_on_apply_frequency") as apply:
+            page = PowerPage()
+            self.addCleanup(page.deleteLater)
+            apply.assert_called_once_with()
+            self.assertEqual(page._frequency_min.slider.value(), 1200000)
+            self.assertEqual(page._frequency_max.slider.value(), 4200000)
+            page._load_frequency_limits()
+            apply.assert_called_once_with()
 
     def test_unavailable_hardware_and_apply_error(self):
         self.page._on_frequency_applied("daemon unavailable")
         self.assertIn("daemon unavailable", self.page._frequency_status.text())
+        self.writer.assert_not_called()
         self.assertTrue(self.page._frequency_btn.isEnabled())
         self.reader.side_effect = RuntimeError("CPU frequency control is unavailable")
         self.page._load_frequency_limits()
