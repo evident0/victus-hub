@@ -523,9 +523,10 @@ class MainWindow(QMainWindow):
         # Update stats
         self._stats_by_key = next_stats(snapshot, self._stats_by_key)
 
-        # Update Home page
+        # Update live page readings
         self._home_page.update_sensor_data(snapshot)
-
+        self._power_page.update_sensor_data(snapshot)
+        self._fans_page.update_sensor_data(snapshot)
 
         # Update Sensors page rows
         rows = build_rows(snapshot, self._stats_by_key)

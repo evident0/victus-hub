@@ -30,8 +30,9 @@ def section_label(text: str) -> QLabel:
 class PageHead(QWidget):
     """Title on the left, mono status on the right."""
 
-    def __init__(self, title: str = "", parent=None):
+    def __init__(self, title: str = "", parent=None, *, status_width: int = 200):
         super().__init__(parent)
+        self._status_width = status_width
         row = QHBoxLayout(self)
         row.setContentsMargins(0, 0, 0, 0)
         row.setSpacing(8)
@@ -50,7 +51,7 @@ class PageHead(QWidget):
             f"font-size: 11px; font-family: '{MONO_FONT}';"
         )
         self._status.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        self._status.setMaximumWidth(200)
+        self._status.setMaximumWidth(status_width)
         row.addWidget(self._status)
 
     def set_title(self, text: str) -> None:
@@ -58,7 +59,7 @@ class PageHead(QWidget):
 
     def set_status(self, text: str) -> None:
         fm = self._status.fontMetrics()
-        self._status.setText(fm.elidedText(text, Qt.ElideLeft, 200))
+        self._status.setText(fm.elidedText(text, Qt.ElideLeft, self._status_width))
 
 
 class BigMetric(QWidget):

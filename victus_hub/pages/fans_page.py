@@ -9,6 +9,7 @@ from PySide6.QtWidgets import QLabel, QSizePolicy, QVBoxLayout, QWidget
 from victus_hub.api import FanPoint, FanProfileConfig, get_fan_config, save_fan_profile
 from victus_hub.app.theme import COLORS
 from victus_hub.backend import fan_config
+from victus_hub.backend.types import SensorSnapshot
 from victus_hub.widgets.chrome import PageHead
 from victus_hub.widgets.fan_chart import FanChart
 from victus_hub.widgets.profile_section import FAN_MODES, PROFILES as _PROFILE_NAMES_SRC
@@ -47,12 +48,14 @@ class FansPage(QWidget):
         self._gpu_selected = -1
         self._curve_idx = _CURVE_CPU
         self._dirty = False
+        self._cpu_rpm = "— RPM"
+        self._gpu_rpm = "— RPM"
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(24, 24, 24, 20)
         layout.setSpacing(0)
 
-        self._head = PageHead("Fans")
+        self._head = PageHead("Fans", status_width=400)
         layout.addWidget(self._head)
 
         mode_col = QVBoxLayout()
@@ -194,7 +197,14 @@ class FansPage(QWidget):
 
     def _update_profile_label(self) -> None:
         idx = min(max(self._edit_profile, 0), len(self._PROFILE_NAMES) - 1)
-        self._head.set_status(self._PROFILE_NAMES[idx])
+        self._head.set_status(
+            f"{self._PROFILE_NAMES[idx]} · CPU {self._cpu_rpm} · GPU {self._gpu_rpm}"
+        )
+
+    def update_sensor_data(self, snapshot: SensorSnapshot) -> None:
+        self._cpu_rpm = snapshot.cpu_fan.value
+        self._gpu_rpm = snapshot.gpu_fan.value
+        self._update_profile_label()
 
     def _load_config(self) -> None:
         try:

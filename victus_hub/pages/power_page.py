@@ -10,7 +10,7 @@ from PySide6.QtCore import Qt, Signal
 
 from victus_hub.app.theme import COLORS, mono_font, ui_font
 from victus_hub.widgets.toggle_switch import ToggleSwitch
-from victus_hub.backend.modules import ryzenadj_available
+from victus_hub.backend.types import SensorSnapshot
 from victus_hub.backend.cpufreq import read_frequency_policies
 from victus_hub.backend.daemon_client import request_cpu_frequency_limits
 from victus_hub.widgets.chrome import PageHead, hairline
@@ -99,9 +99,8 @@ class PowerPage(QWidget):
         layout.setContentsMargins(24, 24, 24, 20)
         layout.setSpacing(0)
 
-        ry_text, _ry_color = ryzenadj_available()
-        self._head = PageHead("Power")
-        self._head.set_status(ry_text)
+        self._head = PageHead("Power", status_width=360)
+        self._head.set_status("CPU — W · Freq — MHz")
         layout.addWidget(self._head)
 
         power_min_w = POWER_MIN_MW // 1000
@@ -208,6 +207,14 @@ class PowerPage(QWidget):
 
         self._update_apply_enabled()
         layout.addStretch()
+
+    def update_sensor_data(self, snapshot: SensorSnapshot) -> None:
+        frequencies = [
+            sensor.numeric_value for sensor in snapshot.extra_sensors
+            if sensor.key.startswith("cpu-frequency-") and sensor.unit == "MHz"
+        ]
+        maximum = f"{max(frequencies):.1f} MHz" if frequencies else "— MHz"
+        self._head.set_status(f"CPU {snapshot.cpu_power.value} · Freq {maximum}")
 
     def _load_frequency_limits(self):
         try:
