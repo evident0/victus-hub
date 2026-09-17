@@ -8,6 +8,7 @@ so existing UI imports (``from victus_hub.api import FanPoint, ...``) keep worki
 import logging
 import threading
 import time
+from dataclasses import replace
 
 from victus_hub.backend import hardware, profiles, fan_config, daemon_client
 from victus_hub.backend.sensors import SensorReader
@@ -48,6 +49,7 @@ __all__ = [
     "apply_power_limits",
     "set_gpu_mux_mode",
     "set_ui_active",
+    "update_profile_cache",
 ]
 
 
@@ -56,6 +58,7 @@ __all__ = [
 _reader = SensorReader()
 _snapshot: SensorSnapshot | None = None
 _profile_cache: int | None = None
+_profile_reading_cache: SensorReading | None = None
 _snapshot_lock = threading.Lock()
 _profile_lock = threading.Lock()
 _snapshot_running = True
@@ -75,8 +78,8 @@ _bg_logger = logging.getLogger("sensor-bg")
 
 
 def _sensor_loop():
-    """Background thread: read sensors and profile every 1 s, cache results."""
-    global _snapshot, _profile_cache
+    """Background thread: read sensors every 1 s and cache results."""
+    global _snapshot
     while _snapshot_running:
         try:
             snap = _reader.read_all(full=_ui_active)
@@ -84,15 +87,12 @@ def _sensor_loop():
             _bg_logger.warning("read_all failed: %s", e)
             time.sleep(1.0)
             continue
+        with _profile_lock:
+            profile_reading = _profile_reading_cache
+        if profile_reading is not None:
+            snap.profile = profile_reading
         with _snapshot_lock:
             _snapshot = snap
-        try:
-            prof = profiles.current_ui_profile_index()
-        except Exception as e:
-            _bg_logger.warning("profile read failed: %s", e)
-            prof = None
-        with _profile_lock:
-            _profile_cache = prof
         time.sleep(1.0)
 _sensor_thread = threading.Thread(target=_sensor_loop, daemon=True, name="sensor-poll")
 _sensor_thread.start()
@@ -118,16 +118,27 @@ def read_sensors() -> SensorSnapshot:
 
 def get_current_profile() -> int | None:
     with _profile_lock:
-        cached = _profile_cache
-    if cached is not None:
-        return cached
-    # Cache not populated yet (background thread hasn't run): read directly.
-    # This matches Rust's behavior of calling current_ui_profile_index() each tick.
-    return profiles.current_ui_profile_index()
+        return _profile_cache
+
+
+def update_profile_cache(index: int, name: str, source: str) -> None:
+    """Update the event-fed profile state used by the UI and fan controller."""
+    global _profile_cache, _profile_reading_cache, _snapshot
+    reading = SensorReading(value=name, source=source)
+    with _profile_lock:
+        _profile_cache = index
+        _profile_reading_cache = reading
+    with _snapshot_lock:
+        if _snapshot is not None:
+            _snapshot = replace(_snapshot, profile=reading)
 
 
 def set_system_profile(profile: int) -> str:
-    return profiles.apply_system_profile(profile)
+    profile = max(0, min(profile, len(profiles.PROFILE_KEYS) - 1))
+    result = profiles.apply_system_profile(profile)
+    # Keep the local consumers correct even before the backend emits its event.
+    update_profile_cache(profile, profiles.PROFILE_KEYS[profile], "local selection")
+    return result
 
 
 def set_gpu_mux_mode(mode: int) -> str:

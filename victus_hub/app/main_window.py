@@ -27,6 +27,7 @@ from victus_hub.services.fan_control import start_fan_control, set_suspended
 from victus_hub.services.lighting_controller import LightingController
 from victus_hub.services.power_controller import PowerLimitController
 from victus_hub.services.battery_power import BatteryPowerController
+from victus_hub.services.profile_watcher import ProfileWatcher
 from victus_hub.app.power_state import PowerStateWatcher
 from victus_hub.services.shortcut_controller import ShortcutController
 from victus_hub.features.sensors.stats import next_stats, build_rows
@@ -160,6 +161,13 @@ class MainWindow(QMainWindow):
 
         self._power = PowerLimitController(self)
 
+        # System profile changes arrive through D-Bus instead of a recurring
+        # tuned-adm/powerprofilesctl subprocess.
+        self._profile_watcher = ProfileWatcher(self)
+        self._profile_watcher.profile_changed.connect(api.update_profile_cache)
+        self._profile_watcher.profile_changed.connect(self._on_profile_changed)
+        QApplication.instance().aboutToQuit.connect(self._profile_watcher.stop)
+
 
         # Program shortcut (global hotkey to unhide/restore the window)
         self._shortcut = ShortcutController(self)
@@ -178,16 +186,14 @@ class MainWindow(QMainWindow):
         self._sensor_timer.setInterval(1000)
         self._sensor_timer.timeout.connect(self._poll_sensors)
 
-        # Profile poll (2s)
-        self._profile_timer = QTimer(self)
-        self._profile_timer.setInterval(2000)
-        self._profile_timer.timeout.connect(self._poll_profile)
-
         # UI-active gate (visibility). When False (hidden to tray /
-        # minimized) the sensor + profile timers stop, the keyboard preview
+        # minimized) the sensor timer stops, the keyboard preview
         # repaint is gated, the lm-sensors subprocess is skipped, and the
         # processes /proc scan stops. Hardware control threads keep running.
         # Fan-control background thread
+        # Start the profile watcher before fan control so its initial state is
+        # available to the background controller.
+        self._profile_watcher.start()
         start_fan_control()
         # Sync fan mode segmented control from persisted config and apply
         # hardware for custom/max (UI-only restore left EC in auto while
@@ -304,10 +310,8 @@ class MainWindow(QMainWindow):
         self._ui_active = active
         if active:
             self._sensor_timer.start()
-            self._profile_timer.start()
         else:
             self._sensor_timer.stop()
-            self._profile_timer.stop()
         self._lighting.set_ui_active(active)
         api.set_ui_active(active)
         self._update_processes_timer()
@@ -547,15 +551,10 @@ class MainWindow(QMainWindow):
         # Update footer hardware title
         self._home_page.set_hardware_title(api.get_hardware_title())
 
-    # ── Profile polling ──
+    # ── Profile events ──
 
-    def _poll_profile(self):
-        try:
-            profile = api.get_current_profile()
-        except Exception:
-            logger.exception("profile poll failed")
-            return
-        if profile is not None and profile != self._selected_profile:
+    def _on_profile_changed(self, profile: int, _name: str, _source: str) -> None:
+        if profile != self._selected_profile:
             self._selected_profile = profile
             self._home_page.set_selected_profile(profile)
             self._apply_accent(profile)
@@ -565,8 +564,8 @@ class MainWindow(QMainWindow):
     # ── Profile selection ──
 
     def _cycle_profile(self) -> None:
-        # The UI profile poll is paused in the tray; read the actual profile
-        # once per shortcut so an external change does not leave this stale.
+        # The event watcher maintains this cache even while the window is in
+        # the tray, so a shortcut can cycle from the actual system profile.
         try:
             current = api.get_current_profile()
         except Exception:

@@ -53,6 +53,14 @@ def tuned_profile_for(profile: int, available: set[str]) -> str | None:
     return None
 
 
+def profile_index_for_name(profile: str) -> int | None:
+    """Map a tuned or power-profiles-daemon name to the UI profile index."""
+    for i in range(len(PROFILE_KEYS)):
+        if profile in tuned_candidates(i) or profile == PROFILE_KEYS[i]:
+            return i
+    return None
+
+
 def apply_system_profile(profile: int) -> str:
     profile = max(0, min(profile, 2))
     key = PROFILE_KEYS[profile]
@@ -82,9 +90,9 @@ def current_ui_profile_index() -> int | None:
             prefix = "Current active profile:"
             if active.startswith(prefix):
                 profile = active[len(prefix):].strip()
-                for i in range(len(PROFILE_KEYS)):
-                    if profile in tuned_candidates(i):
-                        return i
+                index = profile_index_for_name(profile)
+                if index is not None:
+                    return index
 
     ppctl = command_path("powerprofilesctl")
     if ppctl is not None:

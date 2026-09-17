@@ -19,7 +19,6 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from victus_hub.backend import daemon_client
-from victus_hub.backend import profiles as _profiles
 from victus_hub.backend.nvidia import NvidiaMetrics, NvidiaReader
 from victus_hub.backend.rapl import CpuPowerSample, RaplPowerSampler
 from victus_hub.backend.types import DiskUsage, ExtraSensor, SensorReading, SensorSnapshot
@@ -341,11 +340,6 @@ class SensorReader:
 
         return reading("Unavailable", "no GPU power sensor")
 
-    # ── Profile (profile.rs) ──
-
-    def _read_current_profile(self) -> SensorReading:
-        return _profiles.current_profile_reading()
-
     # ── lm-sensors (lm.rs) ──
 
     def _read_lm_sensors(self) -> list[ExtraSensor]:
@@ -548,7 +542,6 @@ class SensorReader:
             ram_used_gb=ram_used_gb,
             ram_total_gb=ram_total_gb,
             disks=self._read_disks(),
-            profile=self._read_current_profile(),
             extra_sensors=self._read_cpu_frequencies() + self._read_lm_sensors(),
         )
 
