@@ -105,40 +105,32 @@ class ProfileSection(QWidget):
             mux_row.addWidget(gpu_label)
         mux_row.addStretch()
         mux_outer.addLayout(mux_row)
-        self._mux_seg = Seg([], kind="compact")
-        mux_outer.addWidget(self._mux_seg)
         self._mux_block.hide()
         root.addWidget(self._mux_block)
 
-        self._build_mux_buttons()
+        self._build_mux_buttons(mux_outer)
 
     def _on_curve_click(self, event) -> None:
         if event.button() == Qt.LeftButton:
             self.fan_curves_requested.emit()
 
-    def _build_mux_buttons(self) -> None:
+    def _build_mux_buttons(self, layout: QVBoxLayout) -> None:
         self._mux_modes = ()
         self._mux_index_by_seg = []
         self._mux_selected = None
         self._mux_block.hide()
 
         state = read_gpu_mux_state()
+        names = [m.label for m in state.modes] if state is not None else []
+        self._mux_seg = Seg(names, kind="compact", parent=self._mux_block)
+        layout.addWidget(self._mux_seg)
         if state is None or not state.modes:
             return
 
         self._mux_modes = state.modes
         self._mux_selected = state.current_index
-        names = [m.label for m in self._mux_modes]
         self._mux_index_by_seg = [m.index for m in self._mux_modes]
-        # Replace the empty placeholder with a real segment.
-        parent = self._mux_seg.parentWidget()
-        layout = parent.layout() if parent is not None else None
-        self._mux_seg.setParent(None)
-        self._mux_seg.deleteLater()
-        self._mux_seg = Seg(names, kind="compact")
         self._mux_seg.picked.connect(self._on_mux_seg)
-        if layout is not None:
-            layout.addWidget(self._mux_seg)
         try:
             sel = self._mux_index_by_seg.index(self._mux_selected)
         except ValueError:

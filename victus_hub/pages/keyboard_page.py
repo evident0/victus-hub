@@ -410,10 +410,10 @@ class KeyboardPage(QWidget):
         ed.addWidget(self._effect_editor)
 
         # Hidden aliases so older handler fields still exist.
-        self._enable_check = ToggleSwitch("")
+        self._enable_check = ToggleSwitch("", editor)
         self._enable_check.hide()
         self._enable_check.setChecked(s.enabled)
-        self._color_btn = QPushButton()
+        self._color_btn = QPushButton(editor)
         self._color_btn.hide()
         self._zone_btns = []
         self._primary_wrap = self._color_editor

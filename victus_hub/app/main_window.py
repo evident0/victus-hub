@@ -338,7 +338,7 @@ class MainWindow(QMainWindow):
         return action
 
     def _build_tray_menu(self) -> PopupMenu:
-        menu = PopupMenu()
+        menu = PopupMenu(self)
         show_action = QAction("Show/Hide", self)
         show_action.triggered.connect(self._toggle_visible)
         menu.addAction(show_action)
