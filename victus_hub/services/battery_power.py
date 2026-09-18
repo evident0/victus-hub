@@ -17,6 +17,7 @@ _PROPERTIES = "org.freedesktop.DBus.Properties"
 
 class BatteryPowerController(QObject):
     power_save_requested = Signal()
+    restore_requested = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -41,6 +42,8 @@ class BatteryPowerController(QObject):
         QSettings().setValue(BATTERY_POWER_SAVE_KEY, enabled)
         self._generation += 1
         self._on_battery = None
+        if not enabled:
+            self.restore_requested.emit()
         self.refresh()
 
     @Slot()
@@ -73,6 +76,8 @@ class BatteryPowerController(QObject):
         self._on_battery = value
         if value and previous is not True:
             self.power_save_requested.emit()
+        elif not value and previous is True:
+            self.restore_requested.emit()
 
     @Slot(QDBusMessage)
     def _properties_changed(self, message: QDBusMessage) -> None:
@@ -83,6 +88,5 @@ class BatteryPowerController(QObject):
     @Slot(str, str, str)
     def _owner_changed(self, service: str, old_owner: str, new_owner: str) -> None:
         self._generation += 1
-        self._on_battery = None
         if new_owner:
             self.refresh()

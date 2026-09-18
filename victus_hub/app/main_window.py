@@ -110,6 +110,7 @@ class MainWindow(QMainWindow):
         self._sidebar.tab_changed.connect(self._on_tab_changed)
 
         self._selected_profile = 1
+        self._profile_before_battery = None
         self._selected_fan_mode = "auto"
 
         # ── System tray ──
@@ -232,7 +233,8 @@ class MainWindow(QMainWindow):
         self._power_state.shutting_down.connect(self._on_system_shutdown)
 
         self._battery_power = BatteryPowerController(self)
-        self._battery_power.power_save_requested.connect(lambda: self._on_profile_select(0))
+        self._battery_power.power_save_requested.connect(self._on_battery_power_save)
+        self._battery_power.restore_requested.connect(self._restore_battery_profile)
         self._settings_page.battery_power_save_changed.connect(self._battery_power.set_enabled)
         self._power_state.resuming.connect(self._battery_power.refresh)
         self._battery_power.refresh()
@@ -554,6 +556,8 @@ class MainWindow(QMainWindow):
     # ── Profile events ──
 
     def _on_profile_changed(self, profile: int, _name: str, _source: str) -> None:
+        if profile != 0:
+            self._profile_before_battery = None
         if profile != self._selected_profile:
             self._selected_profile = profile
             self._home_page.set_selected_profile(profile)
@@ -574,7 +578,20 @@ class MainWindow(QMainWindow):
             current = self._selected_profile
         self._on_profile_select((current + 1) % len(PROFILES))
 
-    def _on_profile_select(self, index: int):
+    def _on_battery_power_save(self) -> None:
+        previous = api.get_current_profile()
+        if previous not in range(len(PROFILES)):
+            previous = self._selected_profile
+        if previous != 0 and self._on_profile_select(0, automatic=True):
+            self._profile_before_battery = previous
+
+    def _restore_battery_profile(self) -> None:
+        previous = self._profile_before_battery
+        self._profile_before_battery = None
+        if previous is not None and api.get_current_profile() == 0:
+            self._on_profile_select(previous, automatic=True)
+
+    def _on_profile_select(self, index: int, *, automatic: bool = False):
         try:
             api.set_system_profile(index)
         except Exception:
@@ -582,12 +599,15 @@ class MainWindow(QMainWindow):
             # Clicked controls may have already changed their own selection.
             self._home_page.set_selected_profile(self._selected_profile)
             self._sync_tray_checks()
-            return
+            return False
+        if not automatic:
+            self._profile_before_battery = None
         self._selected_profile = index
         self._home_page.set_selected_profile(index)
         self._apply_accent(index)
         self._sync_tray_checks()
         self._fans_page.set_edit_profile(index)
+        return True
 
     # ── Fan mode ──
 

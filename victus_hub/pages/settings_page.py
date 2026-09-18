@@ -165,7 +165,8 @@ class SettingsPage(QWidget):
         self._battery_power_save.toggled.connect(self.battery_power_save_changed.emit)
         layout.addWidget(SettingsRow(
             "Power save on battery",
-            "Switch to Power Save when unplugged while Victus Hub is running",
+            "Switch to Power Save on battery; restore the previous mode on AC "
+            "unless you manually change modes while Victus Hub is running",
             self._battery_power_save,
         ))
 
