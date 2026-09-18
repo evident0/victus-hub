@@ -227,3 +227,31 @@ class TestKeyboardShortcutActions(QtTestCase):
         with patch("victus_hub.app.main_window.api.get_current_profile", return_value=2):
             MainWindow._cycle_profile(window)
         window._on_profile_select.assert_called_once_with(0)
+
+    def test_failed_profile_selection_preserves_mode_and_restores_controls(self):
+        window = Mock(_selected_profile=1)
+        with patch("victus_hub.app.main_window.api.set_system_profile",
+                   side_effect=RuntimeError("authorization denied")), \
+                self.assertLogs("victus_hub.app.main_window", level="ERROR"):
+            MainWindow._on_profile_select(window, 2)
+        self.assertEqual(window._selected_profile, 1)
+        window._home_page.set_selected_profile.assert_called_once_with(1)
+        window._sync_tray_checks.assert_called_once()
+        window._apply_accent.assert_not_called()
+        window._fans_page.set_edit_profile.assert_not_called()
+
+    def test_profile_selection_updates_ui_after_backend_succeeds(self):
+        window = Mock(_selected_profile=1)
+
+        def apply(index):
+            self.assertEqual(index, 2)
+            self.assertEqual(window._selected_profile, 1)
+            window._home_page.set_selected_profile.assert_not_called()
+
+        with patch("victus_hub.app.main_window.api.set_system_profile", side_effect=apply):
+            MainWindow._on_profile_select(window, 2)
+        self.assertEqual(window._selected_profile, 2)
+        window._home_page.set_selected_profile.assert_called_once_with(2)
+        window._apply_accent.assert_called_once_with(2)
+        window._sync_tray_checks.assert_called_once()
+        window._fans_page.set_edit_profile.assert_called_once_with(2)

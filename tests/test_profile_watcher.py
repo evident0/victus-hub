@@ -78,7 +78,7 @@ class TestProfileWatcher(unittest.TestCase):
         self.watcher._read_power_profiles_profile = Mock(return_value="balanced")
         message = Mock()
         message.arguments.return_value = [
-            "org.freedesktop.PowerProfiles", {}, [],
+            "org.freedesktop.UPower.PowerProfiles", {}, [],
         ]
 
         self.watcher._on_power_profiles_changed(message)
@@ -100,3 +100,43 @@ class TestProfileWatcher(unittest.TestCase):
             self.events,
             [(1, "balanced", "power-profiles-daemon D-Bus")],
         )
+
+    def test_power_profiles_endpoints_and_subscription_lifecycle(self):
+        modern = ("org.freedesktop.UPower.PowerProfiles",
+                  "/org/freedesktop/UPower/PowerProfiles")
+        legacy = ("net.hadess.PowerProfiles", "/net/hadess/PowerProfiles")
+        for endpoint in (modern, legacy):
+            with self.subTest(service=endpoint[0]):
+                self.bus.reset_mock()
+                self.events.clear()
+                self.bus.connect.return_value = True
+                requests = []
+
+                def reply_to(message, *_args):
+                    requests.append((message.service(), message.path()))
+                    self.assertEqual(message.interface(), "org.freedesktop.DBus.Properties")
+                    self.assertEqual(message.member(), "Get")
+                    self.assertEqual(message.arguments(), [message.service(), "ActiveProfile"])
+                    if (message.service(), message.path()) == endpoint:
+                        return self.reply(QDBusVariant("balanced"))
+                    return self.reply(None, error=True)
+
+                self.bus.call.side_effect = reply_to
+                self.assertTrue(self.watcher._try_power_profiles_daemon())
+                self.assertEqual(requests, [modern] if endpoint == modern else [modern, legacy])
+                self.assertFalse(self.watcher._fallback_timer.isActive())
+                self.bus.connect.assert_any_call(
+                    *endpoint, "org.freedesktop.DBus.Properties",
+                    "PropertiesChanged", "sa{sv}as", self.watcher,
+                    "1_on_power_profiles_changed(QDBusMessage)",
+                )
+                message = Mock()
+                message.arguments.return_value = [endpoint[0], {}, []]
+                self.watcher._on_power_profiles_changed(message)
+                self.assertEqual(len(self.events), 2)
+                self.watcher.stop()
+                self.bus.disconnect.assert_called_with(
+                    *endpoint, "org.freedesktop.DBus.Properties",
+                    "PropertiesChanged", "sa{sv}as", self.watcher,
+                    "1_on_power_profiles_changed(QDBusMessage)",
+                )

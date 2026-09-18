@@ -15,9 +15,10 @@ _TUNED_SERVICE = "com.redhat.tuned"
 _TUNED_PATH = "/Tuned"
 _TUNED_IFACE = "com.redhat.tuned.control"
 
-_POWER_PROFILES_SERVICE = "org.freedesktop.PowerProfiles"
-_POWER_PROFILES_PATH = "/net/hadess/PowerProfiles"
-_POWER_PROFILES_IFACE = "org.freedesktop.PowerProfiles"
+_POWER_PROFILES_ENDPOINTS = (
+    ("org.freedesktop.UPower.PowerProfiles", "/org/freedesktop/UPower/PowerProfiles"),
+    ("net.hadess.PowerProfiles", "/net/hadess/PowerProfiles"),
+)
 _DBUS_PROPERTIES = "org.freedesktop.DBus.Properties"
 
 _FALLBACK_INTERVAL_MS = 30_000
@@ -36,6 +37,7 @@ class ProfileWatcher(QObject):
         self._started = False
         self._tuned_signal_connected = False
         self._power_profiles_signal_connected = False
+        self._power_profiles_endpoint = _POWER_PROFILES_ENDPOINTS[0]
 
         self._fallback_timer = QTimer(self)
         self._fallback_timer.setInterval(_FALLBACK_INTERVAL_MS)
@@ -73,8 +75,9 @@ class ProfileWatcher(QObject):
             )
             self._tuned_signal_connected = False
         if self._power_profiles_signal_connected:
+            service, path = self._power_profiles_endpoint
             self._bus.disconnect(
-                _POWER_PROFILES_SERVICE, _POWER_PROFILES_PATH, _DBUS_PROPERTIES,
+                service, path, _DBUS_PROPERTIES,
                 "PropertiesChanged", "sa{sv}as", self,
                 "1_on_power_profiles_changed(QDBusMessage)",
             )
@@ -110,8 +113,16 @@ class ProfileWatcher(QObject):
         return True
 
     def _try_power_profiles_daemon(self) -> bool:
+        for endpoint in _POWER_PROFILES_ENDPOINTS:
+            self._power_profiles_endpoint = endpoint
+            if self._try_power_profiles_endpoint():
+                return True
+        return False
+
+    def _try_power_profiles_endpoint(self) -> bool:
+        service, path = self._power_profiles_endpoint
         connected = self._bus.connect(
-            _POWER_PROFILES_SERVICE, _POWER_PROFILES_PATH, _DBUS_PROPERTIES,
+            service, path, _DBUS_PROPERTIES,
             "PropertiesChanged", "sa{sv}as", self,
             "1_on_power_profiles_changed(QDBusMessage)",
         )
@@ -125,7 +136,7 @@ class ProfileWatcher(QObject):
         index = profiles.profile_index_for_name(name) if name else None
         if index is None:
             self._bus.disconnect(
-                _POWER_PROFILES_SERVICE, _POWER_PROFILES_PATH, _DBUS_PROPERTIES,
+                service, path, _DBUS_PROPERTIES,
                 "PropertiesChanged", "sa{sv}as", self,
                 "1_on_power_profiles_changed(QDBusMessage)",
             )
@@ -155,11 +166,12 @@ class ProfileWatcher(QObject):
         return args[0].strip()
 
     def _read_power_profiles_profile(self) -> str | None:
+        service, path = self._power_profiles_endpoint
         message = QDBusMessage.createMethodCall(
-            _POWER_PROFILES_SERVICE, _POWER_PROFILES_PATH,
+            service, path,
             _DBUS_PROPERTIES, "Get",
         )
-        message.setArguments([_POWER_PROFILES_IFACE, "ActiveProfile"])
+        message.setArguments([service, "ActiveProfile"])
         reply = self._bus.call(message, QDBus.Block, _DBUS_TIMEOUT_MS)
         if reply.type() != QDBusMessage.MessageType.ReplyMessage:
             return None
@@ -209,7 +221,7 @@ class ProfileWatcher(QObject):
     @Slot(QDBusMessage)
     def _on_power_profiles_changed(self, message: QDBusMessage) -> None:
         args = message.arguments()
-        if args and args[0] != _POWER_PROFILES_IFACE:
+        if args and args[0] != self._power_profiles_endpoint[0]:
             return
         name = self._read_power_profiles_profile()
         index = profiles.profile_index_for_name(name) if name else None

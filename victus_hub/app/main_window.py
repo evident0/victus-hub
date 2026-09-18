@@ -575,15 +575,19 @@ class MainWindow(QMainWindow):
         self._on_profile_select((current + 1) % len(PROFILES))
 
     def _on_profile_select(self, index: int):
+        try:
+            api.set_system_profile(index)
+        except Exception:
+            logger.exception("set system profile failed")
+            # Clicked controls may have already changed their own selection.
+            self._home_page.set_selected_profile(self._selected_profile)
+            self._sync_tray_checks()
+            return
         self._selected_profile = index
         self._home_page.set_selected_profile(index)
         self._apply_accent(index)
         self._sync_tray_checks()
         self._fans_page.set_edit_profile(index)
-        try:
-            api.set_system_profile(index)
-        except Exception:
-            logger.exception("set system profile failed")
 
     # ── Fan mode ──
 
