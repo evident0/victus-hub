@@ -10,7 +10,7 @@ from PySide6.QtGui import QColor, QFont, QFontDatabase
 # aliases so existing widgets keep working after the restyle.
 ECO = "#2FBF8F"
 BALANCED = "#3F8CFF"
-PERF = "#E23B3B"
+PERF = "#E2572C"
 WARN = "#F3821D"
 DANGER = "#FF5C5C"
 OK = "#4AC06C"
