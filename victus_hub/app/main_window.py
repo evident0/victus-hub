@@ -39,6 +39,7 @@ class MainWindow(QMainWindow):
 
     def __init__(self):
         super().__init__()
+        api.start_sensor_reader()
         self.setWindowTitle("Victus Hub")
         self.resize(460, 740)
         self.setMinimumSize(420, 720)

@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from victus_hub.backend import daemon_client
-from victus_hub.backend.nvidia import NvidiaMetrics, NvidiaReader
+from victus_hub.backend.nvidia import NvidiaMetrics, NvidiaReader, nvidia_queries_disabled
 from victus_hub.backend.rapl import CpuPowerSample, RaplPowerSampler
 from victus_hub.backend.types import DiskUsage, ExtraSensor, SensorReading, SensorSnapshot
 from victus_hub.backend.sysfs_read import find_hwmon_by_name, iter_hwmon_dirs, read_int, read_text
@@ -214,6 +214,8 @@ class SensorReader:
             return reading(f"{nvidia.temperature} C", nvidia.source), temp_c
 
         if self._nvidia.has_nvidia():
+            if nvidia_queries_disabled():
+                return reading("Disabled", "NVIDIA queries disabled in Settings"), None
             if self._nvidia.is_runtime_suspended():
                 return reading("Suspended", "dGPU runtime PM (not woken)"), None
             return reading("Unavailable", "no NVIDIA temp (hwmon/NVML/smi)"), None
@@ -314,6 +316,8 @@ class SensorReader:
             return reading(f"{nvidia.power:.1f} W", nvidia.source)
 
         if self._nvidia.has_nvidia():
+            if nvidia_queries_disabled():
+                return reading("Disabled", "NVIDIA queries disabled in Settings")
             if self._nvidia.is_runtime_suspended():
                 return reading("Suspended", "dGPU runtime PM (not woken)")
             if nvidia is not None:
@@ -514,6 +518,8 @@ class SensorReader:
         gpu_usage_pct = nvidia.utilization if nvidia else None
         if gpu_usage_pct is not None:
             gpu_usage = reading(f"{gpu_usage_pct:.0f} %", nvidia.source)
+        elif nvidia_queries_disabled() and self._nvidia.has_nvidia():
+            gpu_usage = reading("Disabled", "NVIDIA queries disabled in Settings")
         elif self._nvidia.has_nvidia() and self._nvidia.is_runtime_suspended():
             gpu_usage = reading("Suspended", "dGPU runtime PM (not woken)")
         else:

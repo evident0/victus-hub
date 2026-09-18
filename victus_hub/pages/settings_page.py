@@ -10,6 +10,9 @@ from PySide6.QtCore import Qt, QUrl, QSettings, Signal
 from victus_hub.app.theme import COLORS, mono_font, ui_font
 from victus_hub.backend.diagnostics import write_diagnostics_report
 from victus_hub.backend.hardware import board_title
+from victus_hub.backend.nvidia import (
+    nvidia_query_disable_enabled, set_nvidia_queries_disabled,
+)
 from victus_hub.features.keyboard.shortcut import (
     KeybindSettings,
     HARDWARE_SHORTCUTS_KEY,
@@ -168,6 +171,16 @@ class SettingsPage(QWidget):
             "Switch to Power Save on battery; restore the previous mode on AC "
             "unless you manually change modes while Victus Hub is running",
             self._battery_power_save,
+        ))
+
+        self._disable_nvidia_queries = ToggleSwitch()
+        self._disable_nvidia_queries.setChecked(nvidia_query_disable_enabled())
+        self._disable_nvidia_queries.toggled.connect(set_nvidia_queries_disabled)
+        layout.addWidget(SettingsRow(
+            "Disable NVIDIA GPU queries",
+            "Skip NVIDIA sensors and GPU-name detection, including NVML and nvidia-smi, "
+            "to avoid waking the GPU and save battery. Only applies in Power Save mode.",
+            self._disable_nvidia_queries,
         ))
 
         self._hardware_shortcuts = ToggleSwitch()

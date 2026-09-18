@@ -21,13 +21,76 @@ import ctypes
 import shutil
 import subprocess
 from dataclasses import dataclass
+from functools import wraps
 from pathlib import Path
+from threading import RLock, Thread
+from weakref import WeakSet
+
+from PySide6.QtCore import QSettings
 
 from victus_hub.backend.sysfs_read import find_hwmon_by_name, read_int
 
 _NVML_SUCCESS = 0
 NVML_TEMPERATURE_GPU = 0
 _SMI_TIMEOUT_S = 1.2  # g-helper SmiTimeoutMs = 1200
+DISABLE_NVIDIA_QUERIES_KEY = "sensors/disableNvidiaQueries"
+_queries_disabled: bool | None = None
+_power_save_active = False
+_query_lock = RLock()
+_readers: WeakSet = WeakSet()
+
+
+def nvidia_query_disable_enabled() -> bool:
+    """Load once, then use memory only on the sensor hot path."""
+    global _queries_disabled
+    if _queries_disabled is None:
+        _queries_disabled = QSettings("victus-hub", "victus-hub").value(
+            DISABLE_NVIDIA_QUERIES_KEY, False, type=bool,
+        )
+    return _queries_disabled
+
+
+def nvidia_queries_disabled() -> bool:
+    """Suppress queries only when the preference and Power Save are active."""
+    return nvidia_query_disable_enabled() and _power_save_active
+
+
+def set_nvidia_power_profile(profile: int) -> None:
+    global _power_save_active
+    _power_save_active = profile == 0
+    if nvidia_queries_disabled():
+        Thread(target=_close_disabled_readers, daemon=True, name="nvidia-close").start()
+
+
+def set_nvidia_queries_disabled(disabled: bool) -> None:
+    """Update immediately; never wait for driver work on the GUI thread."""
+    global _queries_disabled
+    _queries_disabled = disabled
+    QSettings("victus-hub", "victus-hub").setValue(
+        DISABLE_NVIDIA_QUERIES_KEY, disabled,
+    )
+    if nvidia_queries_disabled():
+        Thread(target=_close_disabled_readers, daemon=True, name="nvidia-close").start()
+
+
+def _close_disabled_readers() -> None:
+    with _query_lock:
+        if nvidia_queries_disabled():
+            for reader in list(_readers):
+                reader.close()
+
+
+def _query_allowed(function):
+    @wraps(function)
+    def guarded(*args, **kwargs):
+        # Disabled callers must not wait behind a query already in progress.
+        if nvidia_queries_disabled():
+            return None
+        with _query_lock:
+            if nvidia_queries_disabled():
+                return None
+            return function(*args, **kwargs)
+    return guarded
 
 
 @dataclass(frozen=True)
@@ -69,6 +132,7 @@ def _find_dgpu_runtime_status_path() -> Path | None:
     return None
 
 
+@_query_allowed
 def _hwmon_nvidia_temp_c() -> int | None:
     """Layer 1: nvidia hwmon temp1_input → °C (g-helper GetCurrentTemp method 1)."""
     hwmon = find_hwmon_by_name("nvidia")
@@ -83,6 +147,7 @@ def _hwmon_nvidia_temp_c() -> int | None:
 # ── nvidia-smi (layer 3) ──────────────────────────────────────────────
 
 
+@_query_allowed
 def _smi(query: str) -> str | None:
     smi = shutil.which("nvidia-smi")
     if smi is None:
@@ -107,6 +172,7 @@ def _smi(query: str) -> str | None:
     return raw
 
 
+@_query_allowed
 def get_gpu_name() -> str | None:
     """GPU product name from NVML or nvidia-smi, or None if unavailable."""
     # Try NVML first
@@ -169,6 +235,8 @@ class NvidiaReader:
         self._handle = ctypes.c_void_p()
         self._inited = False
         self._nvml_unavailable = False
+        with _query_lock:
+            _readers.add(self)
 
     def has_nvidia(self) -> bool:
         return Path("/sys/module/nvidia").is_dir() or Path("/proc/driver/nvidia").is_dir()
@@ -236,6 +304,7 @@ class NvidiaReader:
         self._inited = False
         self._handle = ctypes.c_void_p()
 
+    @_query_allowed
     def _query_nvml(self) -> NvidiaMetrics | None:
         if not self._ensure_nvml():
             return None
@@ -300,6 +369,7 @@ class NvidiaReader:
             str(int(round(temp))), f(2), f(1), "nvidia-smi",
         )
 
+    @_query_allowed
     def read(self) -> NvidiaMetrics | None:
         """Return metrics, or None if no driver / dGPU is runtime-suspended."""
         if not self.has_nvidia():
@@ -331,4 +401,5 @@ class NvidiaReader:
         return metrics
 
     def close(self) -> None:
-        self._shutdown_nvml()
+        with _query_lock:
+            self._shutdown_nvml()

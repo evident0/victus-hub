@@ -94,8 +94,18 @@ def _sensor_loop():
         with _snapshot_lock:
             _snapshot = snap
         time.sleep(1.0)
-_sensor_thread = threading.Thread(target=_sensor_loop, daemon=True, name="sensor-poll")
-_sensor_thread.start()
+_sensor_thread: threading.Thread | None = None
+
+
+def start_sensor_reader() -> None:
+    """Start after QApplication exists, never as an import side effect."""
+    global _sensor_thread
+    if _sensor_thread is not None:
+        return
+    from victus_hub.backend.nvidia import nvidia_queries_disabled
+    nvidia_queries_disabled()  # Load Qt settings on the GUI thread first.
+    _sensor_thread = threading.Thread(target=_sensor_loop, daemon=True, name="sensor-poll")
+    _sensor_thread.start()
 
 
 # ── API functions ──
@@ -124,6 +134,9 @@ def get_current_profile() -> int | None:
 def update_profile_cache(index: int, name: str, source: str) -> None:
     """Update the event-fed profile state used by the UI and fan controller."""
     global _profile_cache, _profile_reading_cache, _snapshot
+    from victus_hub.backend.nvidia import set_nvidia_power_profile
+
+    set_nvidia_power_profile(index)
     reading = SensorReading(value=name, source=source)
     with _profile_lock:
         _profile_cache = index
