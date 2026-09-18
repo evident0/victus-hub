@@ -69,7 +69,7 @@ class HomePage(QWidget):
         grid.addWidget(self._fan2, 2, 1)
         layout.addLayout(grid)
 
-        self._profile_section = ProfileSection(hide_title=True)
+        self._profile_section = ProfileSection()
         self._profile_section.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self._profile_section.profile_selected.connect(self.profile_selected.emit)
         self._profile_section.fan_mode_selected.connect(self.fan_mode_selected.emit)

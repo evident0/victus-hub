@@ -3,7 +3,7 @@
 import logging
 
 from PySide6.QtCore import Qt, QSettings, QTimer, QEvent
-from PySide6.QtGui import QAction, QActionGroup, QCloseEvent, QIcon, QHideEvent, QShowEvent
+from PySide6.QtGui import QAction, QActionGroup, QCloseEvent, QHideEvent, QShowEvent
 from PySide6.QtWidgets import (
     QApplication, QHBoxLayout, QMainWindow, QScrollArea,
     QStackedWidget, QSystemTrayIcon, QWidget,
@@ -241,8 +241,8 @@ class MainWindow(QMainWindow):
         self._battery_power.refresh()
 
         self._update_min_height(0)
-        self._apply_accent(self._selected_profile, animate=False)
-        self._morph_to_page(0, False)
+        self._apply_accent(self._selected_profile)
+        self._morph_to_page(0)
     # ── Tab switching ──
 
     def set_active_tab(self, index: int):
@@ -252,7 +252,7 @@ class MainWindow(QMainWindow):
 
     def _on_tab_changed(self, index: int):
         self._stack.setCurrentIndex(index)
-        self._morph_to_page(index, True)
+        self._morph_to_page(index)
 
     def _on_current_page_changed(self, index: int) -> None:
         self._update_min_height(index)
@@ -275,11 +275,11 @@ class MainWindow(QMainWindow):
         6: 460,
     }
 
-    def _morph_to_page(self, index: int, _animate: bool) -> None:
+    def _morph_to_page(self, index: int) -> None:
         w = self._PAGE_WIDTH.get(index, 460)
         self.resize(w, self.height())
 
-    def _apply_accent(self, index: int, animate: bool = True) -> None:
+    def _apply_accent(self, index: int) -> None:
         set_accent(index)
         app = QApplication.instance()
         if app is not None:
@@ -524,7 +524,7 @@ class MainWindow(QMainWindow):
             geo = self._settings.value("window/geometry")
             if geo:
                 self.restoreGeometry(geo)
-                self._morph_to_page(0, False)
+                self._morph_to_page(0)
 
     def _save_geometry(self):
         self._settings.setValue("window/geometry", self.saveGeometry())

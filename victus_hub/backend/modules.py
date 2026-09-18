@@ -1,6 +1,6 @@
 """Hardware module / driver presence detection.
 
-Each function returns ``(text, color)`` suitable for a ``StatusBadge``.
+Status helpers return ``(text, color)`` for the Settings page.
 """
 
 from pathlib import Path

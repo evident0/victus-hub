@@ -15,7 +15,6 @@ WARN = "#F3821D"
 DANGER = "#FF5C5C"
 OK = "#4AC06C"
 
-MODE_COLORS = (ECO, BALANCED, PERF)
 MODE_NAMES = ("Eco", "Balanced", "Performance")
 
 COLORS = {
@@ -52,7 +51,6 @@ COLORS = {
     "surface": "#161616",
     "surface_raised": "#202020",
     "text_secondary": "#969696",
-    "accent_blue": BALANCED,
     "accent_green": ECO,
     "accent_red": DANGER,
     "border": "#2C2C2C",
@@ -139,7 +137,6 @@ def set_accent(index: int) -> str:
     """Point the shared accent at this performance mode. Returns the hex."""
     color = mode_color(index)
     COLORS["accent"] = color
-    COLORS["accent_blue"] = color
     COLORS["accent_hi"] = mix_hex(color, "#FFFFFF", 0.22)
     return color
 

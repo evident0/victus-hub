@@ -38,7 +38,7 @@ class ProfileSection(QWidget):
     fan_mode_selected = Signal(str)
     fan_curves_requested = Signal()
 
-    def __init__(self, hide_title: bool = False, parent=None):
+    def __init__(self, parent=None):
         super().__init__(parent)
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
