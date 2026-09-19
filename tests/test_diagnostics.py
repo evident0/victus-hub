@@ -12,6 +12,7 @@ from unittest.mock import patch
 from victus_hub.backend.diagnostics import (
     Capability,
     build_report,
+    journal_line_visible,
     render_markdown,
     write_diagnostics_report,
 )
@@ -83,6 +84,21 @@ class TestBuildReportSmoke(unittest.TestCase):
         self.assertIn("Board", md)
         self.assertIn("Secure Boot", md)
         self.assertIn("Platform profile tool", md)
+
+
+class TestJournalLineVisible(unittest.TestCase):
+    def test_level_zero_keeps_errors_only(self):
+        self.assertTrue(journal_line_visible("python3[1]: ERR failed to apply", 0))
+        self.assertFalse(journal_line_visible("python3[1]: fan pwm1=128", 0))
+        self.assertFalse(journal_line_visible("python3[1]: power-limits STAPM=30", 0))
+        self.assertFalse(journal_line_visible("python3[1]: kbd-watch: monitoring", 0))
+        self.assertFalse(journal_line_visible("python3[1]: keyboard-last-event 1", 3))
+
+    def test_higher_levels_keep_matching_categories(self):
+        self.assertTrue(journal_line_visible("python3[1]: fan pwm1=128", 1))
+        self.assertFalse(journal_line_visible("python3[1]: power-limits STAPM=30", 1))
+        self.assertTrue(journal_line_visible("python3[1]: power-limits STAPM=30", 2))
+        self.assertTrue(journal_line_visible("python3[1]: kbd-watch: monitoring", 3))
 
 
 class TestSessionLogHandler(unittest.TestCase):

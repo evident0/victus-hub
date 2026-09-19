@@ -121,8 +121,9 @@ Both development scripts accept an optional terminal debug level:
 ```
 
 From the `scripts/` directory, use `./dev-run 1` or `./ui-test 3`.
-These levels filter application log messages; script setup progress is still
-shown. The in-app diagnostics buffer retains the full session log.
+These levels filter application log messages and the in-app diagnostics
+session log; script setup progress is still shown.
+`./scripts/install` pins the desktop entry to level `0`.
 For a direct launch, use `VICTUS_HUB_DEBUG_LEVEL=2 victus-hub` (the same
 environment variable is supported by `python3 -m victus_hubd`).
 

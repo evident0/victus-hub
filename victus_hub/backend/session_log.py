@@ -1,9 +1,11 @@
-"""In-memory copy of this session's terminal log lines."""
+"""In-memory copy of this session's filtered log lines."""
 
 from __future__ import annotations
 
 import logging
 from collections import deque
+
+from victus_hub.logging_config import TerminalDebugFilter, debug_level_from_env
 
 _MAX_LINES = 4000
 _handler: SessionLogHandler | None = None
@@ -30,6 +32,7 @@ def install() -> None:
         return
     handler = SessionLogHandler()
     handler.setFormatter(logging.Formatter("%(asctime)s %(message)s", "%H:%M:%S"))
+    handler.addFilter(TerminalDebugFilter(debug_level_from_env()))
     logging.getLogger().addHandler(handler)
     _handler = handler
 

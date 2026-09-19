@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import platform
 import re
 from dataclasses import dataclass
@@ -24,6 +25,7 @@ from victus_hub.backend.session_log import lines as session_log_lines
 from victus_hub.backend.sysfs_read import find_hwmon_by_name, read_text
 from victus_hub.backend.util import command_path, run_command
 from victus_hub.features.gpu.mux import read_gpu_mux_state
+from victus_hub.logging_config import TerminalDebugFilter, debug_level_from_env
 
 _DMI = Path("/sys/devices/virtual/dmi/id")
 _ACPI_PROFILE = Path("/sys/firmware/acpi/platform_profile")
@@ -42,6 +44,7 @@ _DAEMON_LOG_NOISE = (
     "keyboard-last-input",
     "[cpu-power]",
 )
+_JOURNAL_ERROR_RE = re.compile(r"\berr(?:or)?\b|traceback|exception|failed", re.I)
 
 
 @dataclass(frozen=True)
@@ -224,6 +227,15 @@ def collect_kernel_modules() -> list[tuple[str, bool]]:
     ]
 
 
+def journal_line_visible(line: str, level: int) -> bool:
+    """Keep a journal line when it would pass the same debug-level filter."""
+    if any(noise in line for noise in _DAEMON_LOG_NOISE):
+        return False
+    severity = logging.ERROR if _JOURNAL_ERROR_RE.search(line) else logging.INFO
+    record = logging.LogRecord("victus_hubd", severity, "", 0, line, (), None)
+    return TerminalDebugFilter(level).filter(record)
+
+
 def collect_daemon_journal(n: int = 80) -> str | None:
     cmd = command_path("journalctl")
     if cmd is None:
@@ -234,10 +246,8 @@ def collect_daemon_journal(n: int = 80) -> str | None:
     )
     if not out:
         return None
-    kept = [
-        line for line in out.splitlines()
-        if not any(noise in line for noise in _DAEMON_LOG_NOISE)
-    ]
+    level = debug_level_from_env()
+    kept = [line for line in out.splitlines() if journal_line_visible(line, level)]
     if not kept:
         return None
     return "\n".join(kept[-n:])

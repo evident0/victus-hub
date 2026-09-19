@@ -104,7 +104,7 @@ printf 'Installing desktop entry to %s\n' "$DESKTOP_DST"
 Type=Application
 Name=Victus Hub
 Comment=HP Laptop Control Panel
-Exec=env QT_QPA_PLATFORM=xcb $VICTUS_HUB_BIN
+Exec=env QT_QPA_PLATFORM=xcb VICTUS_HUB_DEBUG_LEVEL=0 $VICTUS_HUB_BIN
 Icon=victus-hub
 Terminal=false
 Categories=System;Utility;

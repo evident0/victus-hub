@@ -1,4 +1,4 @@
-"""Category-based terminal verbosity, independent of the diagnostics buffer."""
+"""Category-based verbosity for the terminal and in-app diagnostics."""
 
 import logging
 import os
@@ -15,6 +15,13 @@ def message_debug_level(text: str) -> int | None:
     if re.search(r"\bfans?\b|fan_control|pwm", text):
         return 1
     return None
+
+
+def debug_level_from_env() -> int:
+    raw_level = os.environ.get("VICTUS_HUB_DEBUG_LEVEL", "0")
+    if raw_level not in ("0", "1", "2", "3"):
+        raise ValueError("VICTUS_HUB_DEBUG_LEVEL must be 0, 1, 2 or 3")
+    return int(raw_level)
 
 
 class TerminalDebugFilter(logging.Filter):
@@ -34,11 +41,7 @@ class TerminalDebugFilter(logging.Filter):
 
 
 def configure_terminal_logging() -> None:
-    raw_level = os.environ.get("VICTUS_HUB_DEBUG_LEVEL", "0")
-    if raw_level not in ("0", "1", "2", "3"):
-        raise ValueError("VICTUS_HUB_DEBUG_LEVEL must be 0, 1, 2 or 3")
     handler = logging.StreamHandler()
     handler.setFormatter(logging.Formatter("%(message)s"))
-    handler.addFilter(TerminalDebugFilter(int(raw_level)))
-    # Filter only the terminal; diagnostics still receives the full session log.
+    handler.addFilter(TerminalDebugFilter(debug_level_from_env()))
     logging.basicConfig(level=logging.DEBUG, handlers=[handler])

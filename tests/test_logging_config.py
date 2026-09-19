@@ -1,10 +1,11 @@
 import logging
+import os
 import subprocess
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from victus_hub.backend import daemon_client
+from victus_hub.backend import daemon_client, session_log
 from victus_hub.logging_config import TerminalDebugFilter
 
 
@@ -71,6 +72,57 @@ class TerminalDebugTests(unittest.TestCase):
                     [str(scripts / script), *args], capture_output=True, text=True,
                 )
                 self.assertEqual(result.returncode, 2, result.stderr)
+
+    def test_install_pins_quiet_debug_level(self):
+        root = Path(__file__).resolve().parents[1]
+        install = (root / "scripts" / "install").read_text()
+        self.assertRegex(
+            install,
+            r"Exec=env QT_QPA_PLATFORM=xcb VICTUS_HUB_DEBUG_LEVEL=0 \$VICTUS_HUB_BIN",
+        )
+        service = (root / "data" / "victus-hubd.service").read_text()
+        self.assertNotIn("VICTUS_HUB_DEBUG_LEVEL", service)
+
+    def test_session_log_respects_debug_level(self):
+        cases = [
+            (0, ["failed"]),
+            (1, ["adjusting target", "failed"]),
+            (2, ["adjusting target", "acquired delay inhibitor", "failed"]),
+            (3, ["adjusting target", "acquired delay inhibitor",
+                 "kbd-watch: monitoring device", "failed"]),
+        ]
+        for level, expected in cases:
+            with self.subTest(level=level):
+                handler = session_log.SessionLogHandler()
+                handler.setFormatter(logging.Formatter("%(message)s"))
+                handler.addFilter(TerminalDebugFilter(level))
+                log = logging.getLogger("test.session_filter")
+                log.handlers.clear()
+                log.setLevel(logging.DEBUG)
+                log.propagate = False
+                log.addHandler(handler)
+                try:
+                    log.info("adjusting target", extra={"debug_level": 1})
+                    log.info("acquired delay inhibitor", extra={"debug_level": 2})
+                    log.info("kbd-watch: monitoring device", extra={"debug_level": 3})
+                    log.error("failed")
+                    self.assertEqual(list(handler.records), expected)
+                finally:
+                    log.removeHandler(handler)
+
+    def test_session_log_install_uses_env_level(self):
+        root = logging.getLogger()
+        if session_log._handler is not None:
+            root.removeHandler(session_log._handler)
+            session_log._handler = None
+        with patch.dict(os.environ, {"VICTUS_HUB_DEBUG_LEVEL": "0"}):
+            session_log.install()
+        try:
+            self.assertEqual(len(session_log._handler.filters), 1)
+            self.assertEqual(session_log._handler.filters[0].level, 0)
+        finally:
+            root.removeHandler(session_log._handler)
+            session_log._handler = None
 
 
 if __name__ == "__main__":
