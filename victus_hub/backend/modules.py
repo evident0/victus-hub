@@ -46,13 +46,11 @@ def fan_control_module() -> tuple[str, str]:
 
 
 def mux_module() -> tuple[str, str]:
-    """Detect whether the hp-gpu-mux kernel module is loaded.
+    """Detect working GPU MUX support in hp-wmi."""
+    from victus_hub.features.gpu.mux import read_gpu_mux_state
 
-    - Green ``"mux"`` if /sys/devices/platform/hp-gpu-mux exists
-    - Red ``"not supported"`` otherwise
-    """
-    if Path("/sys/devices/platform/hp-gpu-mux").is_dir():
-        return ("hp-gpu-mux", GREEN)
+    if read_gpu_mux_state() is not None:
+        return ("hp-wmi", GREEN)
     return ("not supported", RED)
 
 

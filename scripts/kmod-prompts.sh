@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Shared optional kernel-module / tool prompts for install and dev-run.
+# Shared kernel-module / tool installation helpers; dev-run uses prompts.
 # Caller must set ROOT_DIR to the repository root before sourcing.
 
 : "${ROOT_DIR:?ROOT_DIR must be set before sourcing kmod-prompts.sh}"
@@ -13,10 +13,6 @@ HP_WMI_PLATFORM_PATH="/sys/devices/platform/hp-wmi"
 KBD_RGB_KMOD_INSTALL="${ROOT_DIR}/kernel/hp-kbd-rgb/scripts/install"
 KBD_RGB_MODULE_SYS_NAME="hp_kbd_rgb"
 KBD_RGB_MODULE_NAME="hp-kbd-rgb"
-
-GPU_MUX_KMOD_INSTALL="${ROOT_DIR}/kernel/hp-gpu-mux/scripts/install"
-GPU_MUX_MODULE_SYS_NAME="hp_gpu_mux"
-GPU_MUX_MODULE_NAME="hp-gpu-mux"
 
 RYZENADJ_INSTALL="${ROOT_DIR}/scripts/ryzenadj-install"
 RYZENADJ_BIN="/usr/local/bin/ryzenadj"
@@ -133,21 +129,6 @@ maybe_install_kbd_rgb() {
 	run_install_script "$KBD_RGB_KMOD_INSTALL" "$KBD_RGB_MODULE_NAME"
 }
 
-maybe_install_gpu_mux() {
-	local prompt
-	if [ -d "/sys/module/${GPU_MUX_MODULE_SYS_NAME}" ]; then
-		prompt="${GPU_MUX_MODULE_NAME} is already loaded. Reinstall/rebuild kernel module? [y/N] "
-	else
-		prompt="Install ${GPU_MUX_MODULE_NAME} kernel module? [y/N] "
-	fi
-	if ! prompt_yes_no "$prompt"; then
-		printf 'Skipping %s kernel module install.\n' "$GPU_MUX_MODULE_NAME"
-		return 0
-	fi
-	printf '\033[1;34m── Installing %s kernel module ──\033[0m\n' "$GPU_MUX_MODULE_NAME"
-	run_install_script "$GPU_MUX_KMOD_INSTALL" "$GPU_MUX_MODULE_NAME"
-}
-
 maybe_install_ryzenadj() {
 	if ! grep -qm1 'AuthenticAMD' /proc/cpuinfo; then
 		printf 'Skipping ryzenadj (not an AMD CPU).\n'
@@ -168,11 +149,19 @@ maybe_install_ryzenadj() {
 	run_install_script "$RYZENADJ_INSTALL" "ryzenadj"
 }
 
-# Prompt for all optional kernel modules / tools (hp-wmi, rgb, mux, ryzenadj).
+# Install all components without component-selection prompts.
+# The RyzenAdj installer skips non-AMD CPUs.
+install_components() {
+	printf '\033[1;34m── Installing kernel modules / tools ──\033[0m\n'
+	run_install_script "$HP_WMI_KMOD_INSTALL" "$HP_WMI_MODULE_NAME"
+	run_install_script "$KBD_RGB_KMOD_INSTALL" "$KBD_RGB_MODULE_NAME"
+	run_install_script "$RYZENADJ_INSTALL" "ryzenadj"
+}
+
+# Prompt for optional development components (hp-wmi includes MUX support).
 prompt_optional_components() {
 	printf '\033[1;34m── Optional kernel modules / tools ──\033[0m\n'
 	maybe_install_hp_wmi
 	maybe_install_kbd_rgb
-	maybe_install_gpu_mux
 	maybe_install_ryzenadj
 }

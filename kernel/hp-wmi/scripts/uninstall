@@ -15,6 +15,7 @@ BIOSCFG_SYS_NAME="hp_bioscfg"
 KERNEL_RELEASE="$(uname -r)"
 INSTALL_PATH="/lib/modules/${KERNEL_RELEASE}/extra/${MODULE_NAME}.ko"
 AUTOLOAD_CONF="/etc/modules-load.d/${MODULE_NAME}.conf"
+DEPMOD_CONF="/etc/depmod.d/victus-hub-hp-wmi-${KERNEL_RELEASE}.conf"
 PLATFORM_PATH="/sys/devices/platform/hp-wmi"
 
 if [ "$(id -u)" -eq 0 ]; then
@@ -24,7 +25,7 @@ else
 fi
 
 custom_installed=false
-if [ -f "$INSTALL_PATH" ] || [ -f "$AUTOLOAD_CONF" ]; then
+if [ -f "$INSTALL_PATH" ] || [ -f "$AUTOLOAD_CONF" ] || [ -f "$DEPMOD_CONF" ]; then
   custom_installed=true
 fi
 
@@ -57,14 +58,28 @@ if [ -f "$INSTALL_PATH" ]; then
   "${SUDO[@]}" rm -f "$INSTALL_PATH"
 fi
 
+if [ -f "$DEPMOD_CONF" ]; then
+  printf 'Removing module selection override: %s\n' "$DEPMOD_CONF"
+  "${SUDO[@]}" rm -f "$DEPMOD_CONF"
+fi
+
 printf 'Updating module dependency cache...\n'
 "${SUDO[@]}" depmod -a "$KERNEL_RELEASE"
+
+SELECTED_PATH=$(modinfo -k "$KERNEL_RELEASE" -n "$MODULE_NAME")
+case "$SELECTED_PATH" in
+  /lib/modules/"$KERNEL_RELEASE"/kernel/*|/usr/lib/modules/"$KERNEL_RELEASE"/kernel/*) ;;
+  *)
+    printf 'Expected in-tree %s, but module lookup selects %s.\n' "$MODULE_NAME" "$SELECTED_PATH" >&2
+    exit 1
+    ;;
+esac
 
 # Fedora (and similar): hp_bioscfg aliases the same WMI BIOS GUID as hp-wmi.
 # Free it so in-tree hp-wmi can bind and recreate the platform device.
 if [ -d "/sys/module/${BIOSCFG_SYS_NAME}" ]; then
   printf 'Unloading %s (shares WMI BIOS GUID with %s)...\n' "$BIOSCFG_SYS_NAME" "$MODULE_NAME"
-  "${SUDO[@]}" modprobe -r "$BIOSCFG_SYS_NAME" || "${SUDO[@]}" rmmod "$BIOSCFG_SYS_NAME" || true
+  "${SUDO[@]}" modprobe -r "$BIOSCFG_SYS_NAME" || "${SUDO[@]}" rmmod "$BIOSCFG_SYS_NAME"
 fi
 
 printf 'Loading in-tree %s...\n' "$MODULE_NAME"
@@ -73,6 +88,7 @@ if "${SUDO[@]}" modprobe "$MODULE_NAME"; then
     printf 'Restored in-tree %s (%s).\n' "$MODULE_NAME" "$PLATFORM_PATH"
   else
     printf 'Loaded %s but platform device %s is missing; check dmesg.\n' "$MODULE_NAME" "$PLATFORM_PATH" >&2
+    exit 1
   fi
 else
   printf 'Failed to load in-tree %s. Try:\n' "$MODULE_NAME" >&2

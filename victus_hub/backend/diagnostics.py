@@ -34,7 +34,6 @@ _ANSI_RE = re.compile(r"\033\[[0-9;]*m")
 _KERNEL_MODULES = (
     "hp_wmi",
     "hp_kbd_rgb",
-    "hp_gpu_mux",
     "nvidia",
     "amdgpu",
 )
@@ -155,9 +154,9 @@ def collect_capabilities() -> list[Capability]:
                 break
         mux_ok, mux_details = True, f"{names} (current: {current})"
     elif mux_label != "not supported":
-        mux_ok, mux_details = True, "hp-gpu-mux loaded (modes unread)"
+        mux_ok, mux_details = False, "hp-wmi MUX state unreadable"
     else:
-        mux_ok, mux_details = False, "hp-gpu-mux not loaded"
+        mux_ok, mux_details = False, "hp-wmi MUX unavailable"
 
     kbd_label, _kbd_color = keyboard_rgb_module()
     emulated_zones = emulated_keyboard_zone_count()

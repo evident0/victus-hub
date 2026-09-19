@@ -21,8 +21,8 @@ with Fedora. Other HP Omen/Victus laptops should work.
 - **Mux switch** Hardware Mux switch support for Victus Laptops, OMEN Laptops should also work (untested).  PRIME laptops can also try [envycontrol](https://github.com/bayasdev/envycontrol) (not included yet).  
 - **Keyboard RGB** — static color and brightness via a custom
   `hp-kbd-rgb` kernel module (a companion to the upstream hp-wmi RGB
-  patch series; it doesn't claim the HP WMI GUID, so the stock `hp-wmi`
-  driver stays loaded for hotkeys and fan hwmon). Optional idle-dim when
+  patch series; it doesn't claim the HP WMI GUID, so custom `hp-wmi`
+  stays loaded for hotkeys, fan hwmon, and MUX control). Optional idle-dim when
   you stop typing.
 - **Power limits** — set Sustained (sPPT), Fast (fPPT), and Slow limits,
   plus Tctl temperature, through `ryzenadj` for AMD CPUs. Intel CPUs show
@@ -68,7 +68,13 @@ After cloning the repository run:
 ```
 After updating an existing installation, rerun the installer to update and
 restart the daemon, including the RAPL/MSR service permissions for Intel controls.
-For dev work (no .desktop entry etc. Run uninstall when done testing to remove just the daemon):
+The installer builds and installs custom `hp-wmi` (including MUX support) and
+`hp-kbd-rgb`, and builds/installs RyzenAdj on AMD CPUs, without component prompts.
+Kernel headers for the running kernel are required. Upgrades remove the old
+standalone `hp-gpu-mux` installation.
+
+For dev work (no .desktop entry; still prompts before installing/rebuilding each
+module and RyzenAdj):
 
 ```
 ./scripts/dev-run
@@ -127,3 +133,9 @@ environment variable is supported by `python3 -m victus_hubd`).
 - **`victus_hubd/`** — the root daemon. Runs as a systemd service
   (`victus-hubd.service`), listens on `/run/victus-hubd/victus-hub.sock`,
 - **`kernel/`** — All custom kernel modules.
+
+The bundled `hp-wmi` is based on `hp-wmi-ilpo-appliednew.c`, with an out-of-tree
+ACPI compatibility definition and a read-only `gpu_mux_supported_names` attribute
+for the app. MUX nodes live under `/sys/devices/platform/hp-wmi/`. Fan mode is
+shared through `pwm1_enable`; the app applies its combined fan target to both
+`pwm1` (CPU) and `pwm2` (GPU).

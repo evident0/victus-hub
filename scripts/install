@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Install (or reinstall) all Victus Hub components:
-#   1. Optional: custom hp-wmi, hp-kbd-rgb, hp-gpu-mux, ryzenadj  (prompted)
+#   1. custom hp-wmi (includes MUX), hp-kbd-rgb, ryzenadj (AMD only)
 #   2. victus-hubd daemon         (pip editable + systemd service)
 #   3. victus-hub program         (pip entry point, same install as daemon)
 #   4. .desktop entry + icon     (app-menu integration)
@@ -24,8 +24,8 @@ else
 	SUDO=(sudo)
 fi
 
-# ── 1. Optional kernel modules / tools (prompted) ──
-prompt_optional_components
+# ── 1. Kernel modules / tools (no component prompts) ──
+install_components
 
 # ── 2. Daemon + program (editable pip install brings both victus_hub* and
 #        victus_hubd* plus the victus-hub console-script entry point) ──
@@ -113,6 +113,6 @@ DESKTOP
 "${SUDO[@]}" update-desktop-database /usr/share/applications 2>/dev/null || true
 
 printf '\033[32m── Install complete ──\033[0m\n'
-printf '  • Optional modules/tools were prompted (hp-wmi, hp-kbd-rgb, hp-gpu-mux, ryzenadj)\n'
+printf '  • Installed hp-wmi (includes MUX), hp-kbd-rgb, and ryzenadj (AMD only)\n'
 printf '  • Daemon:        %s (running)\n' "$SERVICE_NAME"
 printf '  • Program:       victus-hub   (app menu or: victus-hub)\n'

@@ -10,7 +10,7 @@ from victus_hub.backend.sysfs_read import find_hwmon_by_name
 
 KBD_RGB_PLATFORM = "/sys/devices/platform/hp-kbd-rgb"
 KBD_RGB_LEDS = "/sys/class/leds"
-GPU_MUX_PLATFORM = Path("/sys/devices/platform/hp-gpu-mux")
+GPU_MUX_PLATFORM = Path("/sys/devices/platform/hp-wmi")
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +39,7 @@ def write_gpu_mux_mode(mode: int) -> str:
     """Request a GPU MUX mode index (0=hybrid, 1=discrete, 2=optimus, 3=uma)."""
     path = GPU_MUX_PLATFORM / "gpu_mux_mode"
     if not path.exists():
-        raise RuntimeError("hp-gpu-mux platform device not found")
+        raise RuntimeError("hp-wmi GPU MUX control not found")
     return write_sysfs(path, mode)
 
 
@@ -62,7 +62,7 @@ def write_pwm_max() -> str:
 
 
 def write_pwm(pwm: int) -> str:
-    """Set fan PWM duty cycle (0-255). Enters manual mode first."""
+    """Set both fan PWM duty cycles (0-255). Enters manual mode first."""
     hwmon = hp_hwmon()
     if hwmon is None:
         raise RuntimeError("hp hwmon not found")
@@ -70,7 +70,12 @@ def write_pwm(pwm: int) -> str:
     logger.info("[fan-control] daemon entering manual mode: pwm1_enable=1")
     write_sysfs(enable_path, 1)
     logger.info("[fan-control] daemon setting pwm1=%d", pwm)
-    return write_sysfs(hwmon / "pwm1", pwm)
+    label = write_sysfs(hwmon / "pwm1", pwm)
+    # New hp-wmi exposes independent CPU/GPU duties with a shared enable.
+    # Older drivers control both fans through pwm1 alone.
+    if (hwmon / "pwm2").exists():
+        write_sysfs(hwmon / "pwm2", pwm)
+    return label
 
 
 def get_keyboard_zone_count() -> int:

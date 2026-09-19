@@ -1,4 +1,4 @@
-"""Read GPU MUX state from the hp-gpu-mux kernel module sysfs nodes."""
+"""Read GPU MUX state from the custom hp-wmi driver's sysfs nodes."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from pathlib import Path
 
 from victus_hub.backend.sysfs_read import read_int, read_text
 
-GPU_MUX_PLATFORM = Path("/sys/devices/platform/hp-gpu-mux")
+GPU_MUX_PLATFORM = Path("/sys/devices/platform/hp-wmi")
 
 MODE_BY_NAME: dict[str, int] = {
     "hybrid": 0,
@@ -54,4 +54,6 @@ def read_gpu_mux_state() -> GpuMuxState | None:
         return None
 
     current_index = read_int(GPU_MUX_PLATFORM / "gpu_mux_mode")
+    if current_index not in MODE_BY_NAME.values():
+        return None
     return GpuMuxState(modes=tuple(modes), current_index=current_index)
