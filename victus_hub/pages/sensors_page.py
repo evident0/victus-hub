@@ -1,4 +1,4 @@
-"""Sensors page with collapsible grouped table (Top Processes visual style)."""
+"""Sensors page with collapsible grouped table."""
 
 from PySide6.QtWidgets import (
     QAbstractItemView, QFrame, QHeaderView,
@@ -37,7 +37,6 @@ class SensorsPage(QWidget):
         layout.setSpacing(12)
         layout.addWidget(PageHead("Sensors"))
 
-        # Card frame — same shell as Top Processes
         card = QFrame()
         card.setObjectName("sensorsCard")
         card.setStyleSheet(f"""
@@ -67,7 +66,7 @@ class SensorsPage(QWidget):
         self._tree.setFocusPolicy(Qt.StrongFocus)
         self._tree.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self._tree.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
-        # Expand/collapse only via the branch arrow (match Top Processes)
+        # Expand/collapse only via the branch arrow, not by clicking the row
         self._tree.setExpandsOnDoubleClick(False)
         self._tree.setContextMenuPolicy(Qt.CustomContextMenu)
         self._tree.customContextMenuRequested.connect(self._on_context_menu)

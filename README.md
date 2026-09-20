@@ -36,7 +36,7 @@ with Fedora. Other HP Omen/Victus laptops should work.
   are shown in the panel; successful offsets are saved but only applied on
   clicking **Apply undervolt**. Set both offsets to 0 mV to reset them.
 - **Sensors** — live CPU/GPU temperatures, fan RPM, power draw, and
-  utilization. Included "task manager"+right click to stop processes, tracks cpu and ram (PSS).
+  utilization.
 - **Suspend/shutdown cleanup** — send suspend and shutdown commands before and after.
 
 Settings persist under `~/.config/victus-hub/`.

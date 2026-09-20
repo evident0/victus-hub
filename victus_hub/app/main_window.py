@@ -15,7 +15,6 @@ from victus_hub.widgets.popup_menu import PopupMenu
 from victus_hub.widgets.profile_section import FAN_MODES, PROFILES
 from victus_hub.widgets.sidebar import Sidebar
 from victus_hub.pages.home_page import HomePage
-from victus_hub.pages.processes_page import ProcessesPage
 from victus_hub.pages.power_page import PowerPage
 from victus_hub.pages.fans_page import FansPage
 from victus_hub.pages.sensors_page import SensorsPage
@@ -76,7 +75,6 @@ class MainWindow(QMainWindow):
         layout.addWidget(self._scroll, 1)
 
         self._home_page = HomePage()
-        self._processes_page = ProcessesPage()
         self._power_page = PowerPage()
         self._fans_page = FansPage()
         self._sensors_page = SensorsPage()
@@ -90,18 +88,10 @@ class MainWindow(QMainWindow):
             self._fans_page,
             self._keyboard_page,
             self._sensors_page,
-            self._processes_page,
             self._settings_page,
         ]
         for page in self._pages:
             self._stack.addWidget(page)
-
-        # Processes page poll — only runs while visible AND on the Processes
-        # tab (see _update_processes_timer). Decoupled from the sensor poll so
-        # the /proc scan never fires for a hidden window or another tab.
-        self._processes_timer = QTimer(self)
-        self._processes_timer.setInterval(2000)
-        self._processes_timer.timeout.connect(self._processes_page.refresh)
 
         # Keep the stack's inner min height in sync so a tall page scrolls
         # instead of squishing. Window min height stays 720.
@@ -190,8 +180,8 @@ class MainWindow(QMainWindow):
 
         # UI-active gate (visibility). When False (hidden to tray /
         # minimized) the sensor timer stops, the keyboard preview
-        # repaint is gated, the lm-sensors subprocess is skipped, and the
-        # processes /proc scan stops. Hardware control threads keep running.
+        # repaint is gated, and the lm-sensors subprocess is skipped.
+        # Hardware control threads keep running.
         # Fan-control background thread
         # Start the profile watcher before fan control so its initial state is
         # available to the background controller.
@@ -256,7 +246,6 @@ class MainWindow(QMainWindow):
 
     def _on_current_page_changed(self, index: int) -> None:
         self._update_min_height(index)
-        self._update_processes_timer()
 
     def _update_min_height(self, index: int) -> None:
         """Give the current page enough inner height to avoid squishing.
@@ -271,8 +260,7 @@ class MainWindow(QMainWindow):
         2: 700,
         3: 700,
         4: 720,
-        5: 720,
-        6: 460,
+        5: 460,
     }
 
     def _morph_to_page(self, index: int) -> None:
@@ -290,18 +278,6 @@ class MainWindow(QMainWindow):
         if hasattr(self._fans_page, "refresh_accent"):
             self._fans_page.refresh_accent()
 
-    def _update_processes_timer(self) -> None:
-        """Run the Processes /proc scan only while visible + on that tab."""
-        want = self._ui_active and (self._stack.currentWidget() is self._processes_page)
-        was_active = self._processes_timer.isActive()
-        self._processes_page.set_active(want)
-        if want:
-            self._processes_timer.start()
-            if not was_active:
-                self._processes_page.refresh()
-        else:
-            self._processes_timer.stop()
-
     def _update_ui_active(self) -> None:
         """Central visibility switch. Pauses UI-only work when the window is
         hidden to tray or minimized; hardware control (fan-control thread,
@@ -317,7 +293,6 @@ class MainWindow(QMainWindow):
             self._sensor_timer.stop()
         self._lighting.set_ui_active(active)
         api.set_ui_active(active)
-        self._update_processes_timer()
         if active:
             self._poll_sensors()  # immediate fresh refresh on restore
 

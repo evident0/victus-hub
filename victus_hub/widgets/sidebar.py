@@ -56,9 +56,6 @@ _ICONS: list[tuple[str, str, list[str], list[str]]] = [
     ("Sensors", "sensors",
      ["M10 14.2 V5 A2 2 0 0 1 14 5 V14.2 A4 4 0 1 1 10 14.2 Z M12 8 V17"],
      ["M12 15.5 A2.2 2.2 0 1 0 12 19.9 A2.2 2.2 0 1 0 12 15.5 Z"]),
-    ("Processes", "processes",
-     ["M5 8 H19 M5 12 H19 M5 16 H19"],
-     []),
 ]
 
 _SETTINGS = ("Settings", "settings", [], [_gear_path()])
