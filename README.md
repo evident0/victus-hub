@@ -100,6 +100,11 @@ Click the tray icon to bring it back, or use the global hotkey you can
 configure in the Settings page. A second launch raises the existing
 instance rather than starting a new one.
 
+Hardware control (fan curves, keyboard lighting, power-limit reapply,
+battery power-save, and Ctrl+Shift shortcuts) runs in `victus-hubd`.
+Quitting the UI leaves those settings active. Suspend and shutdown still
+hand fans back to the EC and turn the keyboard backlight off.
+
 ## Logging/Debugging
 
 The app logs to the terminal it was launched from (so run it from a
@@ -130,9 +135,13 @@ environment variable is supported by `python3 -m victus_hubd`).
 ## Project Structure
 
 - **`victus_hub/`** — the Qt GUI. The user runs this unprivileged. It
-  talks to the daemon over a Unix socket for anything requiring root.
+  sends desired state (fan curves, lighting, power policy) to the daemon
+  over a Unix socket. Sensor display and the keyboard preview stay in the UI.
 - **`victus_hubd/`** — the root daemon. Runs as a systemd service
   (`victus-hubd.service`), listens on `/run/victus-hubd/victus-hub.sock`,
+  owns the control loops, and persists last policy under
+  `/var/lib/victus-hubd/` so fans, lighting, and power limits keep working
+  with the UI closed (a CLI can use the same socket later).
 - **`kernel/`** — All custom kernel modules.
 
 The bundled `hp-wmi` is based on `hp-wmi-ilpo-appliednew.c`, with an out-of-tree

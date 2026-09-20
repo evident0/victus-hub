@@ -13,6 +13,8 @@ source "$ROOT_DIR/scripts/kmod-prompts.sh"
 SERVICE_NAME=victus-hubd.service
 SERVICE_SRC="$ROOT_DIR/data/victus-hubd.service"
 SERVICE_DST="/etc/systemd/system/$SERVICE_NAME"
+SLEEP_SRC="$ROOT_DIR/data/victus-hub-sleep"
+SLEEP_DST="/usr/lib/systemd/system-sleep/victus-hub"
 SOCKET_PATH="/run/victus-hubd/victus-hub.sock"
 ICON_SRC="$ROOT_DIR/victus_hub/resources/icons/logoV.png"
 ICON_DST="/usr/share/icons/hicolor/1024x1024/apps/victus-hub.png"
@@ -51,6 +53,8 @@ if [ "$NEEDS_RELOAD" -eq 1 ]; then
 fi
 
 "${SUDO[@]}" systemctl enable "$SERVICE_NAME" >/dev/null
+printf 'Installing systemd-sleep hook to %s\n' "$SLEEP_DST"
+"${SUDO[@]}" install -Dm755 "$SLEEP_SRC" "$SLEEP_DST"
 printf 'Starting %s...\n' "$SERVICE_NAME"
 "${SUDO[@]}" systemctl restart "$SERVICE_NAME"
 

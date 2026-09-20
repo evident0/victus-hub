@@ -25,7 +25,7 @@ from victus_hub.features.power.limits import (
     read_frequency_limits, write_frequency_limits,
     read_intel_undervolt, write_intel_undervolt,
 )
-from victus_hub.api import apply_power_limits
+from victus_hub.api import apply_power_limits, set_cpu_frequency_policy, set_power_policy
 
 
 class _SliderRow(QWidget):
@@ -374,6 +374,7 @@ class PowerPage(QWidget):
         self._frequency_busy = False
         if not error:
             write_frequency_limits(*self._pending_frequency)
+            set_cpu_frequency_policy(*self._pending_frequency)
         # Read back the kernel's accepted limits, including after a partial failure.
         self._load_frequency_limits()
         if error:
@@ -413,6 +414,7 @@ class PowerPage(QWidget):
     def _on_power_enabled_changed(self, checked: bool):
         self._power_enabled = checked
         write_power_enabled(checked)
+        set_power_policy(checked, self._make_power_settings())
         self._update_apply_enabled()
         self.limits_applied.emit()
 
@@ -439,6 +441,7 @@ class PowerPage(QWidget):
     def _on_apply_power(self):
         settings = self._make_power_settings()
         write_power_limit_settings(settings)
+        set_power_policy(True, settings)
         self._applied_stapm = settings.stapm_limit
         self._applied_fast = settings.fast_limit
         self._applied_slow = settings.slow_limit

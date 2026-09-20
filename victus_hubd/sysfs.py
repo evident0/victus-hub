@@ -124,7 +124,9 @@ def _write_led_color(led: Path, red: int, green: int, blue: int) -> str:
     return str(led)
 
 
-def write_keyboard_color(red: int, green: int, blue: int) -> str:
+def write_keyboard_color(
+    red: int, green: int, blue: int, *, quiet: bool = False,
+) -> str:
     """Set the same keyboard backlight color on every zone.
 
     Writes ``multi_intensity`` on every zone's LED class device, then
@@ -136,21 +138,25 @@ def write_keyboard_color(red: int, green: int, blue: int) -> str:
     labels: list[str] = []
     for name in _kbd_rgb_led_names():
         labels.append(_write_led_color(Path(KBD_RGB_LEDS) / name, red, green, blue))
-    logger.info("[keyboard-rgb] color %s -> %s", value, ", ".join(labels))
+    if not quiet:
+        logger.info("[keyboard-rgb] color %s -> %s", value, ", ".join(labels))
     return labels[0] if labels else KBD_RGB_LEDS
 
 
-def write_keyboard_zone_color(zone: int, red: int, green: int, blue: int) -> str:
+def write_keyboard_zone_color(
+    zone: int, red: int, green: int, blue: int, *, quiet: bool = False,
+) -> str:
     """Set color for a single zone (0-based index into LED name list)."""
     names = _kbd_rgb_led_names()
     if zone < 0 or zone >= len(names):
         raise RuntimeError(f"zone {zone} out of range (0-{max(0, len(names) - 1)})")
     led = Path(KBD_RGB_LEDS) / names[zone]
     label = _write_led_color(led, red, green, blue)
-    logger.info(
-        "[keyboard-rgb] zone %d color %d %d %d -> %s",
-        zone, red, green, blue, label,
-    )
+    if not quiet:
+        logger.info(
+            "[keyboard-rgb] zone %d color %d %d %d -> %s",
+            zone, red, green, blue, label,
+        )
     return label
 
 
@@ -167,7 +173,7 @@ def set_keyboard_user_brightness(level: int) -> str:
     return write_keyboard_brightness(level)
 
 
-def write_keyboard_brightness(level: int) -> str:
+def write_keyboard_brightness(level: int, *, quiet: bool = False) -> str:
     """Set keyboard backlight brightness (0-255) on all zones.
 
     Writing 0 turns the backlight off (sends black via the LED multicolor
@@ -178,9 +184,10 @@ def write_keyboard_brightness(level: int) -> str:
     labels: list[str] = []
     for name in _kbd_rgb_led_names():
         led = Path(KBD_RGB_LEDS) / name
-        write_sysfs(led / "brightness", level)
+        write_sysfs(led / "brightness", level, quiet=quiet)
         labels.append(str(led))
-    logger.info("[keyboard-rgb] brightness %d -> %s", level, ", ".join(labels))
+    if not quiet:
+        logger.info("[keyboard-rgb] brightness %d -> %s", level, ", ".join(labels))
     return labels[0] if labels else KBD_RGB_LEDS
 
 

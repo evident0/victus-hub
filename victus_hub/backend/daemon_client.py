@@ -3,6 +3,7 @@
 Ports privileged/client.rs exactly.
 """
 
+import json
 import logging
 import socket
 
@@ -19,10 +20,10 @@ _RESET = "\033[0m"
 logger = logging.getLogger(__name__)
 
 
-def _request_daemon(request: str, quiet: bool = False) -> str:
+def _request_daemon(request: str, quiet: bool = False, *, missing_ok: bool = False) -> str:
     """Send one line to the daemon and read one line back."""
+    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     try:
-        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         sock.settimeout(1.0)
         sock.connect(SOCKET_PATH)
         sock.sendall(request.encode())
@@ -32,7 +33,6 @@ def _request_daemon(request: str, quiet: bool = False) -> str:
             if not chunk:
                 break
             response += chunk
-        sock.close()
         resp = response.decode().strip()
         if resp.startswith("ERR"):
             logger.error("%s\u2190 daemon: %s%s", _RED, resp, _RESET)
@@ -43,8 +43,12 @@ def _request_daemon(request: str, quiet: bool = False) -> str:
             )
         return resp
     except OSError as e:
+        if missing_ok:
+            raise RuntimeError(str(e))
         logger.error("%s\u2190 daemon: ERROR %s%s", _RED, e, _RESET)
         raise RuntimeError(str(e))
+    finally:
+        sock.close()
 
 def request_cpu_power() -> CpuPowerSample:
     response = _request_daemon("cpu-power\n", quiet=True)
@@ -170,3 +174,88 @@ def request_power_limits(
         f"power-limits\t{stapm_limit}\t{fast_limit}\t{slow_limit}\t{tctl_temp}\n",
     )
     return protocol.parse_status_response(response)
+
+
+def _json_body(payload: dict) -> str:
+    return json.dumps(payload, separators=(",", ":"), ensure_ascii=True)
+
+
+def request_fan_config(config) -> str:
+    from victus_hub.backend.fan_config import config_to_dict
+
+    logger.info("\u2192 daemon: fan-config")
+    response = _request_daemon(
+        f"fan-config\t{_json_body(config_to_dict(config))}\n", missing_ok=True,
+    )
+    return protocol.parse_status_response(response)
+
+
+def request_lighting_config(settings) -> str:
+    from victus_hub.features.keyboard.lighting import lighting_to_dict
+
+    logger.info("\u2192 daemon: lighting-config")
+    response = _request_daemon(
+        f"lighting-config\t{_json_body(lighting_to_dict(settings))}\n",
+        missing_ok=True,
+    )
+    return protocol.parse_status_response(response)
+
+
+def request_power_config(enabled: bool, settings) -> str:
+    payload = {
+        "enabled": bool(enabled),
+        "stapm_limit": int(settings.stapm_limit),
+        "fast_limit": int(settings.fast_limit),
+        "slow_limit": int(settings.slow_limit),
+        "tctl_temp": int(settings.tctl_temp),
+        "reapply_seconds": int(settings.reapply_seconds),
+    }
+    logger.info("\u2192 daemon: power-config enabled=%s", enabled)
+    response = _request_daemon(
+        f"power-config\t{_json_body(payload)}\n", missing_ok=True,
+    )
+    return protocol.parse_status_response(response)
+
+
+def request_cpu_frequency_config(minimum: int | None, maximum: int | None) -> str:
+    if minimum is None or maximum is None:
+        logger.info("\u2192 daemon: cpu-frequency-config clear")
+        response = _request_daemon("cpu-frequency-config\n", missing_ok=True)
+        return protocol.parse_status_response(response)
+    logger.info("\u2192 daemon: cpu-frequency-config %d-%d", minimum, maximum)
+    response = _request_daemon(
+        f"cpu-frequency-config\t{minimum}\t{maximum}\n", missing_ok=True,
+    )
+    return protocol.parse_status_response(response)
+
+
+def request_battery_power_save(enabled: bool) -> str:
+    logger.info("\u2192 daemon: battery-power-save %s", enabled)
+    response = _request_daemon(
+        f"battery-power-save\t{1 if enabled else 0}\n", missing_ok=True,
+    )
+    return protocol.parse_status_response(response)
+
+
+def request_hardware_shortcuts(enabled: bool) -> str:
+    logger.info("\u2192 daemon: hardware-shortcuts %s", enabled)
+    response = _request_daemon(
+        f"hardware-shortcuts\t{1 if enabled else 0}\n", missing_ok=True,
+    )
+    return protocol.parse_status_response(response)
+
+
+def request_disable_nvidia_queries(enabled: bool) -> str:
+    response = _request_daemon(
+        f"disable-nvidia-queries\t{int(enabled)}\n", missing_ok=True,
+    )
+    return protocol.parse_status_response(response)
+
+
+def request_get_state() -> dict:
+    response = _request_daemon("get-state\n", missing_ok=True)
+    payload = protocol.parse_status_response(response)
+    data = json.loads(payload)
+    if not isinstance(data, dict):
+        raise RuntimeError("get-state did not return a JSON object")
+    return data

@@ -62,13 +62,9 @@ class TestShortcutStream(QtTestCase):
         self.worker.start()
         self.controller = ShortcutController()
         self.addCleanup(self.close_client)
-        self.brightness = []
-        self.animation = []
-        self.performance = Mock()
+        self.lighting = []
         self.triggered = Mock()
-        self.controller.brightness_step.connect(self.brightness.append)
-        self.controller.animation_step.connect(self.animation.append)
-        self.controller.performance_cycle.connect(self.performance)
+        self.controller.lighting_changed.connect(self.lighting.append)
         self.controller.triggered.connect(self.triggered)
         self.wait_for(lambda: self.controller._subscribed)
 
@@ -94,10 +90,16 @@ class TestShortcutStream(QtTestCase):
             self.press(code)
         daemon._record_key_event(KEY_LEFTSHIFT, 0)
         daemon._record_key_event(KEY_LEFTCTRL, 0)
-        self.wait_for(lambda: self.performance.call_count == 1)
-        self.assertEqual(self.brightness, [1, 1, -1])
-        self.assertEqual(self.animation, [-1, 1])
+        self.press(149)
+        self.wait_for(lambda: self.triggered.call_count == 1)
+        self.assertEqual(self.lighting, [])
         self.assertEqual(self.controller.findChildren(QTimer), [])
+
+    def test_lighting_event_updates_display_without_local_step(self):
+        daemon._publish_lighting(LightingSettings(enabled=True, brightness=128, effect="static"))
+        self.wait_for(lambda: len(self.lighting) == 1)
+        self.assertEqual(self.lighting[0].brightness, 128)
+        self.assertTrue(self.lighting[0].enabled)
 
     def test_plain_keys_disabled_shortcuts_and_repeat_are_ignored(self):
         for code in (103, 108, 105, 106, 50):
@@ -111,9 +113,7 @@ class TestShortcutStream(QtTestCase):
         daemon._record_key_event(KEY_LEFTCTRL, 0)
         self.press(149)  # ordering barrier and existing program shortcut
         self.wait_for(lambda: self.triggered.call_count == 1)
-        self.assertEqual(self.brightness, [])
-        self.assertEqual(self.animation, [])
-        self.performance.assert_not_called()
+        self.assertEqual(self.lighting, [])
         self.assertFalse(self.settings.value(HARDWARE_SHORTCUTS_KEY, type=bool))
 
     def test_capture_takes_priority_and_preserves_left_modifiers(self):
@@ -127,7 +127,7 @@ class TestShortcutStream(QtTestCase):
         daemon._record_key_event(KEY_LEFTCTRL, 0)
         self.wait_for(lambda: captured.call_count == 1)
         captured.assert_called_once_with(frozenset({KEY_LEFTCTRL, KEY_LEFTSHIFT}), 103)
-        self.assertEqual(self.brightness, [])
+        self.assertEqual(self.lighting, [])
         self.assertFalse(self.controller.is_capturing())
 
     def test_fn_incomplete_right_hand_and_extra_modifiers_are_ignored(self):
@@ -145,9 +145,7 @@ class TestShortcutStream(QtTestCase):
                 daemon._record_key_event(mod, 0)
         self.press(149)
         self.wait_for(lambda: self.triggered.call_count == 1)
-        self.assertEqual(self.brightness, [])
-        self.assertEqual(self.animation, [])
-        self.performance.assert_not_called()
+        self.assertEqual(self.lighting, [])
 
     def test_stream_reconnects_after_disconnect_without_replaying_keys(self):
         self.press(149)

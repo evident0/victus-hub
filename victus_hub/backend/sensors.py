@@ -439,12 +439,9 @@ class SensorReader:
     # ── read_all (sensors.rs) ──
 
     def read_all(self, *, full: bool = True) -> SensorSnapshot:
-        # `full=False` is the tray-hidden / minimized path: only the
-        # fan-control thread consumes the snapshot (it reads cpu_temp_c /
-        # gpu_temp_c alone), so skip UI-only reads — HP fan/PWM sysfs,
-        # utilization, RAM, cpu/gpu power, and lm-sensors. Temps + nvidia
-        # (for gpu_temp) stay so fan control keeps working. The full read
-        # resumes on the next tick after the window is shown again.
+        # `full=False` skips UI-only reads (HP fan/PWM, utilization, RAM,
+        # power, lm-sensors). Fan control now runs in the daemon, so the
+        # UI sensor thread uses full=True only while the window is shown.
         hp_hwmon = find_hwmon_by_name("hp", "hp_wmi", "hp-wmi")
         # hwmon → NVML → nvidia-smi; skipped while dGPU runtime-suspended.
         nvidia = self._nvidia.read()

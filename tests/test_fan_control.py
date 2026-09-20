@@ -3,14 +3,15 @@
 from __future__ import annotations
 
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from victus_hub.backend.fan_config import interpolate_fan, smart_cpu_points, smart_gpu_points
-from victus_hub.backend.types import FanConfig, FanPoint, FanProfileConfig, SensorSnapshot
+from victus_hub.backend.types import FanConfig, FanPoint, FanProfileConfig
 from victus_hub.services.fan_control import (
     EWMA_LAMBDA_DECREASE,
     EWMA_LAMBDA_INCREASE,
     FanController,
+    FanIO,
     LoopState,
     SMART_EWMA_LAMBDA_DECREASE,
     SMART_EWMA_LAMBDA_INCREASE,
@@ -21,6 +22,24 @@ from victus_hub.services.fan_control import (
     update_curve_target,
     update_overheat,
 )
+
+
+def make_io(**overrides) -> FanIO:
+    values = dict(
+        read_temps=lambda: (50.0, None),
+        get_profile=lambda: 1,
+        load_config=lambda: FanConfig(
+            profiles=[linear_profile(), linear_profile(), linear_profile()],
+            custom_enabled=True,
+        ),
+        request_auto=Mock(),
+        request_manual=Mock(),
+        request_pwm=Mock(),
+        read_pwm_pct=lambda: 20.0,
+        is_suspended=lambda: False,
+    )
+    values.update(overrides)
+    return FanIO(**values)
 
 
 def linear_profile() -> FanProfileConfig:
@@ -178,54 +197,68 @@ class TestOverheatSafety(unittest.TestCase):
 
 class TestControllerWrites(unittest.TestCase):
     def test_forced_first_write_then_unchanged_target_is_suppressed(self):
-        controller = FanController()
+        write = Mock()
+        controller = FanController(make_io(request_pwm=write))
         controller._st.on_enter_custom(20.0)
-        with patch(
-            "victus_hub.services.fan_control._daemon_client.request_fan_pwm",
-        ) as write:
-            controller._control_tick(low_profile(40), 50.0, None, 0.0)
-            controller._control_tick(low_profile(40), 50.0, None, 1.0)
+        controller._control_tick(low_profile(40), 50.0, None, 0.0)
+        controller._control_tick(low_profile(40), 50.0, None, 1.0)
         write.assert_called_once_with(102)
         self.assertEqual(controller._st.last_written_pct, 40.0)
         self.assertFalse(controller._st.force_write)
 
     def test_failed_write_is_retried(self):
-        controller = FanController()
+        write = Mock(side_effect=RuntimeError("daemon unavailable"))
+        controller = FanController(make_io(request_pwm=write))
         controller._st.on_enter_custom(20.0)
-        with patch(
-            "victus_hub.services.fan_control._daemon_client.request_fan_pwm",
-            side_effect=RuntimeError("daemon unavailable"),
-        ) as write:
-            controller._control_tick(low_profile(40), 50.0, None, 0.0)
-            controller._control_tick(low_profile(40), 50.0, None, 1.0)
+        controller._control_tick(low_profile(40), 50.0, None, 0.0)
+        controller._control_tick(low_profile(40), 50.0, None, 1.0)
         self.assertEqual(write.call_count, 2)
         self.assertEqual(controller._st.last_written_pct, 20.0)
         self.assertTrue(controller._st.force_write)
 
     def test_small_target_change_is_suppressed(self):
-        controller = FanController()
+        write = Mock()
+        controller = FanController(make_io(request_pwm=write))
         controller._st.last_written_pct = 40.0
-        with patch(
-            "victus_hub.services.fan_control._daemon_client.request_fan_pwm",
-        ) as write:
-            controller._control_tick(low_profile(42), 50.0, None, 0.0)
+        controller._control_tick(low_profile(42), 50.0, None, 0.0)
         write.assert_not_called()
         self.assertEqual(controller._st.last_written_pct, 40.0)
 
     def test_target_change_above_threshold_is_written(self):
-        controller = FanController()
+        write = Mock()
+        controller = FanController(make_io(request_pwm=write))
         controller._st.last_written_pct = 40.0
-        with patch(
-            "victus_hub.services.fan_control._daemon_client.request_fan_pwm",
-        ) as write:
-            controller._control_tick(low_profile(43), 50.0, None, 0.0)
+        controller._control_tick(low_profile(43), 50.0, None, 0.0)
         write.assert_called_once_with(109)
         self.assertEqual(controller._st.last_written_pct, 43.0)
 
 
+class TestPollSkipsTempsOutsideCustom(unittest.TestCase):
+    def test_auto_preset_does_not_read_temperatures(self):
+        read_temps = Mock(return_value=(90.0, 90.0))
+        config = FanConfig(
+            profiles=[linear_profile(), linear_profile(), linear_profile()],
+            custom_enabled=False,
+            manual_preset="auto",
+        )
+        controller = FanController(make_io(load_config=lambda: config, read_temps=read_temps))
+        controller._poll_once()
+        read_temps.assert_not_called()
+
+    def test_max_preset_does_not_read_temperatures(self):
+        read_temps = Mock(return_value=(90.0, 90.0))
+        config = FanConfig(
+            profiles=[linear_profile(), linear_profile(), linear_profile()],
+            custom_enabled=False,
+            manual_preset="max",
+        )
+        controller = FanController(make_io(load_config=lambda: config, read_temps=read_temps))
+        controller._poll_once()
+        read_temps.assert_not_called()
+
+
 class TestCurveResponse(unittest.TestCase):
     def _poll_once(self, *, response="smooth", smart=False, min_fan_change_pct=2.0):
-        controller = FanController()
         config = FanConfig(
             profiles=[linear_profile(), linear_profile(), linear_profile()],
             custom_enabled=True,
@@ -233,21 +266,8 @@ class TestCurveResponse(unittest.TestCase):
             curve_response=response,
             min_fan_change_pct=min_fan_change_pct,
         )
-        with patch(
-            "victus_hub.services.fan_control.api.read_sensors",
-            return_value=SensorSnapshot(cpu_temp_c=50.0),
-        ), patch(
-            "victus_hub.services.fan_control.api.get_current_profile",
-            return_value=1,
-        ), patch(
-            "victus_hub.services.fan_control._fan_config.load",
-            return_value=config,
-        ), patch(
-            "victus_hub.services.fan_control.read_hp_pwm_pct",
-            return_value=20.0,
-        ), patch(
-            "victus_hub.services.fan_control._daemon_client.request_fan_manual",
-        ), patch.object(controller, "_control_tick") as control_tick:
+        controller = FanController(make_io(load_config=lambda: config))
+        with patch.object(controller, "_control_tick") as control_tick:
             controller._poll_once()
         return control_tick.call_args.args
 

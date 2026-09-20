@@ -3,17 +3,23 @@
 Ports privileged/daemon.rs exactly.
 """
 
+import json
 import logging
 import os
 import select
+import signal
 import struct
 import socket
 import threading
 import time
 
 from victus_hub.backend import protocol
+from victus_hub.backend.fan_config import config_from_dict
 from victus_hub.backend.rapl import RaplPowerSampler
+from victus_hub.features.keyboard.lighting import lighting_from_dict, lighting_to_dict
 from victus_hubd import cpufreq, intel, ryzenadj, sysfs
+from victus_hubd.runtime import Runtime
+from victus_hubd.state import power_from_dict, state_to_dict
 
 SOCKET_PATH = "/run/victus-hubd/victus-hub.sock"
 
@@ -51,11 +57,11 @@ _last_press_key: int = 0
 _last_press_seq: int = 0
 _kbd_subscribers: set[socket.socket] = set()
 _kbd_subscribers_lock = threading.Lock()
+_runtime: Runtime | None = None
 
 
-def _publish_keypress(mods: tuple[int, ...], key: int, seq: int) -> None:
-    """Push each press without letting a slow subscriber block input reading."""
-    payload = f"KEY\t{','.join(map(str, mods))}\t{key}\t{seq}\n".encode()
+def _publish_line(payload: bytes) -> None:
+    """Push one line to event subscribers without blocking input reading."""
     with _kbd_subscribers_lock:
         for stream in tuple(_kbd_subscribers):
             try:
@@ -69,6 +75,17 @@ def _publish_keypress(mods: tuple[int, ...], key: int, seq: int) -> None:
                 stream.shutdown(socket.SHUT_RDWR)
             except OSError:
                 pass
+
+
+def _publish_keypress(mods: tuple[int, ...], key: int, seq: int) -> None:
+    """Push each press without letting a slow subscriber block input reading."""
+    _publish_line(f"KEY\t{','.join(map(str, mods))}\t{key}\t{seq}\n".encode())
+
+
+def _publish_lighting(settings) -> None:
+    """Push the lighting policy that a hardware shortcut just applied."""
+    body = json.dumps(lighting_to_dict(settings), separators=(",", ":"))
+    _publish_line(f"LIGHTING\t{body}\n".encode())
 
 
 def _stream_keyboard_events(stream: socket.socket) -> None:
@@ -104,6 +121,12 @@ def _record_key_event(code: int, value: int) -> None:
         elif value == 0 and code in _MODIFIER_CODES:
             _held_mods.discard(code)
     if press is not None:
+        runtime = _runtime
+        if runtime is not None:
+            try:
+                runtime.handle_key(press[0], press[1])
+            except Exception:
+                logger.exception("hardware shortcut failed")
         _publish_keypress(*press)
 
 
@@ -289,7 +312,23 @@ def _parse_power_limits(body: str) -> tuple[int, int, int, int]:
         raise RuntimeError("invalid integer") from None
 
 
-def _make_dispatch(sampler: RaplPowerSampler, sampler_lock: threading.Lock | None):
+def _parse_json_object(body: str, name: str) -> dict:
+    if not body:
+        raise RuntimeError(f"empty {name}")
+    try:
+        payload = json.loads(body)
+    except json.JSONDecodeError as e:
+        raise RuntimeError(f"invalid {name} json") from e
+    if not isinstance(payload, dict):
+        raise RuntimeError(f"{name} must be a JSON object")
+    return payload
+
+
+def _make_dispatch(
+    sampler: RaplPowerSampler,
+    sampler_lock: threading.Lock | None,
+    runtime: Runtime | None = None,
+):
     """Build the (prefix -> handler) table for the request dispatch.
 
     Each handler takes the request body (request minus its prefix) and
@@ -437,18 +476,111 @@ def _make_dispatch(sampler: RaplPowerSampler, sampler_lock: threading.Lock | Non
         elapsed = kbd_elapsed_since_last_input()
         return f"OK\t{elapsed:.3f}\n"
 
+    def _require_runtime() -> Runtime:
+        if runtime is None:
+            raise RuntimeError("runtime is not running")
+        return runtime
+
+    def _fan_config(body: str) -> str:
+        config = config_from_dict(_parse_json_object(body, "fan-config"))
+        logger.info("[fan-control] daemon request: fan-config")
+        result = _require_runtime().set_fan_config(config)
+        return protocol.format_status_response((True, result))
+
+    def _lighting_config(body: str) -> str:
+        settings = lighting_from_dict(_parse_json_object(body, "lighting-config"))
+        logger.info("[keyboard-rgb] daemon request: lighting-config")
+        result = _require_runtime().set_lighting(settings)
+        return protocol.format_status_response((True, result))
+
+    def _power_config(body: str) -> str:
+        policy = power_from_dict(_parse_json_object(body, "power-config"))
+        logger.info("[power-limits] daemon request: power-config enabled=%s", policy.enabled)
+        result = _require_runtime().set_power(policy)
+        return protocol.format_status_response((True, result))
+
+    def _cpu_frequency_config(body: str) -> str:
+        body = body.lstrip("\t").strip()
+        if not body:
+            result = _require_runtime().set_cpu_frequency(None)
+            return protocol.format_status_response((True, result))
+        parts = body.split("\t")
+        if len(parts) != 2:
+            raise RuntimeError("expected 2 integers (minimum, maximum in kHz)")
+        minimum = _parse_int(parts[0], "minimum frequency")
+        maximum = _parse_int(parts[1], "maximum frequency")
+        if not (0 < minimum <= maximum):
+            raise RuntimeError("invalid frequency range")
+        logger.info("[cpu-frequency] daemon request: persist %d-%d kHz", minimum, maximum)
+        result = _require_runtime().set_cpu_frequency((minimum, maximum))
+        return protocol.format_status_response((True, result))
+
+    def _battery_power_save(body: str) -> str:
+        enabled = _parse_int(body, "battery-power-save") != 0
+        logger.info("[power] daemon request: battery-power-save %s", enabled)
+        result = _require_runtime().set_battery_power_save(enabled)
+        return protocol.format_status_response((True, result))
+
+    def _hardware_shortcuts(body: str) -> str:
+        enabled = _parse_int(body, "hardware-shortcuts") != 0
+        logger.info("[keyboard] daemon request: hardware-shortcuts %s", enabled)
+        result = _require_runtime().set_hardware_shortcuts(enabled)
+        return protocol.format_status_response((True, result))
+
+    def _disable_nvidia_queries(body: str) -> str:
+        enabled = _parse_int(body, "disable-nvidia-queries") != 0
+        result = _require_runtime().set_disable_nvidia_queries(enabled)
+        return protocol.format_status_response((True, result))
+
+    def _set_profile(body: str) -> str:
+        index = _parse_int(body, "profile")
+        logger.info("[profile] daemon request: set-profile %d", index)
+        try:
+            result = _require_runtime().set_profile(index)
+            return protocol.format_status_response((True, result))
+        except RuntimeError as e:
+            return protocol.format_status_response((False, str(e)))
+
+    def _get_state(_body: str) -> str:
+        payload = json.dumps(
+            state_to_dict(_require_runtime().snapshot()),
+            separators=(",", ":"),
+        )
+        return f"OK\t{payload}\n"
+
+    def _prepare_sleep(_body: str) -> str:
+        logger.info("[power-state] daemon request: prepare-sleep")
+        _require_runtime().prepare_sleep()
+        return protocol.format_status_response((True, "prepare-sleep"))
+
+    def _resume(_body: str) -> str:
+        logger.info("[power-state] daemon request: resume")
+        _require_runtime().resume()
+        return protocol.format_status_response((True, "resume"))
+
     return [
         ("cpu-power", _cpu_power),
         ("gpu-mux-mode\t", _gpu_mux_mode),
+        ("fan-config\t", _fan_config),
         ("fan-auto", _fan_auto),
         ("fan-max", _fan_max),
         ("fan-pwm\t", _fan_pwm),
         ("fan-manual", _fan_manual),
+        ("lighting-config\t", _lighting_config),
         ("keyboard-color\t", _keyboard_color),
+        ("power-config\t", _power_config),
         ("power-limits\t", _power_limits),
         ("intel-power-limits\t", _intel_power_limits),
         ("intel-undervolt\t", _intel_undervolt),
+        ("cpu-frequency-config", _cpu_frequency_config),
         ("cpu-frequency-limits\t", _cpu_frequency_limits),
+        ("battery-power-save\t", _battery_power_save),
+        ("hardware-shortcuts\t", _hardware_shortcuts),
+        ("disable-nvidia-queries\t", _disable_nvidia_queries),
+        ("set-profile\t", _set_profile),
+        ("get-state", _get_state),
+        ("prepare-sleep", _prepare_sleep),
+        ("resume", _resume),
         ("keyboard-brightness\t", _keyboard_brightness),
         ("keyboard-user-brightness\t", _keyboard_user_brightness),
         ("keyboard-last-input", _keyboard_last_input),
@@ -458,7 +590,12 @@ def _make_dispatch(sampler: RaplPowerSampler, sampler_lock: threading.Lock | Non
 
 
 
-def handle_client(stream: socket.socket, sampler: RaplPowerSampler, sampler_lock: threading.Lock | None = None) -> None:
+def handle_client(
+    stream: socket.socket,
+    sampler: RaplPowerSampler,
+    sampler_lock: threading.Lock | None = None,
+    runtime: Runtime | None = None,
+) -> None:
     """Handle one client connection. Runs in its own thread."""
     data = _recv_line(stream)
     if data is None:
@@ -472,7 +609,7 @@ def handle_client(stream: socket.socket, sampler: RaplPowerSampler, sampler_lock
     if request == "keyboard-events":
         _stream_keyboard_events(stream)
         return
-    dispatch = _make_dispatch(sampler, sampler_lock)
+    dispatch = _make_dispatch(sampler, sampler_lock, runtime)
     matched_prefix: str | None = None
     handler = None
     for prefix, h in dispatch:
@@ -506,6 +643,7 @@ def handle_client(stream: socket.socket, sampler: RaplPowerSampler, sampler_lock
 
 def run_daemon() -> None:
     """Start the victus-hubd Unix socket daemon."""
+    global _runtime
     socket_path = SOCKET_PATH
 
     # Clean up stale socket
@@ -518,26 +656,49 @@ def run_daemon() -> None:
     server.bind(socket_path)
     os.chmod(socket_path, 0o666)
     server.listen(5)
+    server.settimeout(1.0)
 
     sampler = RaplPowerSampler()
     # Use a lock because sampler.read() mutates self._sample
     sampler_lock = threading.Lock()
 
     start_keyboard_watcher()
+    runtime = Runtime()
+    runtime.set_idle_elapsed(kbd_elapsed_since_last_input)
+    runtime.set_publish_lighting(_publish_lighting)
+    _runtime = runtime
+    runtime.start()
+
+    stopping = threading.Event()
+
+    def _on_signal(_signum, _frame) -> None:
+        stopping.set()
+        try:
+            server.close()
+        except OSError:
+            pass
+
+    signal.signal(signal.SIGTERM, _on_signal)
+    signal.signal(signal.SIGINT, _on_signal)
 
     logger.info("victus-hubd listening on %s", socket_path)
 
-    while True:
+    while not stopping.is_set():
         try:
             conn, _addr = server.accept()
+        except socket.timeout:
+            continue
         except OSError:
             break
 
         def _handle(s: socket.socket):
             try:
-                handle_client(s, sampler, sampler_lock)
+                handle_client(s, sampler, sampler_lock, runtime)
             except Exception:
                 logger.exception("client handler crashed")
 
         t = threading.Thread(target=_handle, args=(conn,), daemon=True)
         t.start()
+
+    logger.info("victus-hubd shutting down")
+    runtime.stop(reset_hardware=True)

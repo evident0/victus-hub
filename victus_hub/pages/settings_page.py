@@ -11,7 +11,7 @@ from victus_hub.app.theme import COLORS, mono_font, ui_font
 from victus_hub.backend.diagnostics import write_diagnostics_report
 from victus_hub.backend.hardware import board_title
 from victus_hub.backend.nvidia import (
-    nvidia_query_disable_enabled, set_nvidia_queries_disabled,
+    nvidia_query_disable_enabled,
 )
 from victus_hub.features.keyboard.shortcut import (
     KeybindSettings,
@@ -175,7 +175,9 @@ class SettingsPage(QWidget):
 
         self._disable_nvidia_queries = ToggleSwitch()
         self._disable_nvidia_queries.setChecked(nvidia_query_disable_enabled())
-        self._disable_nvidia_queries.toggled.connect(set_nvidia_queries_disabled)
+        from victus_hub.api import set_disable_nvidia_queries
+
+        self._disable_nvidia_queries.toggled.connect(set_disable_nvidia_queries)
         layout.addWidget(SettingsRow(
             "Disable NVIDIA GPU queries",
             "Skip NVIDIA sensors and GPU-name detection, including NVML and nvidia-smi, "

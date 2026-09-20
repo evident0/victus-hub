@@ -1,5 +1,6 @@
 """Global shortcuts driven by the daemon's push stream, without key polling."""
 
+import json
 import logging
 from pathlib import Path
 
@@ -7,8 +8,9 @@ from PySide6.QtCore import QFileSystemWatcher, QObject, QSettings, Qt, Signal
 from PySide6.QtNetwork import QLocalSocket
 
 from victus_hub.backend.daemon_client import SOCKET_PATH
+from victus_hub.features.keyboard.lighting import lighting_from_dict
 from victus_hub.features.keyboard.shortcut import (
-    HARDWARE_SHORTCUTS_KEY, KEY_LEFTCTRL, KEY_LEFTSHIFT, read_keybind_settings,
+    HARDWARE_SHORTCUTS_KEY, read_keybind_settings,
 )
 
 logger = logging.getLogger(__name__)
@@ -17,9 +19,7 @@ logger = logging.getLogger(__name__)
 class ShortcutController(QObject):
     triggered = Signal()
     captured = Signal(object, int)
-    brightness_step = Signal(int)
-    animation_step = Signal(int)
-    performance_cycle = Signal()
+    lighting_changed = Signal(object)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -101,6 +101,17 @@ class ShortcutController(QObject):
             if line == "OK\tkeyboard-events":
                 self._subscribed = True
                 continue
+            if line.startswith("LIGHTING\t"):
+                if discard:
+                    continue
+                try:
+                    payload = json.loads(line.split("\t", 1)[1])
+                except (json.JSONDecodeError, IndexError):
+                    logger.warning("Malformed lighting event")
+                    continue
+                if isinstance(payload, dict):
+                    self.lighting_changed.emit(lighting_from_dict(payload))
+                continue
             if discard or not line.startswith("KEY\t"):
                 continue
             try:
@@ -120,16 +131,6 @@ class ShortcutController(QObject):
             self._capturing = False
             self.captured.emit(mods, key)
             return
-        if self._hardware_enabled and mods == frozenset({KEY_LEFTCTRL, KEY_LEFTSHIFT}):
-            if key in (103, 108):  # Up / Down
-                self.brightness_step.emit(1 if key == 103 else -1)
-                return
-            if key in (105, 106):  # Left / Right
-                self.animation_step.emit(1 if key == 106 else -1)
-                return
-            if key == 50:  # M
-                self.performance_cycle.emit()
-                return
         if self._settings.enabled and key == self._settings.key \
                 and mods == frozenset(self._settings.mods):
             self.triggered.emit()

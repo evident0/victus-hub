@@ -22,10 +22,7 @@ from victus_hub.pages.keyboard_page import KeyboardPage
 from victus_hub.pages.settings_page import SettingsPage
 from victus_hub.windows.sensor_graph_window import SensorGraphWindow
 from victus_hub import api
-from victus_hub.services.fan_control import start_fan_control, set_suspended
 from victus_hub.services.lighting_controller import LightingController
-from victus_hub.services.power_controller import PowerLimitController
-from victus_hub.services.battery_power import BatteryPowerController
 from victus_hub.services.profile_watcher import ProfileWatcher
 from victus_hub.app.power_state import PowerStateWatcher
 from victus_hub.services.shortcut_controller import ShortcutController
@@ -39,6 +36,7 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         api.start_sensor_reader()
+        api.sync_settings_with_daemon()
         self.setWindowTitle("Victus Hub")
         self.resize(460, 740)
         self.setMinimumSize(420, 720)
@@ -151,8 +149,6 @@ class MainWindow(QMainWindow):
         self._keyboard_page.effect_changed.connect(
             lambda *_: self._home_page.refresh_lighting())
 
-        self._power = PowerLimitController(self)
-
         # System profile changes arrive through D-Bus instead of a recurring
         # tuned-adm/powerprofilesctl subprocess.
         self._profile_watcher = ProfileWatcher(self)
@@ -164,10 +160,9 @@ class MainWindow(QMainWindow):
         # Program shortcut (global hotkey to unhide/restore the window)
         self._shortcut = ShortcutController(self)
         self._shortcut.triggered.connect(self._show_all_windows)
-        self._shortcut.brightness_step.connect(self._keyboard_page.step_brightness)
-        self._shortcut.animation_step.connect(self._keyboard_page.step_animation)
-        self._shortcut.performance_cycle.connect(self._cycle_profile)
+        self._shortcut.lighting_changed.connect(self._on_daemon_lighting)
         self._settings_page.hardware_shortcuts_changed.connect(self._shortcut.set_hardware_enabled)
+        self._settings_page.hardware_shortcuts_changed.connect(api.set_hardware_shortcuts)
         QApplication.instance().aboutToQuit.connect(self._shortcut.shutdown)
         self._settings_page.set_shortcut_controller(self._shortcut)
 
@@ -179,56 +174,29 @@ class MainWindow(QMainWindow):
         self._sensor_timer.timeout.connect(self._poll_sensors)
 
         # UI-active gate (visibility). When False (hidden to tray /
-        # minimized) the sensor timer stops, the keyboard preview
-        # repaint is gated, and the lm-sensors subprocess is skipped.
-        # Hardware control threads keep running.
-        # Fan-control background thread
-        # Start the profile watcher before fan control so its initial state is
-        # available to the background controller.
+        # minimized) the sensor timer stops and the keyboard preview
+        # repaint is gated. Hardware control runs in the daemon.
         self._profile_watcher.start()
-        start_fan_control()
-        # Sync fan mode segmented control from persisted config and apply
-        # hardware for custom/max (UI-only restore left EC in auto while
-        # config said custom — fan loop could skip writes when duty matched).
         try:
             _cfg = api.get_fan_config()
             if _cfg.custom_enabled and _cfg.smart_enabled:
                 self._selected_fan_mode = "smart"
-                self._sync_fan_mode_ui("smart")
-                try:
-                    api.set_fan_manual()
-                except Exception:
-                    logger.exception("set fan manual (restore smart) failed")
             elif _cfg.custom_enabled:
                 self._selected_fan_mode = "custom"
-                self._sync_fan_mode_ui("custom")
-                try:
-                    api.set_fan_manual()
-                except Exception:
-                    logger.exception("set fan manual (restore custom) failed")
             elif _cfg.manual_preset == "max":
                 self._selected_fan_mode = "max"
-                self._sync_fan_mode_ui("max")
-                self._set_fan_max()
             else:
                 self._selected_fan_mode = "auto"
-                self._sync_fan_mode_ui("auto")
+            self._sync_fan_mode_ui(self._selected_fan_mode)
         except Exception:
             logger.exception("init fan config check failed")
         self._sync_tray_checks()
 
-        # ── Power state watcher (suspend/shutdown cleanup) ──
+        # Preview-only pause on suspend; hardware cleanup is in the daemon.
         self._power_state = PowerStateWatcher(self)
         self._power_state.suspending.connect(self._on_system_suspend)
         self._power_state.resuming.connect(self._on_system_resume)
-        self._power_state.shutting_down.connect(self._on_system_shutdown)
-
-        self._battery_power = BatteryPowerController(self)
-        self._battery_power.power_save_requested.connect(self._on_battery_power_save)
-        self._battery_power.restore_requested.connect(self._restore_battery_profile)
-        self._settings_page.battery_power_save_changed.connect(self._battery_power.set_enabled)
-        self._power_state.resuming.connect(self._battery_power.refresh)
-        self._battery_power.refresh()
+        self._settings_page.battery_power_save_changed.connect(api.set_battery_power_save)
 
         self._update_min_height(0)
         self._apply_accent(self._selected_profile)
@@ -280,9 +248,7 @@ class MainWindow(QMainWindow):
 
     def _update_ui_active(self) -> None:
         """Central visibility switch. Pauses UI-only work when the window is
-        hidden to tray or minimized; hardware control (fan-control thread,
-        power-limit reapply, shortcut event stream, keyboard-backlight
-        hardware writes) keeps running in all states."""
+        hidden to tray or minimized. Hardware control runs in the daemon."""
         active = self._ui_is_shown()
         if active == self._ui_active:
             return
@@ -408,14 +374,7 @@ class MainWindow(QMainWindow):
         self.activateWindow()
         self._update_ui_active()
     def _quit_app(self):
-        """Restore fan hardware to auto and turn off the keyboard backlight,
-        then quit.  The user's last mode choice survives in config so the
-        segmented control restores it on the next start.
-        """
-        try:
-            api.set_fan_auto()
-        except Exception:
-            logger.exception("set fan auto during quit failed")
+        """Quit the UI. Hardware control stays with the daemon."""
         self._lighting.shutdown()
         self._tray.hide()
         self._quitting = True
@@ -431,64 +390,19 @@ class MainWindow(QMainWindow):
 
     # ── System suspend / shutdown cleanup ──
 
+    def _on_daemon_lighting(self, settings) -> None:
+        """Display lighting that the daemon applied from a hardware shortcut."""
+        self._keyboard_page.apply_remote(settings)
+        self._lighting.apply_remote(settings)
+        self._home_page.refresh_lighting()
+
     def _on_system_suspend(self) -> None:
-        """Called by logind PrepareForSleep(True): reset the hardware to a
-        safe state *before* the system suspends, and pause the background
-        loops so they don't re-assert manual-fan / keyboard-color in the
-        brief window before suspend takes effect."""
-        set_suspended(True)
+        """Pause the keyboard preview; daemon sleep hook handles hardware."""
         self._lighting.pause()
-        try:
-            api.set_fan_auto()
-            logger.info("suspend cleanup: fans set to auto")
-        except Exception:
-            logger.exception("set_fan_auto during suspend failed")
-        try:
-            api.set_keyboard_brightness(0)
-            logger.info("suspend cleanup: keyboard brightness set to 0")
-        except Exception:
-            logger.exception("set_keyboard_brightness(0) during suspend failed")
 
     def _on_system_resume(self) -> None:
-        """Called by logind PrepareForSleep(False): restart the lighting
-        timer, unpause the fan loop, and restore non-auto fan modes.
-
-        Suspend cleanup leaves the EC in fan-auto. Custom is re-claimed by
-        the fan-control thread (ownership is cleared while suspended, so the
-        next poll re-runs enter-custom: fan-manual + force first PWM write).
-        Max is re-applied here (pwm1_enable=0) because the control loop does
-        not drive max mode.
-        """
+        """Restart the keyboard preview after suspend."""
         self._lighting.resume()
-        set_suspended(False)
-        try:
-            _cfg = api.get_fan_config()
-            if _cfg.manual_preset == "max":
-                try:
-                    api.set_fan_max()
-                    logger.info("resume: restored fan max (pwm1_enable=0)")
-                except Exception:
-                    logger.exception("resume fan max restore failed")
-        except Exception:
-            logger.exception("resume fan restore failed")
-
-    def _on_system_shutdown(self) -> None:
-        """Called by logind PrepareForShutdown(True): same cleanup as
-        suspend. The process is about to be killed anyway; pausing is
-        harmless and lets the fan-auto / brightness=0 writes win the race
-        against the background loops."""
-        set_suspended(True)
-        self._lighting.pause()
-        try:
-            api.set_fan_auto()
-            logger.info("shutdown cleanup: fans set to auto")
-        except Exception:
-            logger.exception("set_fan_auto during shutdown failed")
-        try:
-            api.set_keyboard_brightness(0)
-            logger.info("shutdown cleanup: keyboard brightness set to 0")
-        except Exception:
-            logger.exception("set_keyboard_brightness(0) during shutdown failed")
     # ── Geometry persistence ──
 
     def _restore_geometry(self):
@@ -614,10 +528,6 @@ class MainWindow(QMainWindow):
             api.set_custom_fan_enabled(False)
         except Exception:
             logger.exception("set custom fan enabled (auto) failed")
-        try:
-            api.set_fan_auto()
-        except Exception:
-            logger.exception("set fan auto failed")
 
     def _set_fan_max(self):
         """Engage BIOS/EC max-fan mode (hp-wmi: pwm1_enable=0)."""
@@ -633,10 +543,6 @@ class MainWindow(QMainWindow):
             api.set_custom_fan_enabled(False)
         except Exception:
             logger.exception("set custom fan enabled (max) failed")
-        try:
-            api.set_fan_max()
-        except Exception:
-            logger.exception("set fan max failed")
 
     def _set_fan_smart(self):
         """Software curve with the built-in Smart table and faster EWMA."""
@@ -648,10 +554,6 @@ class MainWindow(QMainWindow):
             api.set_custom_fan_enabled(True)
         except Exception:
             logger.exception("set custom fan enabled (smart) failed")
-        try:
-            api.set_fan_manual()
-        except Exception:
-            logger.exception("set fan manual (smart) failed")
 
     def _set_fan_custom(self):
         try:
@@ -666,10 +568,6 @@ class MainWindow(QMainWindow):
             api.set_custom_fan_enabled(True)
         except Exception:
             logger.exception("set custom fan enabled failed")
-        try:
-            api.set_fan_manual()
-        except Exception:
-            logger.exception("set fan manual failed")
     def _open_sensor_graph(self, key: str):
         """Open or focus a sensor graph window for the given sensor key."""
         existing = self._graph_windows.get(key)

@@ -13,8 +13,7 @@ from __future__ import annotations
 
 import math
 import re
-from dataclasses import dataclass, field
-from PySide6.QtCore import QSettings
+from dataclasses import dataclass, field, replace
 
 # Kernel LED zone order for 4-zone keyboards.
 ZONE_NAMES: tuple[str, ...] = ("Right", "Center", "Left", "WASD")
@@ -74,6 +73,7 @@ EFFECTS_IGNORE_COLOR: frozenset[str] = frozenset(
 
 STATIC_INTERVAL_MS = 200
 ANIM_INTERVAL_MS = 50
+BRIGHTNESS_STEPS = (0, 64, 128, 191, 255)
 
 
 @dataclass
@@ -400,24 +400,35 @@ def step_increment(speed: int, dt: float) -> float:
     return dt * (clamped / 20.0)
 
 
-# ── QSettings persistence ──
+def lighting_to_dict(settings: LightingSettings) -> dict:
+    payload = {
+        "enabled": bool(settings.enabled),
+        "effect": str(settings.effect),
+        "color": str(settings.color),
+        "color2": str(settings.color2),
+        "speed": int(settings.speed),
+        "idle_timeout": int(settings.idle_timeout),
+        "brightness": int(settings.brightness),
+    }
+    if settings.zone_colors:
+        payload["zone_colors"] = [str(c) for c in settings.zone_colors]
+    return payload
 
-def read_lighting_settings() -> LightingSettings:
-    s = QSettings()
-    raw = s.value("keyboardLighting")
-    if raw is None:
+
+def lighting_from_dict(raw: dict | None) -> LightingSettings:
+    if not raw:
         return DEFAULT_LIGHTING_SETTINGS
     try:
         primary = raw.get("color", DEFAULT_COLOR)
         zone_raw = raw.get("zone_colors") or []
         zone_colors: list[str] = []
         if isinstance(zone_raw, (list, tuple)):
-            zone_colors = [str(c) for c in zone_raw]
+            zone_colors = [str(c).replace("\n", "").replace("\t", "") for c in zone_raw]
         return LightingSettings(
             enabled=bool(raw.get("enabled", True)),
-            effect=str(raw.get("effect", "static")),
-            color=str(primary),
-            color2=str(raw.get("color2", DEFAULT_COLOR2)),
+            effect=str(raw.get("effect", "static")).replace("\n", "").replace("\t", ""),
+            color=str(primary).replace("\n", "").replace("\t", ""),
+            color2=str(raw.get("color2", DEFAULT_COLOR2)).replace("\n", "").replace("\t", ""),
             speed=int(raw.get("speed", DEFAULT_SPEED)),
             zone_colors=zone_colors,
             idle_timeout=int(raw.get("idle_timeout", 0)),
@@ -427,17 +438,51 @@ def read_lighting_settings() -> LightingSettings:
         return DEFAULT_LIGHTING_SETTINGS
 
 
+def step_brightness_settings(
+    settings: LightingSettings, direction: int,
+) -> LightingSettings:
+    """Move to the next 0/25/50/75/100% brightness step."""
+    current = settings.brightness if settings.enabled else 0
+    if direction > 0:
+        level = next((v for v in BRIGHTNESS_STEPS if v > current), 255)
+    else:
+        level = next((v for v in reversed(BRIGHTNESS_STEPS) if v < current), 0)
+    enabled = settings.enabled
+    if level > 0 and not enabled:
+        enabled = True
+    return replace(settings, brightness=level, enabled=enabled)
+
+
+def step_effect_settings(
+    settings: LightingSettings, direction: int, zone_count: int,
+) -> LightingSettings:
+    """Cycle supported lighting effects, including Off."""
+    items = ["off"] + [value for value, _label in effects_for_zone_count(zone_count)]
+    current = settings.effect if settings.enabled else "off"
+    if current not in items:
+        index = 0 if direction > 0 else len(items) - 1
+    else:
+        index = (items.index(current) + direction) % len(items)
+    effect = items[index]
+    if effect == "off":
+        return replace(settings, enabled=False)
+    return replace(settings, enabled=True, effect=effect)
+
+
+# ── QSettings persistence ──
+
+def read_lighting_settings() -> LightingSettings:
+    from PySide6.QtCore import QSettings
+
+    raw = QSettings().value("keyboardLighting")
+    if raw is None:
+        return DEFAULT_LIGHTING_SETTINGS
+    if not isinstance(raw, dict):
+        return DEFAULT_LIGHTING_SETTINGS
+    return lighting_from_dict(raw)
+
+
 def write_lighting_settings(settings: LightingSettings):
-    s = QSettings()
-    payload = {
-        "enabled": settings.enabled,
-        "effect": settings.effect,
-        "color": settings.color,
-        "color2": settings.color2,
-        "speed": settings.speed,
-        "idle_timeout": settings.idle_timeout,
-        "brightness": settings.brightness,
-    }
-    if settings.zone_colors:
-        payload["zone_colors"] = list(settings.zone_colors)
-    s.setValue("keyboardLighting", payload)
+    from PySide6.QtCore import QSettings
+
+    QSettings().setValue("keyboardLighting", lighting_to_dict(settings))

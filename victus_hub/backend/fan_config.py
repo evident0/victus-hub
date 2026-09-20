@@ -94,18 +94,17 @@ def _config_path() -> Path:
     return Path(".") / CONFIG_FILE_NAME
 
 
-# ── Load / Save ──
+# ── Dict (file + daemon protocol) ──
 
-def load() -> FanConfig:
-    try:
-        text = _config_path().read_text()
-        stored = json.loads(text)
-    except (OSError, json.JSONDecodeError):
-        stored = {}
-
+def config_from_dict(stored: dict | None) -> FanConfig:
+    """Normalize a stored/JSON fan-config mapping into a FanConfig."""
+    stored = stored or {}
     custom_enabled = stored.get("custom_curve_enabled", False) or False
     manual_preset = stored.get("manual_preset") or None
-    min_fan_change_pct = max(float(stored.get("min_fan_change_pct", 2.0)), 0.0)
+    try:
+        min_fan_change_pct = max(float(stored.get("min_fan_change_pct", 2.0)), 0.0)
+    except (TypeError, ValueError):
+        min_fan_change_pct = 2.0
     smart_enabled = bool(stored.get("smart_curve_enabled", False)) and custom_enabled
     curve_response = stored.get("fan_curve_response", CURVE_RESPONSE_SMOOTH)
     if curve_response not in CURVE_RESPONSES:
@@ -134,6 +133,39 @@ def load() -> FanConfig:
         smart_enabled=smart_enabled,
         curve_response=curve_response,
     )
+
+
+def config_to_dict(config: FanConfig) -> dict:
+    """Serialize a FanConfig to the on-disk / protocol mapping."""
+    cpu_map = {}
+    gpu_map = {}
+    for i, profile in enumerate(config.profiles):
+        key = PROFILE_KEYS[i]
+        cpu_map[key] = [[p.temp, p.speed] for p in profile.cpu_points]
+        gpu_map[key] = [[p.temp, p.speed] for p in profile.gpu_points]
+    return {
+        "custom_tuned_profile": "balanced",
+        "custom_curve_enabled": config.custom_enabled,
+        "smart_curve_enabled": config.smart_enabled,
+        "fan_curve_response": config.curve_response,
+        "manual_preset": config.manual_preset,
+        "min_fan_change_pct": config.min_fan_change_pct,
+        "curve_points_by_profile": cpu_map,
+        "gpu_curve_points_by_profile": gpu_map,
+    }
+
+
+# ── Load / Save ──
+
+def load() -> FanConfig:
+    try:
+        text = _config_path().read_text()
+        stored = json.loads(text)
+    except (OSError, json.JSONDecodeError):
+        stored = {}
+    if not isinstance(stored, dict):
+        stored = {}
+    return config_from_dict(stored)
 
 
 def save_profile(profile: int, cpu_points: list[FanPoint], gpu_points: list[FanPoint]) -> FanConfig:
@@ -193,25 +225,7 @@ def save_manual_preset(preset: str | None) -> FanConfig:
 def save_all(config: FanConfig) -> None:
     path = _config_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-
-    cpu_map = {}
-    gpu_map = {}
-    for i, profile in enumerate(config.profiles):
-        key = PROFILE_KEYS[i]
-        cpu_map[key] = [[p.temp, p.speed] for p in profile.cpu_points]
-        gpu_map[key] = [[p.temp, p.speed] for p in profile.gpu_points]
-
-    stored = {
-        "custom_tuned_profile": "balanced",
-        "custom_curve_enabled": config.custom_enabled,
-        "smart_curve_enabled": config.smart_enabled,
-        "fan_curve_response": config.curve_response,
-        "manual_preset": config.manual_preset,
-        "min_fan_change_pct": config.min_fan_change_pct,
-        "curve_points_by_profile": cpu_map,
-        "gpu_curve_points_by_profile": gpu_map,
-    }
-    path.write_text(json.dumps(stored, indent=2))
+    path.write_text(json.dumps(config_to_dict(config), indent=2))
 
 
 # ── Interpolation ──

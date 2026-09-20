@@ -1,9 +1,8 @@
-"""Owns the keyboard lighting timer (static color, software effects, idle dim).
+"""Keyboard lighting preview timer.
 
-Emits ``frame_changed`` with a list of ``RgbColor`` (length = zone count)
-for the preview visual. Single-zone keyboards keep the original one-color
-write path so static behavior stays identical. Animated effects follow
-omen-space's 20 Hz software loop.
+Hardware writes live in the daemon. This controller keeps the on-screen
+preview in sync (static color, software effects, idle dim) and pushes
+lighting policy to the daemon when settings change.
 """
 
 from __future__ import annotations
@@ -47,13 +46,6 @@ class LightingController(QObject):
         self._last_sent_brightness: int | None = None
         self._anim_step = 0.0
         self._last_anim = time.monotonic()
-        # Sync the user-preferred brightness to the daemon before any color
-        # write so _write_led_color applies it atomically (no 100% flash).
-        try:
-            api.set_keyboard_user_brightness(self._settings.brightness)
-            self._last_sent_brightness = self._settings.brightness
-        except Exception:
-            pass
         self._timer = QTimer(self)
         self._timer.setInterval(self._interval_ms())
         self._timer.timeout.connect(self._tick)
@@ -70,13 +62,8 @@ class LightingController(QObject):
         return self._zone_count
 
     def shutdown(self):
-        """Stop the timer and turn the backlight off (called on app quit)."""
+        """Stop the preview timer. Hardware lighting stays with the daemon."""
         self._timer.stop()
-        try:
-            api.set_keyboard_brightness(0)
-            self._backlight_on = False
-        except Exception:
-            pass
 
     def pause(self) -> None:
         """Stop the lighting timer (called on system suspend); unlike
@@ -94,8 +81,14 @@ class LightingController(QObject):
         self._timer.start()
 
     def set_ui_active(self, active: bool) -> None:
-        """Gate the preview frame signal (NOT hardware writes)."""
+        """Run the preview timer only while the window is visible."""
         self._ui_active = active
+        if active:
+            self._sync_timer()
+            self._timer.start()
+            self._tick()
+        else:
+            self._timer.stop()
 
     # ── Settings mutators (called from KeyboardPage signal handlers) ──
 
@@ -154,23 +147,23 @@ class LightingController(QObject):
             self._invalidate_sent()
 
     def set_brightness(self, level: int) -> None:
-        """Set the user-preferred backlight brightness (0-255).
+        """Set the user-preferred backlight brightness (0-255)."""
+        self._update(brightness=max(0, min(255, level)))
 
-        Sends the level to the daemon immediately so that subsequent color
-        writes apply it atomically (no 100% flash on enable / idle wake).
-        """
-        level = max(0, min(255, level))
-        self._update(brightness=level)
-        try:
-            api.set_keyboard_user_brightness(level)
-            self._last_sent_brightness = level
-        except Exception:
-            self._last_sent_brightness = None
+    def apply_remote(self, settings) -> None:
+        """Adopt daemon lighting policy without pushing it back."""
+        self._settings = settings
+        write_lighting_settings(self._settings)
+        if self._settings.idle_timeout == 0:
+            self._dimmed = False
+        self._invalidate_sent()
+        self._sync_timer()
 
     def _update(self, **kwargs) -> None:
         for key, value in kwargs.items():
             setattr(self._settings, key, value)
         write_lighting_settings(self._settings)
+        api.set_lighting_config(self._settings)
 
     def _invalidate_sent(self) -> None:
         self._last_sent_color = None
@@ -186,9 +179,6 @@ class LightingController(QObject):
         interval = self._interval_ms()
         if self._timer.interval() != interval:
             self._timer.setInterval(interval)
-
-    def _hw_min_interval(self, animated: bool) -> float:
-        return 0.050 if animated else 0.200
 
     # ── Animation tick ──
 
@@ -230,93 +220,12 @@ class LightingController(QObject):
                 self._invalidate_sent()
                 self._backlight_on = None
 
-        # Determine the desired hardware state for this frame.
-        # "Off" is brightness=0 (the LED off path). "On" restores the
-        # user brightness through the same logged daemon command, then
-        # writes color (which reapplies that brightness atomically).
         want_off = (not settings.enabled) or self._dimmed
-
         if want_off:
-            if self._backlight_on is not False:
-                if now - self._last_send >= 0.200:
-                    try:
-                        api.set_keyboard_brightness(0)
-                    except Exception:
-                        pass
-                    # Mark off even on failure so a missing RGB module
-                    # only logs once instead of spamming every tick.
-                    self._backlight_on = False
-                    self._last_send = now
-                    self._last_sent_brightness = 0
-                    self._invalidate_sent()
             if self._ui_active:
                 self.frame_changed.emit([RgbColor(0, 0, 0)] * self._zone_count)
             return
 
-        if self._last_sent_brightness != settings.brightness:
-            try:
-                api.set_keyboard_brightness(settings.brightness)
-                self._last_sent_brightness = settings.brightness
-            except Exception:
-                self._last_sent_brightness = None
-
         frames = lighting_frames(settings, self._zone_count, self._anim_step)
-        min_interval = self._hw_min_interval(animated)
-
-        if self._zone_count <= 1:
-            self._tick_single_zone(now, frames[0], min_interval)
-        else:
-            self._tick_multi_zone(now, frames, min_interval)
-
-        # Always update visual keyboard (responsive UI)
         if self._ui_active:
             self.frame_changed.emit(frames)
-
-    def _tick_single_zone(
-        self, now: float, frame: RgbColor, min_interval: float,
-    ) -> None:
-        """Original single-zone write path (unchanged static behavior)."""
-        color = (frame.red, frame.green, frame.blue)
-
-        need_color_write = (self._backlight_on is not True) or (color != self._last_sent_color)
-        if now - self._last_send >= min_interval and need_color_write:
-            try:
-                api.set_keyboard_color(*color)
-                self._last_send = now
-                self._last_sent_color = color
-                self._backlight_on = True
-            except Exception:
-                # Remember the attempted color so we only log once per distinct color.
-                self._last_send = now
-                self._last_sent_color = color
-                self._backlight_on = True
-
-    def _tick_multi_zone(
-        self, now: float, frames: list[RgbColor], min_interval: float,
-    ) -> None:
-        """Write each zone that differs from the last successfully sent value."""
-        if now - self._last_send < min_interval:
-            return
-
-        any_write = False
-        for zone, frame in enumerate(frames):
-            color = (frame.red, frame.green, frame.blue)
-            last = (
-                self._last_sent_zone_colors[zone]
-                if zone < len(self._last_sent_zone_colors)
-                else None
-            )
-            need = (self._backlight_on is not True) or (color != last)
-            if not need:
-                continue
-            try:
-                api.set_keyboard_color(*color, zone=zone)
-            except Exception:
-                pass
-            if zone < len(self._last_sent_zone_colors):
-                self._last_sent_zone_colors[zone] = color
-            any_write = True
-
-        if any_write or self._backlight_on is not True:
-            self._last_send = now
-            self._backlight_on = True

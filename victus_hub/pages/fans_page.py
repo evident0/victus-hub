@@ -270,9 +270,8 @@ class FansPage(QWidget):
         set_fan_curve_response(response)
 
     def _save_min_fan_change(self, value: float) -> None:
-        config = fan_config.load()
-        config.min_fan_change_pct = max(float(value), 0.0)
-        fan_config.save_all(config)
+        from victus_hub.api import save_min_fan_change
+        save_min_fan_change(value)
 
     def _hydrate_editor(self) -> None:
         if not self._config_loaded:

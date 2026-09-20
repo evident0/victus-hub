@@ -689,6 +689,51 @@ class KeyboardPage(QWidget):
         self._persist()
         self.brightness_changed.emit(value)
 
+    def apply_remote(self, settings) -> None:
+        """Show daemon lighting policy without emitting change signals."""
+        settings = normalize_lighting_settings(settings, self._zone_count)
+        self._settings = settings
+        self._zone_hexes = normalize_zone_colors(
+            settings.color, settings.zone_colors, self._zone_count,
+        )
+        if self._zone_count > 1:
+            self._settings.zone_colors = list(self._zone_hexes)
+            self._settings.color = self._zone_hexes[0]
+        if settings.enabled:
+            try:
+                effect_idx = 1 + [v for v, _ in self._effect_items[1:]].index(settings.effect)
+            except ValueError:
+                effect_idx = 1
+        else:
+            effect_idx = 0
+        self._select_effect_link(effect_idx, False)
+        self._enable_check.blockSignals(True)
+        self._enable_check.setChecked(settings.enabled)
+        self._enable_check.blockSignals(False)
+        self._brightness_slider.blockSignals(True)
+        self._brightness_slider.setValue(settings.brightness)
+        self._brightness_slider.blockSignals(False)
+        self._txt_level.setText(f"{round(settings.brightness * 100 / 255)}%")
+        self._speed_slider.blockSignals(True)
+        self._speed_slider.setValue(settings.speed)
+        self._speed_slider.blockSignals(False)
+        self._txt_speed.setText(str(settings.speed))
+        idle_on = settings.idle_timeout > 0
+        self._idle_check.blockSignals(True)
+        self._idle_check.setChecked(idle_on)
+        self._idle_check.blockSignals(False)
+        self._idle_timeout._spin.blockSignals(True)
+        self._idle_timeout._spin.setEnabled(idle_on)
+        if idle_on:
+            self._idle_timeout._spin.setValue(settings.idle_timeout)
+        self._idle_timeout._spin.blockSignals(False)
+        self._set_hex_chip(self._settings.color)
+        if settings.color2:
+            self._color2_btn.setStyleSheet(_style_color_btn(settings.color2))
+        self._persist()
+        self._sync_effect_controls()
+        self._apply_visual_from_settings()
+
     # ── Animation frame update ──
     def apply_frame(self, frame):
         """Update the visual keyboard from controller frames.

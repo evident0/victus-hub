@@ -1,0 +1,28 @@
+#!/bin/sh
+# systemd-sleep hook: tell victus-hubd to park hardware before suspend
+# and restore policy after resume. Runs as root.
+# Arguments: pre|post  suspend|hibernate|hybrid-sleep|...
+set -eu
+SOCK=/run/victus-hubd/victus-hub.sock
+[ -S "$SOCK" ] || exit 0
+case "${1-}" in
+	pre) cmd=prepare-sleep ;;
+	post) cmd=resume ;;
+	*) exit 0 ;;
+esac
+python3 - "$SOCK" "$cmd" <<'PY'
+import socket
+import sys
+
+sock_path, command = sys.argv[1], sys.argv[2]
+client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+client.settimeout(2)
+try:
+    client.connect(sock_path)
+    client.sendall((command + "\n").encode())
+    client.recv(256)
+except Exception:
+    pass
+finally:
+    client.close()
+PY
