@@ -6,6 +6,16 @@
 #   4. .desktop entry + icon     (app-menu integration)
 set -euo pipefail
 
+APP_ONLY=0
+if [ "${1:-}" = "--app-only" ]; then
+	APP_ONLY=1
+	shift
+fi
+if [ "$#" -ne 0 ]; then
+	printf 'Usage: %s [--app-only]\n' "$0" >&2
+	exit 2
+fi
+
 ROOT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 # shellcheck source=kmod-prompts.sh
 source "$ROOT_DIR/scripts/kmod-prompts.sh"
@@ -27,7 +37,9 @@ else
 fi
 
 # ── 1. Kernel modules / tools (no component prompts) ──
-install_components
+if [ "$APP_ONLY" -eq 0 ]; then
+	install_components
+fi
 
 # ── 2. Daemon + program (editable pip install brings both victus_hub* and
 #        victus_hubd* plus the victus-hub console-script entry point) ──
@@ -117,6 +129,10 @@ DESKTOP
 "${SUDO[@]}" update-desktop-database /usr/share/applications 2>/dev/null || true
 
 printf '\033[32m── Install complete ──\033[0m\n'
-printf '  • Installed hp-wmi (includes MUX), hp-kbd-rgb, and ryzenadj (AMD only)\n'
+if [ "$APP_ONLY" -eq 0 ]; then
+	printf '  • Installed hp-wmi (includes MUX), hp-kbd-rgb, and ryzenadj (AMD only)\n'
+else
+	printf '  • Kernel modules and RyzenAdj left in place.\n'
+fi
 printf '  • Daemon:        %s (running)\n' "$SERVICE_NAME"
 printf '  • Program:       victus-hub   (app menu or: victus-hub)\n'

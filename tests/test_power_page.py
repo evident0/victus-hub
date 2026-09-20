@@ -77,6 +77,32 @@ class TestPowerPage(unittest.TestCase):
             self.assertEqual(write.call_args.args[0].reapply_seconds, changed)
             self.assertFalse(self.page._apply_btn.isEnabled())
 
+    def test_frequency_value_tracks_power_profile_changes(self):
+        self.policies[:] = [replace(self.policies[0], hardware_max=3801000, maximum=3801000)]
+        self.page._load_frequency_limits()
+        self.policies[:] = [replace(self.policies[0], hardware_max=5137904, maximum=4600000)]
+        self.page._load_frequency_limits(refresh=True)
+        self.assertEqual(self.page._frequency_max.value.value(), 4600)
+        self.assertEqual(self.page._frequency_max.value.maximum(), 5137.904)
+        self.writer.assert_not_called()
+
+    def test_frequency_range_tracks_power_profile_changes(self):
+        self.policies[:] = [replace(self.policies[0], hardware_max=3801000, maximum=3801000)]
+        self.page._load_frequency_limits()
+        self.assertEqual(self.page._frequency_max.value.maximum(), 3801)
+        self.page._frequency_min.value.setValue(1200)
+        self.policies[:] = [replace(self.policies[0], hardware_max=5137904)]
+        self.page._load_frequency_limits(refresh=True)
+        self.assertEqual(self.page._frequency_max.value.maximum(), 5137.904)
+        self.assertEqual(self.page._frequency_min.value.value(), 1200)
+        self.page._frequency_max.value.setValue(5000)
+        self.page._load_frequency_limits(refresh=True)
+        self.assertEqual(self.page._frequency_max.value.value(), 5000)
+        self.policies[:] = [replace(self.policies[0], hardware_max=3801000)]
+        self.page._load_frequency_limits(refresh=True)
+        self.assertEqual(self.page._frequency_max.value.value(), 3801)
+        self.writer.assert_not_called()
+
     def test_sync_reapply_does_not_write_settings(self):
         settings = replace(self.page._make_power_settings(), reapply_seconds=45)
         with patch("victus_hub.pages.power_page.read_power_limit_settings", return_value=settings), \

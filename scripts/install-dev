@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Install the app and daemon without rebuilding or reloading hardware components.
+set -euo pipefail
+ROOT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+exec bash "$ROOT_DIR/scripts/install" --app-only "$@"

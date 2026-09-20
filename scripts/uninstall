@@ -8,6 +8,16 @@
 # ~/.config/victus-hub is left in place (user settings preserved).
 set -euo pipefail
 
+APP_ONLY=0
+if [ "${1:-}" = "--app-only" ]; then
+	APP_ONLY=1
+	shift
+fi
+if [ "$#" -ne 0 ]; then
+	printf 'Usage: %s [--app-only]\n' "$0" >&2
+	exit 2
+fi
+
 ROOT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 SERVICE_NAME=victus-hubd.service
 SERVICE_DST="/etc/systemd/system/$SERVICE_NAME"
@@ -87,6 +97,11 @@ printf '\033[1;34m── Uninstalling victus-hub Python packages ──\033[0m\n
 python3 -m pip uninstall -y victus-hub 2>/dev/null || true
 
 # ── 4. Kernel modules ──
+if [ "$APP_ONLY" -eq 1 ]; then
+	printf '── App uninstall complete ──\n'
+	printf '  Kernel modules, RyzenAdj, and user settings left in place.\n'
+	exit 0
+fi
 # hp-wmi uninstall is a no-op when no custom extra/ install is present (avoids
 # unloading in-tree hp_wmi and losing the WMI GUID race to hp_bioscfg).
 printf '\033[1;34m── Uninstalling custom hp-wmi kernel module (if installed) ──\033[0m\n'

@@ -80,12 +80,32 @@ module and RyzenAdj):
 ./scripts/dev-run
 ```
 
+For app-only development installs (including the daemon and desktop entry):
+
+```bash
+./scripts/install-dev
+```
+
+This skips all kernel-module and RyzenAdj installation steps, even if those
+components are missing. Use the regular installer for initial hardware setup;
+it rebuilds/reinstalls components rather than skipping already installed ones.
+
 ## Uninstalling
 
 ```
 ./scripts/uninstall
 ```
 Your settings under `~/.config/victus-hub/` are left in place. Removes everything else
+
+To remove only the app, daemon, sleep hook, and desktop integration:
+
+```bash
+./scripts/uninstall-dev
+```
+
+This preserves installed/loaded kernel modules, RyzenAdj, and user settings.
+You can then run `./scripts/install-dev` to reinstall the app without rebuilding
+or reloading those hardware components.
 
 ## Running
 

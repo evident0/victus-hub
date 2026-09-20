@@ -299,15 +299,20 @@ class PowerPage(QWidget):
         ]
         maximum = f"{max(frequencies):.1f} MHz" if frequencies else "— MHz"
         self._head.set_status(f"CPU {snapshot.cpu_power.value} · Freq {maximum}")
+        if not self._frequency_busy:
+            self._load_frequency_limits(refresh=True)
 
-    def _load_frequency_limits(self):
+    def _load_frequency_limits(self, *, refresh=False):
         try:
             policies = read_frequency_policies()
+            if refresh and policies == getattr(self, "_frequency_policies", None):
+                return
             lower = max(p.hardware_min for p in policies)
             upper = min(p.hardware_max for p in policies)
             if lower > upper:
                 raise RuntimeError("CPU policies have no common frequency range")
         except RuntimeError as exc:
+            self._frequency_policies = None
             self._frequency_min.setEnabled(False)
             self._frequency_max.setEnabled(False)
             self._frequency_btn.setEnabled(False)
@@ -315,6 +320,20 @@ class PowerPage(QWidget):
             return
         minimum = max(lower, min(upper, max(p.minimum for p in policies)))
         maximum = max(minimum, min(upper, min(p.maximum for p in policies)))
+        current = (self._frequency_min.slider.value(), self._frequency_max.slider.value())
+        if (refresh and self._frequency_min.isEnabled()
+                and current != getattr(self, "_frequency_displayed", None)):
+            # Profile changes can change cpuinfo limits. Keep pending edits,
+            # clamped to the newly advertised range, rather than resetting them.
+            minimum = max(lower, min(upper, self._frequency_min.slider.value()))
+            maximum = max(minimum, min(upper, self._frequency_max.slider.value()))
+        self._frequency_displayed = (
+            max(lower, min(upper, max(p.minimum for p in policies))),
+            max(lower, min(upper, min(p.maximum for p in policies))),
+        )
+        if refresh and self._applied_frequency is not None:
+            self._applied_frequency = self._frequency_displayed
+        self._frequency_policies = list(policies)
         for row, value in ((self._frequency_min, minimum), (self._frequency_max, maximum)):
             row.slider.blockSignals(True)
             row.value.blockSignals(True)
