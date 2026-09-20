@@ -1,6 +1,7 @@
 """Power slider editing and frequency application without hardware writes."""
 
 import os
+import tempfile
 import unittest
 from dataclasses import replace
 from pathlib import Path
@@ -8,7 +9,7 @@ from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QEventLoop, QTimer
+from PySide6.QtCore import QEventLoop, QSettings, QTimer
 from PySide6.QtWidgets import QAbstractSpinBox, QApplication
 
 from victus_hub.backend.cpufreq import FrequencyPolicy
@@ -22,6 +23,23 @@ class TestPowerPage(unittest.TestCase):
         cls.app = QApplication.instance() or QApplication([])
 
     def setUp(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.settings = QSettings(str(Path(directory.name) / "settings.ini"), QSettings.IniFormat)
+        settings_patch = patch("victus_hub.features.power.limits.QSettings", return_value=self.settings)
+        settings_patch.start()
+        self.addCleanup(settings_patch.stop)
+        # Policy updates also write to the live daemon, independently of the
+        # direct hardware requests. Never allow either path out of this suite.
+        for name in ("set_power_policy", "set_cpu_frequency_policy", "apply_power_limits",
+                     "request_cpu_frequency_limits", "request_intel_undervolt"):
+            mocked = patch(f"victus_hub.pages.power_page.{name}")
+            mocked.start()
+            self.addCleanup(mocked.stop)
+        transport = patch("victus_hub.backend.daemon_client._request_daemon",
+                          side_effect=AssertionError("Live daemon access from power-page test"))
+        transport.start()
+        self.addCleanup(transport.stop)
         vendor = patch("victus_hub.pages.power_page.is_intel_cpu", return_value=False)
         vendor.start()
         self.addCleanup(vendor.stop)
