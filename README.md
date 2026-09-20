@@ -1,55 +1,11 @@
 # Victus Hub
 
 ![main tab](showcase_main.png)
-Keyboard Panel            |  Fans Panel
-:-------------------------:|:-------------------------:
-![](showcase_keyboard.png)  |  ![](showcase_curve.png)
 
 A control panel for HP Victus and Omen laptops on Linux. 
 
 It was built and tested on 8BD4 (HP Victus 16-s0001nv) 
-with Fedora. Other HP Omen/Victus laptops should work.
-
-
-## What it does
-- **System profiles** — maps the three UI profiles to `tuned-adm` (tested on fedora acpi profile is set correctly)
-   or `power-profilesctl` if available.
-- **Custom fan control** — Four modes:
-  *auto* (hands control back to the EC), *smart* (built-in curve, fast
-  on heat / slow on cooldown), *max* (100%), and *custom* (your
-  temperature curves).
-- **Mux switch** Hardware Mux switch support for Victus Laptops, OMEN Laptops should also work (untested).  PRIME laptops can also try [envycontrol](https://github.com/bayasdev/envycontrol) (not included yet).  
-- **Keyboard RGB** — static color and brightness via a custom
-  `hp-kbd-rgb` kernel module (a companion to the upstream hp-wmi RGB
-  patch series; it doesn't claim the HP WMI GUID, so custom `hp-wmi`
-  stays loaded for hotkeys, fan hwmon, and MUX control). Optional idle-dim when
-  you stop typing.
-- **Power limits** — set Sustained (sPPT), Fast (fPPT), and Slow limits,
-  plus Tctl temperature, through `ryzenadj` for AMD CPUs. Intel CPUs show
-  PL1 (long-term) and PL2 (short-term) limits using Linux RAPL, with the
-  same automatic reapply interval. Intel and AMD power settings are stored separately.
-- **CPU frequency limits** — minimum/maximum frequencies across all Linux
-  CPU frequency policies, including `intel_pstate` and `acpi-cpufreq`.
-- **Intel undervolt** — core and cache voltage offsets below the frequency
-  controls, from -250 to 0 mV. Requires the `msr` kernel module
-  (`sudo modprobe msr`) and unlocked firmware voltage control. Apply errors
-  are shown in the panel; successful offsets are saved but only applied on
-  clicking **Apply undervolt**. Set both offsets to 0 mV to reset them.
-- **Sensors** — live CPU/GPU temperatures, fan RPM, power draw, and
-  utilization.
-- **Suspend/shutdown cleanup** — send suspend and shutdown commands before and after.
-
-Settings persist under `~/.config/victus-hub/`.
-
-Enable **Settings → Keyboard control shortcuts**, then hold **Left Ctrl + Left Shift**:
-- **Up/Down:** keyboard brightness (0%, 25%, 50%, 75%, 100%).
-- **Left/Right:** previous/next lighting effect, including Off.
-- **M:** cycle Eco (Power Save) → Balanced → Performance.
-
-Both modifiers must be the left-hand keys. Shortcuts work while the app is running,
-including in the tray.
-Shortcut delivery uses a persistent daemon event stream, with no keyboard
-polling timer. Restart `victus-hubd` and the app after upgrading to this version.
+with Fedora.
 
 ## Install (One-Liner)
 ```
@@ -59,6 +15,36 @@ curl -sL https://raw.githubusercontent.com/evident0/victus-hub/master/install.sh
 ```
 curl -sL https://raw.githubusercontent.com/evident0/victus-hub/master/uninstall.sh | sudo bash
 ```
+
+## What it does
+- **System profiles** — maps the three UI profiles to `tuned-adm` (tested on fedora acpi profile is set correctly)
+   or `power-profilesctl` if available.
+- **Custom fan control** — Four modes:
+  *auto* (hands control back to the EC), *smart* (built-in curve, fast
+  on heat / slow on cooldown), *max* (100%), and *custom* (your
+  temperature curves).
+- **Mux switch** Hardware Mux switch support.
+- **Keyboard RGB** — static color and brightness via a custom
+  `hp-kbd-rgb` kernel module. Optional idle-dim when
+  you stop typing.
+- **Power limits** — set Sustained (sPPT), Fast (fPPT), and Slow limits,
+  plus Tctl temperature, through `ryzenadj` for AMD CPUs. Intel CPUs show
+  PL1 (long-term) and PL2 (short-term) limits using Linux RAPL.
+- **Intel undervolt** — core and cache voltage offsets below the frequency
+  controls, from -250 to 0 mV. Requires the `msr` kernel module
+  (`sudo modprobe msr`) and unlocked firmware voltage control. Apply errors
+  are shown in the panel; successful offsets are saved but only applied on
+  clicking **Apply undervolt**. Set both offsets to 0 mV to reset them.
+- **Sensors** — live CPU/GPU temperatures, fan RPM, power draw, and
+  utilization.
+- **Keyboard control shortcuts** Keyboard shortcuts for lighting and performance mode. 
+
+Settings persist under `~/.config/victus-hub/`.
+
+Keyboard Panel            |  Fans Panel
+:-------------------------:|:-------------------------:
+![](showcase_keyboard.png)  |  ![](showcase_curve.png)
+
 ## Installing (manual)
 
 After cloning the repository run:
@@ -66,29 +52,6 @@ After cloning the repository run:
 ```
 ./scripts/install
 ```
-After updating an existing installation, rerun the installer to update and
-restart the daemon, including the RAPL/MSR service permissions for Intel controls.
-The installer builds and installs custom `hp-wmi` (including MUX support) and
-`hp-kbd-rgb`, and builds/installs RyzenAdj on AMD CPUs, without component prompts.
-Kernel headers for the running kernel are required. Upgrades remove the old
-standalone `hp-gpu-mux` installation.
-
-For dev work (no .desktop entry; still prompts before installing/rebuilding each
-module and RyzenAdj):
-
-```
-./scripts/dev-run
-```
-
-For app-only development installs (including the daemon and desktop entry):
-
-```bash
-./scripts/install-dev
-```
-
-This skips all kernel-module and RyzenAdj installation steps, even if those
-components are missing. Use the regular installer for initial hardware setup;
-it rebuilds/reinstalls components rather than skipping already installed ones.
 
 ## Uninstalling
 
@@ -96,16 +59,6 @@ it rebuilds/reinstalls components rather than skipping already installed ones.
 ./scripts/uninstall
 ```
 Your settings under `~/.config/victus-hub/` are left in place. Removes everything else
-
-To remove only the app, daemon, sleep hook, and desktop integration:
-
-```bash
-./scripts/uninstall-dev
-```
-
-This preserves installed/loaded kernel modules, RyzenAdj, and user settings.
-You can then run `./scripts/install-dev` to reinstall the app without rebuilding
-or reloading those hardware components.
 
 ## Running
 
