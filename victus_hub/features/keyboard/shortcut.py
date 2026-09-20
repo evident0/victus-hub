@@ -30,6 +30,9 @@ KEY_RIGHTSHIFT = 54
 KEY_RIGHTALT = 100
 KEY_LEFTMETA = 125
 KEY_RIGHTMETA = 126
+KEY_FN = 464
+# Keep the original settings key so existing shortcut preferences persist.
+HARDWARE_SHORTCUTS_KEY = "keyboard/fn_shortcuts_enabled"
 
 #: Keycodes treated as modifiers when matching a captured combo.
 MODIFIERS: frozenset[int] = frozenset({
@@ -37,6 +40,7 @@ MODIFIERS: frozenset[int] = frozenset({
     KEY_LEFTSHIFT, KEY_RIGHTSHIFT,
     KEY_LEFTALT, KEY_RIGHTALT,
     KEY_LEFTMETA, KEY_RIGHTMETA,
+    KEY_FN,
 })
 
 
@@ -47,10 +51,11 @@ _MOD_LABELS: dict[int, str] = {
     KEY_LEFTSHIFT: "Shift", KEY_RIGHTSHIFT: "Shift",
     KEY_LEFTALT: "Alt", KEY_RIGHTALT: "Alt",
     KEY_LEFTMETA: "Super", KEY_RIGHTMETA: "Super",
+    KEY_FN: "Fn",
 }
 
 # Order in which modifier labels are displayed.
-_MOD_ORDER: list[str] = ["Ctrl", "Shift", "Alt", "Super"]
+_MOD_ORDER: list[str] = ["Ctrl", "Shift", "Alt", "Super", "Fn"]
 
 # Special, non-printable keycodes that benefit from a friendly name.
 _SPECIAL_KEY_NAMES: dict[int, str] = {

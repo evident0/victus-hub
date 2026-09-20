@@ -1,13 +1,15 @@
-"""Sensors page with collapsible grouped table (Top Processes visual style)."""
+"""Sensors page with collapsible grouped table."""
 
 from PySide6.QtWidgets import (
-    QAbstractItemView, QFrame, QHeaderView, QMenu,
+    QAbstractItemView, QFrame, QHeaderView,
     QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget,
 )
 from PySide6.QtCore import Qt, Signal, QTimer
 from PySide6.QtGui import QColor, QAction
 
 from victus_hub.app.theme import COLORS
+from victus_hub.widgets.chrome import PageHead
+from victus_hub.widgets.popup_menu import PopupMenu
 
 _COL_SENSOR = 0
 _COL_CURRENT = 1
@@ -31,17 +33,17 @@ class SensorsPage(QWidget):
         raised = COLORS["surface_raised"]
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(12, 12, 12, 12)
-        layout.setSpacing(0)
+        layout.setContentsMargins(24, 24, 16, 16)
+        layout.setSpacing(12)
+        layout.addWidget(PageHead("Sensors"))
 
-        # Card frame — same shell as Top Processes
         card = QFrame()
         card.setObjectName("sensorsCard")
         card.setStyleSheet(f"""
             #sensorsCard {{
                 background-color: {surface};
-                border: 1px solid {COLORS['border']};
-                border-radius: 10px;
+                border: none;
+                border-radius: 0;
             }}
         """)
         card_layout = QVBoxLayout(card)
@@ -64,7 +66,7 @@ class SensorsPage(QWidget):
         self._tree.setFocusPolicy(Qt.StrongFocus)
         self._tree.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self._tree.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
-        # Expand/collapse only via the branch arrow (match Top Processes)
+        # Expand/collapse only via the branch arrow, not by clicking the row
         self._tree.setExpandsOnDoubleClick(False)
         self._tree.setContextMenuPolicy(Qt.CustomContextMenu)
         self._tree.customContextMenuRequested.connect(self._on_context_menu)
@@ -138,7 +140,7 @@ class SensorsPage(QWidget):
         if not key:
             return
 
-        menu = QMenu(self)
+        menu = PopupMenu(self)
         graph_action = QAction("Graph", menu)
         graph_action.setEnabled(graphable)
         if graphable:

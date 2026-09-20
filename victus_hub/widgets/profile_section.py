@@ -1,229 +1,180 @@
-"""Profile selection, fan mode, and GPU MUX — labeled control sections."""
+"""Profile, fan mode, and GPU MUX — Ohman segments on the home page."""
 
 from __future__ import annotations
 
 import logging
 
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QMessageBox, QFrame,
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QMessageBox, QSizePolicy,
 )
 from PySide6.QtCore import Qt, Signal
 
 from victus_hub import api
-from victus_hub.widgets.app_button import AppButton
-from victus_hub.widgets.segmented_control import SegmentedControl
 from victus_hub.features.gpu.mux import GpuMuxMode, read_gpu_mux_state
-from victus_hub.app.theme import COLORS
+from victus_hub.app.theme import COLORS, ECO, BALANCED, PERF, ui_font
 from victus_hub.backend.nvidia import get_gpu_name
-from victus_hub.widgets.status_badge import StatusBadge
-from victus_hub.backend.modules import platform_profile_backend, mux_module, fan_control_module
+from victus_hub.widgets.seg import Seg, LinkSeg
 
 logger = logging.getLogger(__name__)
 
 PROFILES = [
-    ("Power Saver", "NewIcons/leaf.png", COLORS["accent_green"]),
-    ("Balanced", "NewIcons/balance.png", COLORS["accent_blue"]),
-    ("Performance", "NewIcons/rocket.png", COLORS["accent_red"]),
+    ("Eco", "leaf.png", ECO),
+    ("Balanced", "scale.png", BALANCED),
+    ("Performance", "rocket.png", PERF),
 ]
 
 FAN_MODES = [
-    ("auto", "Auto", False),
-    ("max", "Max", False),
-    ("custom", "Custom", True),
+    ("auto", "Auto", "wind.png", ECO, False),
+    ("smart", "Smart", "sparkles.png", BALANCED, False),
+    ("max", "Max", "flame.png", PERF, False),
+    ("custom", "Custom", "fan.png", BALANCED, True),
 ]
-
-_MUX_ACCENTS = (
-    COLORS["accent_green"],
-    COLORS["accent_blue"],
-    COLORS["accent_red"],
-    COLORS["accent_blue"],
-)
-
-# Icon-above-label tiles for known MUX modes (white monochrome assets)
-_MUX_ICONS: dict[str, str] = {
-    "hybrid": "NewIcons/hybrid.png",
-    "discrete": "NewIcons/discrete.png",
-}
-
-
-def _section_title(title: str) -> QLabel:
-    """Short section label only (no description body text)."""
-    lbl = QLabel(title)
-    lbl.setStyleSheet(f"""
-        color: {COLORS['text']};
-        font-size: 13px;
-        font-weight: 600;
-        background: transparent;
-    """)
-    return lbl
-
-
-def _section_divider() -> QFrame:
-    line = QFrame()
-    line.setFrameShape(QFrame.HLine)
-    line.setFixedHeight(1)
-    line.setStyleSheet(f"background-color: {COLORS['border']}; border: none;")
-    return line
 
 
 class ProfileSection(QWidget):
-    """Separated control groups: performance, fans, GPU MUX."""
+    """Mode pill, fan links, optional MUX segment."""
 
     profile_selected = Signal(int)
     fan_mode_selected = Signal(str)
-    fan_curves_popout_requested = Signal()
+    fan_curves_requested = Signal()
 
-    def __init__(self, hide_title: bool = False, parent=None):
+    def __init__(self, parent=None):
         super().__init__(parent)
         root = QVBoxLayout(self)
-        root.setContentsMargins(0, 4, 0, 4)
+        root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
 
         self._selected_profile = 1
         self._selected_fan_mode = "auto"
         self._mux_modes: tuple[GpuMuxMode, ...] = ()
-        self._mux_buttons: dict[int, AppButton] = {}
-        # ── Performance profile ──
-        perf_title_row = QHBoxLayout()
-        perf_title_row.setContentsMargins(0, 0, 0, 0)
-        perf_title_row.addWidget(_section_title("Performance Mode"))
-        perf_title_row.addStretch()
-        pp_text, pp_color = platform_profile_backend()
-        perf_title_row.addWidget(StatusBadge(pp_text, pp_color))
-        root.addLayout(perf_title_row)
-        root.addSpacing(10)
-        profile_row = QHBoxLayout()
-        profile_row.setSpacing(10)
-        self._profile_buttons: list[AppButton] = []
-        for i, (label, icon, accent) in enumerate(PROFILES):
-            btn = AppButton(label, icon, accent, selected=(i == self._selected_profile))
-            btn.clicked.connect(lambda _, idx=i: self._on_profile_click(idx))
-            profile_row.addWidget(btn, 1)
-            self._profile_buttons.append(btn)
-        root.addLayout(profile_row)
+        self._mux_index_by_seg: list[int] = []
 
-        root.addSpacing(18)
-        root.addWidget(_section_divider())
-        root.addSpacing(18)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        self._mode_seg = Seg([p[0] for p in PROFILES], kind="page")
+        self._mode_seg.picked.connect(self._on_profile_click)
+        self._mode_seg.select(self._selected_profile, False)
+        root.addWidget(self._mode_seg)
 
-        # ── Fan mode ──
-        fan_title_row = QHBoxLayout()
-        fan_title_row.setContentsMargins(0, 0, 0, 0)
-        fan_title_row.addWidget(_section_title("Fan Mode"))
-        fan_title_row.addStretch()
-        fan_text, fan_color = fan_control_module()
-        fan_title_row.addWidget(StatusBadge(fan_text, fan_color))
-        root.addLayout(fan_title_row)
-        root.addSpacing(10)
         fan_row = QHBoxLayout()
-        fan_row.setSpacing(8)
+        fan_row.setContentsMargins(0, 24, 0, 0)
+        fan_row.setSpacing(10)
+        fans_lbl = QLabel("Fans")
+        fans_lbl.setFont(ui_font(14))
+        fans_lbl.setStyleSheet(f"color: {COLORS['text']}; background: transparent;")
+        fan_row.addWidget(fans_lbl, 0, Qt.AlignVCenter)
         fan_row.addStretch()
-        self._fan_segments = SegmentedControl(FAN_MODES)
-        self._fan_segments.setFixedWidth(360)
-        self._fan_segments.segment_selected.connect(self._on_fan_select)
-        self._fan_segments.action_requested.connect(self._on_fan_action)
-        fan_row.addWidget(self._fan_segments)
-        fan_row.addStretch()
+        self._fan_links = LinkSeg([m[1] for m in FAN_MODES], gap=16, size=14)
+        self._fan_links.picked.connect(self._on_fan_link)
+        self._fan_links.select(0, False)
+        fan_row.addWidget(self._fan_links, 0, Qt.AlignVCenter)
         root.addLayout(fan_row)
 
-        # ── GPU MUX ──
+        self._curve_row = QWidget()
+        curve_l = QHBoxLayout(self._curve_row)
+        curve_l.setContentsMargins(0, 8, 0, 0)
+        curve_l.addStretch()
+        self._curve_link = QLabel("Edit curve")
+        self._curve_link.setFont(ui_font(12))
+        self._curve_link.setStyleSheet(
+            f"color: {COLORS['accent']}; background: transparent;"
+        )
+        self._curve_link.setCursor(Qt.PointingHandCursor)
+        self._curve_link.mousePressEvent = self._on_curve_click  # type: ignore[method-assign]
+        curve_l.addWidget(self._curve_link)
+        self._curve_row.setVisible(False)
+        root.addWidget(self._curve_row)
+
         self._mux_block = QWidget()
-        self._mux_block.setStyleSheet("background: transparent;")
         mux_outer = QVBoxLayout(self._mux_block)
-        mux_outer.setContentsMargins(0, 0, 0, 0)
-        mux_outer.setSpacing(0)
-
-        mux_outer.addSpacing(18)
-        mux_outer.addWidget(_section_divider())
-        mux_outer.addSpacing(18)
-
-
-        mux_title_row = QHBoxLayout()
-        mux_title_row.setContentsMargins(0, 0, 0, 0)
-        mux_title_row.setSpacing(8)
-        mux_title_row.addWidget(_section_title("MUX Switch"))
+        mux_outer.setContentsMargins(0, 20, 0, 0)
+        mux_outer.setSpacing(8)
+        mux_row = QHBoxLayout()
+        mux_row.setContentsMargins(0, 0, 0, 0)
+        mux_lbl = QLabel("Graphics")
+        mux_lbl.setFont(ui_font(14))
+        mux_lbl.setStyleSheet(f"color: {COLORS['text']}; background: transparent;")
+        mux_row.addWidget(mux_lbl, 0, Qt.AlignVCenter)
         gpu_name = get_gpu_name()
         if gpu_name:
             short = gpu_name.removeprefix("NVIDIA GeForce ")
             gpu_label = QLabel(short)
-            gpu_label.setStyleSheet(f"""
-                color: {COLORS['text_secondary']};
-                font-size: 12px;
-                font-weight: 400;
-                background: transparent;
-            """)
-            mux_title_row.addWidget(gpu_label)
-        mux_title_row.addStretch()
-        mux_text, mux_color = mux_module()
-        mux_title_row.addSpacing(8)
-        mux_title_row.addWidget(StatusBadge(mux_text, mux_color))
-        mux_outer.addLayout(mux_title_row)
-        mux_outer.addSpacing(10)
-
-        self._mux_row = QHBoxLayout()
-        self._mux_row.setSpacing(10)
-        mux_outer.addLayout(self._mux_row)
-
+            gpu_label.setFont(ui_font(12))
+            gpu_label.setStyleSheet(
+                f"color: {COLORS['sub']}; background: transparent;"
+            )
+            mux_row.addWidget(gpu_label)
+        mux_row.addStretch()
+        mux_outer.addLayout(mux_row)
         self._mux_block.hide()
         root.addWidget(self._mux_block)
 
-        self._build_mux_buttons()
+        self._build_mux_buttons(mux_outer)
 
-    def _build_mux_buttons(self) -> None:
-        while self._mux_row.count():
-            item = self._mux_row.takeAt(0)
-            w = item.widget()
-            if w is not None:
-                w.deleteLater()
-        self._mux_buttons.clear()
+    def _on_curve_click(self, event) -> None:
+        if event.button() == Qt.LeftButton:
+            self.fan_curves_requested.emit()
+
+    def _build_mux_buttons(self, layout: QVBoxLayout) -> None:
         self._mux_modes = ()
+        self._mux_index_by_seg = []
         self._mux_selected = None
         self._mux_block.hide()
 
         state = read_gpu_mux_state()
+        names = [m.label for m in state.modes] if state is not None else []
+        self._mux_seg = Seg(names, kind="compact", parent=self._mux_block)
+        layout.addWidget(self._mux_seg)
         if state is None or not state.modes:
             return
 
         self._mux_modes = state.modes
         self._mux_selected = state.current_index
-        for i, mode in enumerate(self._mux_modes):
-            accent = _MUX_ACCENTS[i % len(_MUX_ACCENTS)]
-            icon = _MUX_ICONS.get(mode.name.lower())
-            btn = AppButton(
-                mode.label,
-                icon,
-                accent,
-                selected=(mode.index == self._mux_selected),
-            )
-            btn.clicked.connect(lambda _, m=mode: self._on_mux_click(m))
-            self._mux_row.addWidget(btn, 1)
-            self._mux_buttons[mode.index] = btn
+        self._mux_index_by_seg = [m.index for m in self._mux_modes]
+        self._mux_seg.picked.connect(self._on_mux_seg)
+        try:
+            sel = self._mux_index_by_seg.index(self._mux_selected)
+        except ValueError:
+            sel = 0
+        self._mux_seg.select(sel, False)
         self._mux_block.show()
-
-    # ── Profile selection ──
 
     def set_selected_profile(self, index: int):
         self._selected_profile = index
-        for i, btn in enumerate(self._profile_buttons):
-            btn.set_selected(i == index)
+        self._mode_seg.select(index, True)
 
     def _on_profile_click(self, index: int):
         self.profile_selected.emit(index)
 
-    # ── Fan mode ──
-
     def set_selected_fan_mode(self, mode: str):
         self._selected_fan_mode = mode
-        self._fan_segments.set_selected(mode)
+        keys = [m[0] for m in FAN_MODES]
+        try:
+            self._fan_links.select(keys.index(mode), True)
+        except ValueError:
+            pass
+        self._curve_row.setVisible(mode == "custom")
 
-    def _on_fan_select(self, mode: str):
-        self._selected_fan_mode = mode
+    def _on_fan_link(self, index: int):
+        mode = FAN_MODES[index][0]
+        if mode == self._selected_fan_mode:
+            if mode == "custom":
+                self.fan_curves_requested.emit()
+            return
+        self.set_selected_fan_mode(mode)
         self.fan_mode_selected.emit(mode)
 
-    def _on_fan_action(self, _key: str):
-        self.fan_curves_popout_requested.emit()
+    def _on_mux_seg(self, index: int):
+        if index < 0 or index >= len(self._mux_modes):
+            return
+        self._on_mux_click(self._mux_modes[index])
 
-    # ── GPU MUX ──
+    def refresh_accent(self) -> None:
+        self._mode_seg.refresh_accent()
+        self._fan_links.refresh_accent()
+        self._mux_seg.refresh_accent()
+        self._curve_link.setStyleSheet(
+            f"color: {COLORS['accent']}; background: transparent;"
+        )
 
     def _on_mux_click(self, mode: GpuMuxMode):
         if mode.index == self._mux_selected:
@@ -242,6 +193,11 @@ class ProfileSection(QWidget):
         box.exec()
 
         if box.clickedButton() is not apply_btn:
+            try:
+                sel = self._mux_index_by_seg.index(self._mux_selected)
+            except ValueError:
+                sel = 0
+            self._mux_seg.select(sel, False)
             return
 
         try:
@@ -253,8 +209,16 @@ class ProfileSection(QWidget):
                 "MUX Switch",
                 f"Failed to set GPU MUX mode: {exc}",
             )
+            try:
+                sel = self._mux_index_by_seg.index(self._mux_selected)
+            except ValueError:
+                sel = 0
+            self._mux_seg.select(sel, False)
             return
 
         self._mux_selected = mode.index
-        for idx, btn in self._mux_buttons.items():
-            btn.set_selected(idx == mode.index)
+        try:
+            sel = self._mux_index_by_seg.index(mode.index)
+        except ValueError:
+            sel = 0
+        self._mux_seg.select(sel, True)

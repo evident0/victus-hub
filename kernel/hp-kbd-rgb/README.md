@@ -112,7 +112,7 @@ There are no:
 ## Current Project Usage
 
 - Daemon writes the LED multicolor interface (`multi_intensity` + `brightness`) per zone.
-- Lighting effects are purely software.
+- Lighting effects (breathing, wave, cycle, chase, …) are computed in userspace at ~20 Hz and written as static per-zone colors.
 - The "RGB enabled" checkbox and idle dim turn the backlight off via `brightness=0` (the proper LED off path), not by sending color `0 0 0`.
 - Per-zone control is fully wired: the Python daemon and UI support independent colors for each zone (right, center, left, wasd).
 

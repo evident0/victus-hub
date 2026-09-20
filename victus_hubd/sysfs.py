@@ -10,7 +10,7 @@ from victus_hub.backend.sysfs_read import find_hwmon_by_name
 
 KBD_RGB_PLATFORM = "/sys/devices/platform/hp-kbd-rgb"
 KBD_RGB_LEDS = "/sys/class/leds"
-GPU_MUX_PLATFORM = Path("/sys/devices/platform/hp-gpu-mux")
+GPU_MUX_PLATFORM = Path("/sys/devices/platform/hp-wmi")
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +22,7 @@ def hp_hwmon() -> Path | None:
 
 
 
-def write_sysfs(path: Path, value: int | str) -> str:
+def write_sysfs(path: Path, value: int | str, quiet: bool = False) -> str:
     """Write a value to a sysfs path; returns path label on success."""
     label = str(path)
     try:
@@ -30,7 +30,8 @@ def write_sysfs(path: Path, value: int | str) -> str:
     except OSError as e:
         logger.error("%s=%s: %s", label, value, e)
         raise RuntimeError(f"{label}: {e}")
-    logger.info("%s=%s", label, value)
+    if not quiet:
+        logger.info("%s=%s", label, value)
     return label
 
 
@@ -38,7 +39,7 @@ def write_gpu_mux_mode(mode: int) -> str:
     """Request a GPU MUX mode index (0=hybrid, 1=discrete, 2=optimus, 3=uma)."""
     path = GPU_MUX_PLATFORM / "gpu_mux_mode"
     if not path.exists():
-        raise RuntimeError("hp-gpu-mux platform device not found")
+        raise RuntimeError("hp-wmi GPU MUX control not found")
     return write_sysfs(path, mode)
 
 
@@ -61,7 +62,7 @@ def write_pwm_max() -> str:
 
 
 def write_pwm(pwm: int) -> str:
-    """Set fan PWM duty cycle (0-255). Enters manual mode first."""
+    """Set both fan PWM duty cycles (0-255). Enters manual mode first."""
     hwmon = hp_hwmon()
     if hwmon is None:
         raise RuntimeError("hp hwmon not found")
@@ -69,7 +70,12 @@ def write_pwm(pwm: int) -> str:
     logger.info("[fan-control] daemon entering manual mode: pwm1_enable=1")
     write_sysfs(enable_path, 1)
     logger.info("[fan-control] daemon setting pwm1=%d", pwm)
-    return write_sysfs(hwmon / "pwm1", pwm)
+    label = write_sysfs(hwmon / "pwm1", pwm)
+    # New hp-wmi exposes independent CPU/GPU duties with a shared enable.
+    # Older drivers control both fans through pwm1 alone.
+    if (hwmon / "pwm2").exists():
+        write_sysfs(hwmon / "pwm2", pwm)
+    return label
 
 
 def get_keyboard_zone_count() -> int:
@@ -114,11 +120,13 @@ def _write_led_color(led: Path, red: int, green: int, blue: int) -> str:
     """Write multi_intensity + the user-preferred brightness for one LED."""
     value = f"{red} {green} {blue}"
     write_sysfs(led / "multi_intensity", value)
-    write_sysfs(led / "brightness", _kbd_user_brightness)
+    write_sysfs(led / "brightness", _kbd_user_brightness, quiet=True)
     return str(led)
 
 
-def write_keyboard_color(red: int, green: int, blue: int) -> str:
+def write_keyboard_color(
+    red: int, green: int, blue: int, *, quiet: bool = False,
+) -> str:
     """Set the same keyboard backlight color on every zone.
 
     Writes ``multi_intensity`` on every zone's LED class device, then
@@ -130,21 +138,25 @@ def write_keyboard_color(red: int, green: int, blue: int) -> str:
     labels: list[str] = []
     for name in _kbd_rgb_led_names():
         labels.append(_write_led_color(Path(KBD_RGB_LEDS) / name, red, green, blue))
-    logger.info("[keyboard-rgb] color %s -> %s", value, ", ".join(labels))
+    if not quiet:
+        logger.info("[keyboard-rgb] color %s -> %s", value, ", ".join(labels))
     return labels[0] if labels else KBD_RGB_LEDS
 
 
-def write_keyboard_zone_color(zone: int, red: int, green: int, blue: int) -> str:
+def write_keyboard_zone_color(
+    zone: int, red: int, green: int, blue: int, *, quiet: bool = False,
+) -> str:
     """Set color for a single zone (0-based index into LED name list)."""
     names = _kbd_rgb_led_names()
     if zone < 0 or zone >= len(names):
         raise RuntimeError(f"zone {zone} out of range (0-{max(0, len(names) - 1)})")
     led = Path(KBD_RGB_LEDS) / names[zone]
     label = _write_led_color(led, red, green, blue)
-    logger.info(
-        "[keyboard-rgb] zone %d color %d %d %d -> %s",
-        zone, red, green, blue, label,
-    )
+    if not quiet:
+        logger.info(
+            "[keyboard-rgb] zone %d color %d %d %d -> %s",
+            zone, red, green, blue, label,
+        )
     return label
 
 
@@ -161,7 +173,7 @@ def set_keyboard_user_brightness(level: int) -> str:
     return write_keyboard_brightness(level)
 
 
-def write_keyboard_brightness(level: int) -> str:
+def write_keyboard_brightness(level: int, *, quiet: bool = False) -> str:
     """Set keyboard backlight brightness (0-255) on all zones.
 
     Writing 0 turns the backlight off (sends black via the LED multicolor
@@ -172,9 +184,10 @@ def write_keyboard_brightness(level: int) -> str:
     labels: list[str] = []
     for name in _kbd_rgb_led_names():
         led = Path(KBD_RGB_LEDS) / name
-        write_sysfs(led / "brightness", level)
+        write_sysfs(led / "brightness", level, quiet=quiet)
         labels.append(str(led))
-    logger.info("[keyboard-rgb] brightness %d -> %s", level, ", ".join(labels))
+    if not quiet:
+        logger.info("[keyboard-rgb] brightness %d -> %s", level, ", ".join(labels))
     return labels[0] if labels else KBD_RGB_LEDS
 
 

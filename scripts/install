@@ -1,10 +1,20 @@
 #!/usr/bin/env bash
 # Install (or reinstall) all Victus Hub components:
-#   1. Optional: custom hp-wmi, hp-kbd-rgb, hp-gpu-mux, ryzenadj  (prompted)
+#   1. custom hp-wmi (includes MUX), hp-kbd-rgb, ryzenadj (AMD only)
 #   2. victus-hubd daemon         (pip editable + systemd service)
 #   3. victus-hub program         (pip entry point, same install as daemon)
 #   4. .desktop entry + icon     (app-menu integration)
 set -euo pipefail
+
+APP_ONLY=0
+if [ "${1:-}" = "--app-only" ]; then
+	APP_ONLY=1
+	shift
+fi
+if [ "$#" -ne 0 ]; then
+	printf 'Usage: %s [--app-only]\n' "$0" >&2
+	exit 2
+fi
 
 ROOT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 # shellcheck source=kmod-prompts.sh
@@ -13,6 +23,8 @@ source "$ROOT_DIR/scripts/kmod-prompts.sh"
 SERVICE_NAME=victus-hubd.service
 SERVICE_SRC="$ROOT_DIR/data/victus-hubd.service"
 SERVICE_DST="/etc/systemd/system/$SERVICE_NAME"
+SLEEP_SRC="$ROOT_DIR/data/victus-hub-sleep"
+SLEEP_DST="/usr/lib/systemd/system-sleep/victus-hub"
 SOCKET_PATH="/run/victus-hubd/victus-hub.sock"
 ICON_SRC="$ROOT_DIR/victus_hub/resources/icons/logoV.png"
 ICON_DST="/usr/share/icons/hicolor/1024x1024/apps/victus-hub.png"
@@ -24,8 +36,10 @@ else
 	SUDO=(sudo)
 fi
 
-# ── 1. Optional kernel modules / tools (prompted) ──
-prompt_optional_components
+# ── 1. Kernel modules / tools (no component prompts) ──
+if [ "$APP_ONLY" -eq 0 ]; then
+	install_components
+fi
 
 # ── 2. Daemon + program (editable pip install brings both victus_hub* and
 #        victus_hubd* plus the victus-hub console-script entry point) ──
@@ -51,6 +65,8 @@ if [ "$NEEDS_RELOAD" -eq 1 ]; then
 fi
 
 "${SUDO[@]}" systemctl enable "$SERVICE_NAME" >/dev/null
+printf 'Installing systemd-sleep hook to %s\n' "$SLEEP_DST"
+"${SUDO[@]}" install -Dm755 "$SLEEP_SRC" "$SLEEP_DST"
 printf 'Starting %s...\n' "$SERVICE_NAME"
 "${SUDO[@]}" systemctl restart "$SERVICE_NAME"
 
@@ -104,7 +120,7 @@ printf 'Installing desktop entry to %s\n' "$DESKTOP_DST"
 Type=Application
 Name=Victus Hub
 Comment=HP Laptop Control Panel
-Exec=env QT_QPA_PLATFORM=xcb $VICTUS_HUB_BIN
+Exec=env QT_QPA_PLATFORM=xcb VICTUS_HUB_DEBUG_LEVEL=0 $VICTUS_HUB_BIN
 Icon=victus-hub
 Terminal=false
 Categories=System;Utility;
@@ -113,6 +129,10 @@ DESKTOP
 "${SUDO[@]}" update-desktop-database /usr/share/applications 2>/dev/null || true
 
 printf '\033[32m── Install complete ──\033[0m\n'
-printf '  • Optional modules/tools were prompted (hp-wmi, hp-kbd-rgb, hp-gpu-mux, ryzenadj)\n'
+if [ "$APP_ONLY" -eq 0 ]; then
+	printf '  • Installed hp-wmi (includes MUX), hp-kbd-rgb, and ryzenadj (AMD only)\n'
+else
+	printf '  • Kernel modules and RyzenAdj left in place.\n'
+fi
 printf '  • Daemon:        %s (running)\n' "$SERVICE_NAME"
 printf '  • Program:       victus-hub   (app menu or: victus-hub)\n'

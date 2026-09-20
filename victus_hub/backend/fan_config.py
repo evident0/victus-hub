@@ -12,6 +12,9 @@ from victus_hub.backend.types import FanPoint, FanProfileConfig, FanConfig
 CONFIG_DIR_NAME = "victus-hub"
 CONFIG_FILE_NAME = "config.json"
 PROFILE_KEYS = ["power-saver", "balanced", "performance"]
+CURVE_RESPONSE_SMOOTH = "smooth"
+CURVE_RESPONSE_AGGRESSIVE = "aggressive"
+CURVE_RESPONSES = (CURVE_RESPONSE_SMOOTH, CURVE_RESPONSE_AGGRESSIVE)
 
 # ── Curve bounds (used by the chart and any page that needs them) ──
 
@@ -28,6 +31,30 @@ def default_cpu_points() -> list[FanPoint]:
 
 def default_gpu_points() -> list[FanPoint]:
     return [FanPoint(temp=TEMP_MIN_C, speed=0), FanPoint(temp=GPU_TEMP_MAX_C, speed=100)]
+
+
+# Smart mode: zero-RPM idle, skip the ~30% stall band, quiet midrange,
+# then steep near the thermal wall. GPU comes on a little earlier.
+SMART_CPU_CURVE = (
+    (30, 0), (58, 0), (60, 32), (70, 42), (80, 62), (90, 85), (100, 100),
+)
+SMART_GPU_CURVE = (
+    (30, 0), (52, 0), (54, 32), (65, 48), (75, 68), (82, 88), (90, 100),
+)
+
+
+def smart_cpu_points() -> list[FanPoint]:
+    return normalize_fan_points(
+        [FanPoint(temp=t, speed=s) for t, s in SMART_CPU_CURVE],
+        CPU_TEMP_MAX_C,
+    )
+
+
+def smart_gpu_points() -> list[FanPoint]:
+    return normalize_fan_points(
+        [FanPoint(temp=t, speed=s) for t, s in SMART_GPU_CURVE],
+        GPU_TEMP_MAX_C,
+    )
 
 
 # ── Normalization ──
@@ -67,18 +94,21 @@ def _config_path() -> Path:
     return Path(".") / CONFIG_FILE_NAME
 
 
-# ── Load / Save ──
+# ── Dict (file + daemon protocol) ──
 
-def load() -> FanConfig:
-    try:
-        text = _config_path().read_text()
-        stored = json.loads(text)
-    except (OSError, json.JSONDecodeError):
-        stored = {}
-
+def config_from_dict(stored: dict | None) -> FanConfig:
+    """Normalize a stored/JSON fan-config mapping into a FanConfig."""
+    stored = stored or {}
     custom_enabled = stored.get("custom_curve_enabled", False) or False
     manual_preset = stored.get("manual_preset") or None
-    min_fan_change_pct = max(float(stored.get("min_fan_change_pct", 2.0)), 0.0)
+    try:
+        min_fan_change_pct = max(float(stored.get("min_fan_change_pct", 2.0)), 0.0)
+    except (TypeError, ValueError):
+        min_fan_change_pct = 2.0
+    smart_enabled = bool(stored.get("smart_curve_enabled", False)) and custom_enabled
+    curve_response = stored.get("fan_curve_response", CURVE_RESPONSE_SMOOTH)
+    if curve_response not in CURVE_RESPONSES:
+        curve_response = CURVE_RESPONSE_SMOOTH
 
     profiles = []
     for key in PROFILE_KEYS:
@@ -100,7 +130,42 @@ def load() -> FanConfig:
         custom_enabled=custom_enabled,
         manual_preset=manual_preset,
         min_fan_change_pct=min_fan_change_pct,
+        smart_enabled=smart_enabled,
+        curve_response=curve_response,
     )
+
+
+def config_to_dict(config: FanConfig) -> dict:
+    """Serialize a FanConfig to the on-disk / protocol mapping."""
+    cpu_map = {}
+    gpu_map = {}
+    for i, profile in enumerate(config.profiles):
+        key = PROFILE_KEYS[i]
+        cpu_map[key] = [[p.temp, p.speed] for p in profile.cpu_points]
+        gpu_map[key] = [[p.temp, p.speed] for p in profile.gpu_points]
+    return {
+        "custom_tuned_profile": "balanced",
+        "custom_curve_enabled": config.custom_enabled,
+        "smart_curve_enabled": config.smart_enabled,
+        "fan_curve_response": config.curve_response,
+        "manual_preset": config.manual_preset,
+        "min_fan_change_pct": config.min_fan_change_pct,
+        "curve_points_by_profile": cpu_map,
+        "gpu_curve_points_by_profile": gpu_map,
+    }
+
+
+# ── Load / Save ──
+
+def load() -> FanConfig:
+    try:
+        text = _config_path().read_text()
+        stored = json.loads(text)
+    except (OSError, json.JSONDecodeError):
+        stored = {}
+    if not isinstance(stored, dict):
+        stored = {}
+    return config_from_dict(stored)
 
 
 def save_profile(profile: int, cpu_points: list[FanPoint], gpu_points: list[FanPoint]) -> FanConfig:
@@ -117,6 +182,28 @@ def save_profile(profile: int, cpu_points: list[FanPoint], gpu_points: list[FanP
 def save_custom_enabled(enabled: bool) -> FanConfig:
     config = load()
     config.custom_enabled = enabled
+    if not enabled:
+        config.smart_enabled = False
+    save_all(config)
+    return config
+
+
+def save_smart_enabled(enabled: bool) -> FanConfig:
+    config = load()
+    config.smart_enabled = enabled
+    if enabled:
+        config.custom_enabled = True
+        config.manual_preset = None
+    save_all(config)
+    return config
+
+
+def save_curve_response(response: str) -> FanConfig:
+    """Persist the temperature response used by custom fan curves."""
+    config = load()
+    config.curve_response = (
+        response if response in CURVE_RESPONSES else CURVE_RESPONSE_SMOOTH
+    )
     save_all(config)
     return config
 
@@ -138,23 +225,7 @@ def save_manual_preset(preset: str | None) -> FanConfig:
 def save_all(config: FanConfig) -> None:
     path = _config_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-
-    cpu_map = {}
-    gpu_map = {}
-    for i, profile in enumerate(config.profiles):
-        key = PROFILE_KEYS[i]
-        cpu_map[key] = [[p.temp, p.speed] for p in profile.cpu_points]
-        gpu_map[key] = [[p.temp, p.speed] for p in profile.gpu_points]
-
-    stored = {
-        "custom_tuned_profile": "balanced",
-        "custom_curve_enabled": config.custom_enabled,
-        "manual_preset": config.manual_preset,
-        "min_fan_change_pct": config.min_fan_change_pct,
-        "curve_points_by_profile": cpu_map,
-        "gpu_curve_points_by_profile": gpu_map,
-    }
-    path.write_text(json.dumps(stored, indent=2))
+    path.write_text(json.dumps(config_to_dict(config), indent=2))
 
 
 # ── Interpolation ──

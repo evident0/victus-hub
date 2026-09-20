@@ -13,16 +13,17 @@ import threading
 import time
 from dataclasses import dataclass
 
-from victus_hub import api
-from victus_hub.backend import daemon_client as _daemon_client
+from collections.abc import Callable
+
 from victus_hub.backend import fan_config as _fan_config
-from victus_hub.backend.sysfs_read import read_hp_pwm_pct
-from victus_hub.backend.types import FanPoint, FanProfileConfig
+from victus_hub.backend.types import FanConfig, FanPoint, FanProfileConfig
 
 POLL_INTERVAL = 1.0
 
 EWMA_LAMBDA_INCREASE = 0.1
 EWMA_LAMBDA_DECREASE = 0.1
+SMART_EWMA_LAMBDA_INCREASE = 0.7
+SMART_EWMA_LAMBDA_DECREASE = 0.05
 CURVE_HYSTERESIS_C = 5.0
 
 OVERHEAT_THRESHOLD_C = 90.0
@@ -30,18 +31,21 @@ OVERHEAT_RELEASE_C = 85.0
 OVERHEAT_MIN_FAN_PCT = 50.0
 OVERHEAT_COOLDOWN_S = 10.0
 
-# Pre-suspend cleanup puts the hardware back in automatic mode. Dropping
-# ownership here makes custom mode reassert manual PWM after resume.
-_suspend = threading.Event()
 _fan_logger = logging.getLogger("fan-control")
 
 
-def set_suspended(state: bool) -> None:
-    """Pause or resume the fan-control loop without cancelling its thread."""
-    if state:
-        _suspend.set()
-    else:
-        _suspend.clear()
+@dataclass
+class FanIO:
+    """Hardware and config callbacks used by one controller thread."""
+
+    read_temps: Callable[[], tuple[float | None, float | None]]
+    get_profile: Callable[[], int | None]
+    load_config: Callable[[], FanConfig]
+    request_auto: Callable[[], object]
+    request_manual: Callable[[], object]
+    request_pwm: Callable[[int], object]
+    read_pwm_pct: Callable[[], float | None]
+    is_suspended: Callable[[], bool] = lambda: False
 
 
 # -- Pure helpers ------------------------------------------------------------
@@ -94,9 +98,11 @@ def hysteretic_curve_target(
     return previous_demand
 
 
-def _profile_signature(profile_idx: int, profile: FanProfileConfig) -> tuple:
+def _profile_signature(
+    profile_idx: int, profile: FanProfileConfig, smart: bool = False,
+) -> tuple:
     return (
-        profile_idx,
+        "smart" if smart else profile_idx,
         tuple((point.temp, point.speed) for point in profile.cpu_points),
         tuple((point.temp, point.speed) for point in profile.gpu_points),
     )
@@ -206,13 +212,17 @@ def update_curve_target(
     cpu_sample: float | None,
     gpu_sample: float | None,
     now: float,
+    lambda_increase: float = EWMA_LAMBDA_INCREASE,
+    lambda_decrease: float = EWMA_LAMBDA_DECREASE,
 ) -> float | None:
     """Update EWMAs and return the merged hysteretic target with safety floor."""
     previous_cpu = state.ema_cpu
     previous_gpu = state.ema_gpu
 
     if cpu_sample is not None:
-        state.ema_cpu = compute_ewma(state.ema_cpu, cpu_sample)
+        state.ema_cpu = compute_ewma(
+            state.ema_cpu, cpu_sample, lambda_increase, lambda_decrease,
+        )
         state.cpu_demand = hysteretic_curve_target(
             profile.cpu_points,
             state.ema_cpu,
@@ -220,7 +230,9 @@ def update_curve_target(
             state.cpu_demand,
         )
     if gpu_sample is not None:
-        state.ema_gpu = compute_ewma(state.ema_gpu, gpu_sample)
+        state.ema_gpu = compute_ewma(
+            state.ema_gpu, gpu_sample, lambda_increase, lambda_decrease,
+        )
         state.gpu_demand = hysteretic_curve_target(
             profile.gpu_points,
             state.ema_gpu,
@@ -250,44 +262,28 @@ def _temp_text(temp: float | None) -> str:
 
 
 class FanController:
-    """Poll sensors and drive custom fan PWM through the privileged daemon."""
+    """Poll sensors and drive custom fan PWM through injected hardware IO."""
 
-    def __init__(self) -> None:
+    def __init__(self, io: FanIO) -> None:
         self._st = LoopState()
         self._logged_init = False
+        self._io = io
 
-    def run_forever(self) -> None:
-        while True:
+    def run_forever(self, stop: threading.Event | None = None) -> None:
+        while stop is None or not stop.is_set():
             self._poll_once()
-            time.sleep(POLL_INTERVAL)
+            if stop is None:
+                time.sleep(POLL_INTERVAL)
+            elif stop.wait(POLL_INTERVAL):
+                return
 
     def _poll_once(self) -> None:
         state = self._st
-        if _suspend.is_set():
+        if self._io.is_suspended():
             state.on_suspend()
             return
 
-        try:
-            snapshot = api.read_sensors()
-        except Exception:
-            return
-
-        try:
-            raw_profile = api.get_current_profile()
-        except Exception:
-            raw_profile = None
-        profile_idx = _profile_idx(raw_profile)
-        if not self._logged_init:
-            _fan_logger.info(
-                "fan-control init: api profile=%s, idx=%d",
-                raw_profile,
-                profile_idx,
-            )
-            self._logged_init = True
-
-        config = _fan_config.load()
-        profile = config.profiles[profile_idx]
-
+        config = self._io.load_config()
         if config.manual_preset is not None:
             state.on_manual_preset()
             return
@@ -295,33 +291,63 @@ class FanController:
         if not config.custom_enabled:
             if state.was_custom:
                 try:
-                    _daemon_client.request_fan_auto()
+                    self._io.request_auto()
                 except Exception:
                     pass
                 state.on_leave_custom()
             return
 
-        if not state.was_custom:
-            state.on_enter_custom(read_hp_pwm_pct())
+        try:
+            cpu_sample, gpu_sample = self._io.read_temps()
+        except Exception:
+            return
+
+        try:
+            raw_profile = self._io.get_profile()
+        except Exception:
+            raw_profile = None
+        profile_idx = _profile_idx(raw_profile)
+        if not self._logged_init:
             _fan_logger.info(
-                "fan-control: entering custom (fan-manual + force first write)",
+                "fan-control init: profile=%s, idx=%d",
+                raw_profile,
+                profile_idx,
+            )
+            self._logged_init = True
+
+        profile = config.profiles[profile_idx]
+        smart = bool(config.smart_enabled)
+        if smart:
+            profile = FanProfileConfig(
+                cpu_points=_fan_config.smart_cpu_points(),
+                gpu_points=_fan_config.smart_gpu_points(),
+            )
+
+        if not state.was_custom:
+            state.on_enter_custom(self._io.read_pwm_pct())
+            _fan_logger.info(
+                "fan-control: entering %s (fan-manual + force first write)",
+                "smart" if smart else "custom",
             )
             try:
-                _daemon_client.request_fan_manual()
+                self._io.request_manual()
             except Exception:
                 pass
         state.was_custom = True
 
-        signature = _profile_signature(profile_idx, profile)
+        signature = _profile_signature(profile_idx, profile, smart)
         if signature != state.curve_signature:
             state.reset_curve_hysteresis(signature)
 
+        aggressive = smart or config.curve_response == _fan_config.CURVE_RESPONSE_AGGRESSIVE
         self._control_tick(
             profile,
-            snapshot.cpu_temp_c,
-            snapshot.gpu_temp_c,
+            cpu_sample,
+            gpu_sample,
             time.monotonic(),
-            config.min_fan_change_pct,
+            2.0 if smart else config.min_fan_change_pct,
+            SMART_EWMA_LAMBDA_INCREASE if aggressive else EWMA_LAMBDA_INCREASE,
+            SMART_EWMA_LAMBDA_DECREASE if aggressive else EWMA_LAMBDA_DECREASE,
         )
 
     def _control_tick(
@@ -331,6 +357,8 @@ class FanController:
         gpu_sample: float | None,
         now: float,
         min_fan_change_pct: float = 2.0,
+        lambda_increase: float = EWMA_LAMBDA_INCREASE,
+        lambda_decrease: float = EWMA_LAMBDA_DECREASE,
     ) -> None:
         state = self._st
         target = update_curve_target(
@@ -339,6 +367,8 @@ class FanController:
             cpu_sample,
             gpu_sample,
             now,
+            lambda_increase,
+            lambda_decrease,
         )
         if target is None:
             return
@@ -372,19 +402,10 @@ class FanController:
             reason,
         )
         try:
-            _daemon_client.request_fan_pwm(pwm)
+            self._io.request_pwm(pwm)
         except Exception as error:
-            _fan_logger.warning("fan PWM write failed: %s", error)
+            _fan_logger.error("fan PWM write failed: %s", error)
             return
 
         state.last_written_pct = target
         state.force_write = False
-
-
-def start_fan_control() -> None:
-    """Start the custom fan-control background thread."""
-    threading.Thread(
-        target=FanController().run_forever,
-        daemon=True,
-        name="fan-control",
-    ).start()

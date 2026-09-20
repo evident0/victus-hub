@@ -16,3 +16,6 @@ victus-hub = "victus_hub.main:main"
 
 [tool.setuptools.packages.find]
 include = ["victus_hub*", "victus_hubd*"]
+
+[tool.setuptools.package-data]
+victus_hub = ["resources/**/*"]

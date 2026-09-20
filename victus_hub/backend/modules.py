@@ -1,6 +1,6 @@
 """Hardware module / driver presence detection.
 
-Each function returns ``(text, color)`` suitable for a ``StatusBadge``.
+Status helpers return ``(text, color)`` for the Settings page.
 """
 
 from pathlib import Path
@@ -46,22 +46,39 @@ def fan_control_module() -> tuple[str, str]:
 
 
 def mux_module() -> tuple[str, str]:
-    """Detect whether the hp-gpu-mux kernel module is loaded.
+    """Detect working GPU MUX support in hp-wmi."""
+    from victus_hub.features.gpu.mux import read_gpu_mux_state
 
-    - Green ``"mux"`` if /sys/devices/platform/hp-gpu-mux exists
-    - Red ``"not supported"`` otherwise
-    """
-    if Path("/sys/devices/platform/hp-gpu-mux").is_dir():
-        return ("hp-gpu-mux", GREEN)
+    if read_gpu_mux_state() is not None:
+        return ("hp-wmi", GREEN)
     return ("not supported", RED)
+
+
+def emulated_keyboard_zone_count() -> int | None:
+    """Forced zone count from ``VICTUS_HUB_EMULATE_ZONES``, or None.
+
+    Used by ``./scripts/ui-test`` so the panel can exercise 4-zone RGB
+    without the kernel module or daemon.
+    """
+    raw = os.environ.get("VICTUS_HUB_EMULATE_ZONES", "").strip()
+    if not raw:
+        return None
+    try:
+        count = int(raw)
+    except ValueError:
+        return None
+    return count if count >= 1 else None
 
 
 def keyboard_rgb_module() -> tuple[str, str]:
     """Detect whether the hp-kbd-rgb kernel module is loaded.
 
     - Green ``"hp-kbd-rgb"`` if /sys/devices/platform/hp-kbd-rgb exists
+    - Green ``"emulated"`` if ``VICTUS_HUB_EMULATE_ZONES`` is set
     - Red ``"not supported"`` otherwise
     """
+    if emulated_keyboard_zone_count() is not None:
+        return ("emulated", GREEN)
     if Path("/sys/devices/platform/hp-kbd-rgb").is_dir():
         return ("hp-kbd-rgb", GREEN)
     return ("not supported", RED)

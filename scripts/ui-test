@@ -4,6 +4,8 @@
 set -euo pipefail
 
 ROOT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+# shellcheck source=debug-level.sh
+source "$ROOT_DIR/scripts/debug-level.sh"
 
 SERVICE_NAME=victus-hubd.service
 SERVICE_DST="/etc/systemd/system/$SERVICE_NAME"
@@ -51,6 +53,8 @@ cd "$ROOT_DIR"
 python3 -m pip install -e . --quiet 2>/dev/null || true
 
 # ── Run Qt app ──
-printf '\033[1;34m── Starting Victus Hub (UI-only) ──\033[0m\n'
+# 4-zone RGB is emulated so Keyboard/Home lighting can be tested without
+# hp-kbd-rgb or the daemon. Hardware writes are no-ops.
+printf '\033[1;34m── Starting Victus Hub (UI-only, 4-zone RGB emulated) ──\033[0m\n'
 cd "$ROOT_DIR"
-exec env QT_QPA_PLATFORM=xcb python3 -m victus_hub
+exec env QT_QPA_PLATFORM=xcb VICTUS_HUB_EMULATE_ZONES=4 python3 -m victus_hub

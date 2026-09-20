@@ -1,9 +1,9 @@
 """Entry point for python -m victus_hubd."""
 
-import logging
+from victus_hub.logging_config import configure_terminal_logging
 
 from victus_hubd.daemon import run_daemon
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO, format="%(message)s")
+    configure_terminal_logging()
     run_daemon()

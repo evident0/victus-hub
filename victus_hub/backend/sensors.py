@@ -13,21 +13,18 @@ A runtime-suspended dGPU is not woken for telemetry. There is no idle-disarm.
 """
 
 import json
-import os
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
 from victus_hub.backend import daemon_client
-from victus_hub.backend import profiles as _profiles
-from victus_hub.backend.nvidia import NvidiaMetrics, NvidiaReader
+from victus_hub.backend.nvidia import NvidiaMetrics, NvidiaReader, nvidia_queries_disabled
 from victus_hub.backend.rapl import CpuPowerSample, RaplPowerSampler
-from victus_hub.backend.types import DiskUsage, ExtraSensor, SensorReading, SensorSnapshot
+from victus_hub.backend.types import ExtraSensor, SensorReading, SensorSnapshot
 from victus_hub.backend.sysfs_read import find_hwmon_by_name, iter_hwmon_dirs, read_int, read_text
 from victus_hub.backend.util import command_path
 
-# Skip tiny system partitions (EFI, small /boot) from the Storage card
-_DISK_MIN_TOTAL_BYTES = 2 * 1024 ** 3  # 2 GiB
+CPU_ROOT = Path("/sys/devices/system/cpu")
 
 
 def reading(value: str, source: str = "") -> SensorReading:
@@ -214,6 +211,8 @@ class SensorReader:
             return reading(f"{nvidia.temperature} C", nvidia.source), temp_c
 
         if self._nvidia.has_nvidia():
+            if nvidia_queries_disabled():
+                return reading("Disabled", "NVIDIA queries disabled in Settings"), None
             if self._nvidia.is_runtime_suspended():
                 return reading("Suspended", "dGPU runtime PM (not woken)"), None
             return reading("Unavailable", "no NVIDIA temp (hwmon/NVML/smi)"), None
@@ -277,6 +276,36 @@ class SensorReader:
                 )
             return self._format_cpu_power_sample(direct, "direct RAPL")
 
+    def _read_cpu_frequencies(self) -> list[ExtraSensor]:
+        """Read current frequency per logical CPU; sysfs reports kHz."""
+        sensors = []
+        cpus = sorted(
+            (path for path in CPU_ROOT.glob("cpu[0-9]*") if path.name[3:].isdigit()),
+            key=lambda path: int(path.name[3:]),
+        )
+        for cpu in cpus:
+            freq_dir = cpu / "cpufreq"
+            source = freq_dir / "scaling_cur_freq"
+            value = read_int(source)
+            if value is None or value <= 0:
+                source = freq_dir / "cpuinfo_cur_freq"
+                value = read_int(source)
+            if value is None or value <= 0:
+                continue
+            mhz = value / 1000.0
+            maximum = read_int(freq_dir / "cpuinfo_max_freq")
+            sensors.append(ExtraSensor(
+                key=f"cpu-frequency-{cpu.name[3:]}",
+                group="CPU",
+                name=f"CPU {cpu.name[3:]} Frequency",
+                unit="MHz",
+                value_min=0,
+                value_max=max(mhz, maximum / 1000.0 if maximum else 6000.0),
+                numeric_value=mhz,
+                reading=reading(f"{mhz:.1f} MHz", str(source)),
+            ))
+        return sensors
+
     # ── GPU power (power.rs) ──
 
     def _read_gpu_power(self, nvidia: NvidiaMetrics | None) -> SensorReading:
@@ -284,6 +313,8 @@ class SensorReader:
             return reading(f"{nvidia.power:.1f} W", nvidia.source)
 
         if self._nvidia.has_nvidia():
+            if nvidia_queries_disabled():
+                return reading("Disabled", "NVIDIA queries disabled in Settings")
             if self._nvidia.is_runtime_suspended():
                 return reading("Suspended", "dGPU runtime PM (not woken)")
             if nvidia is not None:
@@ -309,11 +340,6 @@ class SensorReader:
                         )
 
         return reading("Unavailable", "no GPU power sensor")
-
-    # ── Profile (profile.rs) ──
-
-    def _read_current_profile(self) -> SensorReading:
-        return _profiles.current_profile_reading()
 
     # ── lm-sensors (lm.rs) ──
 
@@ -410,56 +436,12 @@ class SensorReader:
         used_gb = used_kb / (1024 * 1024)
         return reading(f"{used_gb:.1f} GB", "proc/meminfo"), usage_pct, used_gb, total_gb
 
-    # ── Disks (local block mounts) ──
-
-    def _read_disks(self) -> list[DiskUsage]:
-        """Return local mounted disks (unique by device), largest / shortest mount first."""
-        mounts = _local_block_mounts()
-        # Prefer shorter mount paths when the same device appears multiple times
-        # (e.g. btrfs subvols / and /home on one partition).
-        best: dict[str, str] = {}
-        for device, mount in mounts:
-            prev = best.get(device)
-            if prev is None or len(mount) < len(prev) or (len(mount) == len(prev) and mount < prev):
-                best[device] = mount
-
-        disks: list[DiskUsage] = []
-        for device, mount in best.items():
-            try:
-                st = os.statvfs(mount)
-            except OSError:
-                continue
-            total = st.f_frsize * st.f_blocks
-            free = st.f_frsize * st.f_bavail
-            if total < _DISK_MIN_TOTAL_BYTES:
-                continue
-            used = max(0, total - free)
-            total_gb = total / (1024 ** 3)
-            used_gb = used / (1024 ** 3)
-            usage_pct = (used / total * 100.0) if total else 0.0
-            name = _disk_display_name(device, mount)
-            disks.append(DiskUsage(
-                name=name,
-                used_gb=used_gb,
-                total_gb=total_gb,
-                usage_pct=usage_pct,
-                mount=mount,
-            ))
-
-        # Stable order: root-like mounts first, then by name
-        disks.sort(key=lambda d: (0 if d.mount == "/" else 1, d.name.lower(), d.mount))
-        return disks
-
     # ── read_all (sensors.rs) ──
 
     def read_all(self, *, full: bool = True) -> SensorSnapshot:
-        # `full=False` is the tray-hidden / minimized path: only the
-        # fan-control thread consumes the snapshot (it reads cpu_temp_c /
-        # gpu_temp_c alone), so skip every UI-only read — the ~210 ms
-        # `tuned-adm`/`powerprofilesctl` subprocess, the ~90 ms HP fan/PWM
-        # sysfs reads, disks, cpu/gpu power, and lm-sensors. Temps + nvidia
-        # (for gpu_temp) stay so fan control keeps working. The full read
-        # resumes on the next tick after the window is shown again.
+        # `full=False` skips UI-only reads (HP fan/PWM, utilization, RAM,
+        # power, lm-sensors). Fan control now runs in the daemon, so the
+        # UI sensor thread uses full=True only while the window is shown.
         hp_hwmon = find_hwmon_by_name("hp", "hp_wmi", "hp-wmi")
         # hwmon → NVML → nvidia-smi; skipped while dGPU runtime-suspended.
         nvidia = self._nvidia.read()
@@ -489,6 +471,8 @@ class SensorReader:
         gpu_usage_pct = nvidia.utilization if nvidia else None
         if gpu_usage_pct is not None:
             gpu_usage = reading(f"{gpu_usage_pct:.0f} %", nvidia.source)
+        elif nvidia_queries_disabled() and self._nvidia.has_nvidia():
+            gpu_usage = reading("Disabled", "NVIDIA queries disabled in Settings")
         elif self._nvidia.has_nvidia() and self._nvidia.is_runtime_suspended():
             gpu_usage = reading("Suspended", "dGPU runtime PM (not woken)")
         else:
@@ -516,86 +500,8 @@ class SensorReader:
             ram_usage_pct=ram_usage_pct,
             ram_used_gb=ram_used_gb,
             ram_total_gb=ram_total_gb,
-            disks=self._read_disks(),
-            profile=self._read_current_profile(),
-            extra_sensors=self._read_lm_sensors(),
+            extra_sensors=self._read_cpu_frequencies() + self._read_lm_sensors(),
         )
-
-
-def _local_block_mounts() -> list[tuple[str, str]]:
-    """Return (device, mountpoint) for local /dev block mounts from /proc/mounts."""
-    results: list[tuple[str, str]] = []
-    try:
-        with open("/proc/mounts") as f:
-            lines = f.readlines()
-    except OSError:
-        return results
-
-    for line in lines:
-        parts = line.split()
-        if len(parts) < 3:
-            continue
-        device, mount, fstype = parts[0], parts[1], parts[2]
-        if not device.startswith("/dev/"):
-            continue
-        # Skip virtual / ephemeral block devices
-        base = Path(device).name
-        if base.startswith(("loop", "zram", "ram", "dm-")):
-            # Allow LVM dm-* if mounted as real storage; skip only obvious
-            if base.startswith(("loop", "zram", "ram")):
-                continue
-        if fstype in (
-            "tmpfs", "devtmpfs", "sysfs", "proc", "cgroup", "cgroup2",
-            "squashfs", "overlay", "autofs", "debugfs", "tracefs",
-            "fusectl", "configfs", "bpf", "pstore", "securityfs",
-        ):
-            continue
-        # Decode octal escapes in mount paths (e.g. \040 for space)
-        mount = mount.encode("utf-8").decode("unicode_escape")
-        results.append((device, mount))
-    return results
-
-
-def _disk_display_name(device: str, mount: str) -> str:
-    """Prefer filesystem label, then mount path, then device basename."""
-    label = _disk_label(device)
-    if label:
-        return label
-    if mount == "/":
-        return "System"
-    if mount and mount != "/":
-        # Shorten long auto-mount paths
-        name = Path(mount).name
-        if name and not name.startswith("usb-"):
-            return name
-        return mount
-    return Path(device).name
-
-
-def _disk_label(device: str) -> str | None:
-    """Resolve a human label from /dev/disk/by-label if present."""
-    by_label = Path("/dev/disk/by-label")
-    if not by_label.is_dir():
-        return None
-    try:
-        target = Path(device).resolve()
-    except OSError:
-        target = Path(device)
-    try:
-        for entry in by_label.iterdir():
-            try:
-                if entry.resolve() == target:
-                    # Labels may use \x20-style escapes in the by-label name
-                    raw = entry.name
-                    try:
-                        return bytes(raw, "utf-8").decode("unicode_escape")
-                    except Exception:
-                        return raw.replace("\\x20", " ")
-            except OSError:
-                continue
-    except OSError:
-        return None
-    return None
 
 
 # ── lm-sensors helpers (lm.rs standalone fns) ──

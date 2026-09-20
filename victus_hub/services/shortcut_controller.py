@@ -1,26 +1,16 @@
-"""Polls the daemon for keyboard events and drives the program shortcut.
+"""Global shortcuts driven by the daemon's push stream, without key polling."""
 
-Owns a single QTimer that asks the daemon for the latest physical keypress
-every ~100 ms.  Two modes:
-
-* **Capture** — ``start_capture()`` arms the controller so the *next*
-  non-modifier keypress is reported via ``captured(mods, key)`` instead of
-  being matched against the configured keybind.  Used by the settings page
-  to record a new shortcut.
-
-* **Match** — when not capturing, each new keypress is compared with the
-  persisted keybind; on a match ``triggered()`` fires (wired by the main
-  window to restore/show the app).
-"""
-
+import json
 import logging
+from pathlib import Path
 
-from PySide6.QtCore import QObject, QTimer, Signal
+from PySide6.QtCore import QFileSystemWatcher, QObject, QSettings, Qt, Signal
+from PySide6.QtNetwork import QLocalSocket
 
-from victus_hub import api
+from victus_hub.backend.daemon_client import SOCKET_PATH
+from victus_hub.features.keyboard.lighting import lighting_from_dict
 from victus_hub.features.keyboard.shortcut import (
-    KeybindSettings,
-    read_keybind_settings,
+    HARDWARE_SHORTCUTS_KEY, read_keybind_settings,
 )
 
 logger = logging.getLogger(__name__)
@@ -28,38 +18,66 @@ logger = logging.getLogger(__name__)
 
 class ShortcutController(QObject):
     triggered = Signal()
-    captured = Signal(object, int)  # mods frozenset, key code
+    captured = Signal(object, int)
+    lighting_changed = Signal(object)
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._settings: KeybindSettings = read_keybind_settings()
-        self._last_seq: int = -1
-        self._capturing: bool = False
+        self._settings = read_keybind_settings()
+        self._hardware_enabled = QSettings().value(HARDWARE_SHORTCUTS_KEY, False, type=bool)
+        self._capturing = False
+        self._subscribed = False
+        self._closed = False
+        self._socket = QLocalSocket(self)
+        self._socket.connected.connect(self._subscribe)
+        self._socket.readyRead.connect(self._read_events)
+        self._socket.errorOccurred.connect(self._socket_error)
+        # Reconnect only after Qt has finished tearing down the old socket.
+        self._socket.disconnected.connect(self._disconnected, Qt.QueuedConnection)
+        # Directory notifications reconnect after daemon startup/restart. No
+        # retry timer or repeated requests while the daemon is unavailable.
+        self._paths = QFileSystemWatcher(self)
+        self._paths.directoryChanged.connect(self._connect)
+        self._connect()
 
-        # Don't fire on a stale event from before the controller existed.
-        try:
-            self._last_seq = api.get_keyboard_last_event().seq
-        except Exception:
-            logger.debug("shortcut: daemon unreachable at init")
+    def _connect(self, _path=None) -> None:
+        if self._closed:
+            return
+        directory = Path(SOCKET_PATH).parent
+        for path in (directory.parent, directory):
+            if path.is_dir() and str(path) not in self._paths.directories():
+                self._paths.addPath(str(path))
+        if self._socket.state() == QLocalSocket.LocalSocketState.UnconnectedState:
+            self._socket.connectToServer(SOCKET_PATH)
 
-        self._timer = QTimer(self)
-        self._timer.setInterval(200)
-        self._timer.timeout.connect(self._tick)
-        self._timer.start()
+    def _subscribe(self) -> None:
+        self._subscribed = False
+        self._socket.write(b"keyboard-events\n")
 
-    # ── Public API ──
+    def _disconnected(self) -> None:
+        subscribed = self._subscribed
+        self._subscribed = False
+        if subscribed:
+            self._connect()
+
+    def _socket_error(self, _error) -> None:
+        logger.warning("Shortcut event stream: %s", self._socket.errorString())
 
     def reload_settings(self) -> None:
         self._settings = read_keybind_settings()
+        self._connect()
+
+    def set_hardware_enabled(self, enabled: bool) -> None:
+        self._hardware_enabled = enabled
+        QSettings().setValue(HARDWARE_SHORTCUTS_KEY, enabled)
+        if enabled:
+            self._connect()
 
     def start_capture(self) -> None:
-        """Arm capture mode: the next non-modifier press becomes the bind."""
+        # Discard buffered presses from before the user clicked Set.
+        self._read_events(discard=True)
         self._capturing = True
-        # Ignore presses that happened before the user clicked "Set".
-        try:
-            self._last_seq = api.get_keyboard_last_event().seq
-        except Exception:
-            pass
+        self._connect()
 
     def cancel_capture(self) -> None:
         self._capturing = False
@@ -67,24 +85,52 @@ class ShortcutController(QObject):
     def is_capturing(self) -> bool:
         return self._capturing
 
-    # ── Tick ──
+    def shutdown(self) -> None:
+        self._closed = True
+        self._subscribed = False
+        self._paths.blockSignals(True)
+        self._socket.blockSignals(True)
+        self._socket.abort()
 
-    def _tick(self) -> None:
-        try:
-            ev = api.get_keyboard_last_event()
-        except Exception:
-            return
-        if ev.seq == self._last_seq:
-            return
-        self._last_seq = ev.seq
-        if ev.key == 0:
-            return  # modifier-only change, nothing to capture or match
+    def _read_events(self, discard: bool = False) -> None:
+        while self._socket.canReadLine():
+            line = bytes(self._socket.readLine()).decode("utf-8", errors="replace").rstrip("\n")
+            if line.startswith("ERR"):
+                logger.warning("Shortcut event stream unavailable: %s; restart victus-hubd", line)
+                continue
+            if line == "OK\tkeyboard-events":
+                self._subscribed = True
+                continue
+            if line.startswith("LIGHTING\t"):
+                if discard:
+                    continue
+                try:
+                    payload = json.loads(line.split("\t", 1)[1])
+                except (json.JSONDecodeError, IndexError):
+                    logger.warning("Malformed lighting event")
+                    continue
+                if isinstance(payload, dict):
+                    self.lighting_changed.emit(lighting_from_dict(payload))
+                continue
+            if discard or not line.startswith("KEY\t"):
+                continue
+            try:
+                _, raw_mods, raw_key, raw_seq = line.split("\t")
+                mods = frozenset(int(m) for m in raw_mods.split(",") if m)
+                key = int(raw_key)
+                int(raw_seq)
+            except ValueError:
+                logger.warning("Malformed keyboard event")
+                continue
+            self._handle_key(mods, key)
 
+    def _handle_key(self, mods: frozenset[int], key: int) -> None:
+        if key == 0:
+            return
         if self._capturing:
             self._capturing = False
-            self.captured.emit(frozenset(ev.mods), ev.key)
+            self.captured.emit(mods, key)
             return
-
-        if self._settings.enabled and ev.key == self._settings.key \
-           and frozenset(ev.mods) == frozenset(self._settings.mods):
+        if self._settings.enabled and key == self._settings.key \
+                and mods == frozenset(self._settings.mods):
             self.triggered.emit()

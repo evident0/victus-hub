@@ -2,6 +2,8 @@
 set -euo pipefail
 
 ROOT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+# shellcheck source=debug-level.sh
+source "$ROOT_DIR/scripts/debug-level.sh"
 # shellcheck source=kmod-prompts.sh
 source "$ROOT_DIR/scripts/kmod-prompts.sh"
 
@@ -40,7 +42,7 @@ trap cleanup EXIT INT TERM
 
 cd "$ROOT_DIR"
 
-# ── Optional: custom hp-wmi, RGB, MUX, ryzenadj ──
+# ── Optional: custom hp-wmi (includes MUX), RGB, ryzenadj ──
 prompt_optional_components
 
 # ── Reinstall daemon ──
@@ -87,4 +89,4 @@ done
 
 printf '\033[1;34m── Starting Victus Hub ──\033[0m\n'
 cd "$ROOT_DIR"
-exec env QT_QPA_PLATFORM=xcb python3 -m victus_hub
+exec env QT_QPA_PLATFORM=wayland python3 -m victus_hub

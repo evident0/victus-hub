@@ -3,12 +3,18 @@
 from __future__ import annotations
 
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
-from victus_hub.backend.types import FanPoint, FanProfileConfig
+from victus_hub.backend.fan_config import interpolate_fan, smart_cpu_points, smart_gpu_points
+from victus_hub.backend.types import FanConfig, FanPoint, FanProfileConfig
 from victus_hub.services.fan_control import (
+    EWMA_LAMBDA_DECREASE,
+    EWMA_LAMBDA_INCREASE,
     FanController,
+    FanIO,
     LoopState,
+    SMART_EWMA_LAMBDA_DECREASE,
+    SMART_EWMA_LAMBDA_INCREASE,
     _pct_to_pwm,
     _profile_idx,
     compute_ewma,
@@ -16,6 +22,24 @@ from victus_hub.services.fan_control import (
     update_curve_target,
     update_overheat,
 )
+
+
+def make_io(**overrides) -> FanIO:
+    values = dict(
+        read_temps=lambda: (50.0, None),
+        get_profile=lambda: 1,
+        load_config=lambda: FanConfig(
+            profiles=[linear_profile(), linear_profile(), linear_profile()],
+            custom_enabled=True,
+        ),
+        request_auto=Mock(),
+        request_manual=Mock(),
+        request_pwm=Mock(),
+        read_pwm_pct=lambda: 20.0,
+        is_suspended=lambda: False,
+    )
+    values.update(overrides)
+    return FanIO(**values)
 
 
 def linear_profile() -> FanProfileConfig:
@@ -47,6 +71,18 @@ class TestEwma(unittest.TestCase):
         ema = compute_ewma(ema, 60.0)
         ema = compute_ewma(ema, 41.0)
         self.assertEqual(ema, 50.0)
+
+    def test_smart_lambda_on_increase(self):
+        self.assertEqual(
+            compute_ewma(50.0, 60.0, SMART_EWMA_LAMBDA_INCREASE, SMART_EWMA_LAMBDA_DECREASE),
+            57.0,
+        )
+
+    def test_smart_lambda_on_decrease(self):
+        self.assertEqual(
+            compute_ewma(50.0, 40.0, SMART_EWMA_LAMBDA_INCREASE, SMART_EWMA_LAMBDA_DECREASE),
+            49.5,
+        )
 
 
 class TestCurveHysteresis(unittest.TestCase):
@@ -161,49 +197,102 @@ class TestOverheatSafety(unittest.TestCase):
 
 class TestControllerWrites(unittest.TestCase):
     def test_forced_first_write_then_unchanged_target_is_suppressed(self):
-        controller = FanController()
+        write = Mock()
+        controller = FanController(make_io(request_pwm=write))
         controller._st.on_enter_custom(20.0)
-        with patch(
-            "victus_hub.services.fan_control._daemon_client.request_fan_pwm",
-        ) as write:
-            controller._control_tick(low_profile(40), 50.0, None, 0.0)
-            controller._control_tick(low_profile(40), 50.0, None, 1.0)
+        controller._control_tick(low_profile(40), 50.0, None, 0.0)
+        controller._control_tick(low_profile(40), 50.0, None, 1.0)
         write.assert_called_once_with(102)
         self.assertEqual(controller._st.last_written_pct, 40.0)
         self.assertFalse(controller._st.force_write)
 
     def test_failed_write_is_retried(self):
-        controller = FanController()
+        write = Mock(side_effect=RuntimeError("daemon unavailable"))
+        controller = FanController(make_io(request_pwm=write))
         controller._st.on_enter_custom(20.0)
-        with patch(
-            "victus_hub.services.fan_control._daemon_client.request_fan_pwm",
-            side_effect=RuntimeError("daemon unavailable"),
-        ) as write:
-            controller._control_tick(low_profile(40), 50.0, None, 0.0)
-            controller._control_tick(low_profile(40), 50.0, None, 1.0)
+        controller._control_tick(low_profile(40), 50.0, None, 0.0)
+        controller._control_tick(low_profile(40), 50.0, None, 1.0)
         self.assertEqual(write.call_count, 2)
         self.assertEqual(controller._st.last_written_pct, 20.0)
         self.assertTrue(controller._st.force_write)
 
     def test_small_target_change_is_suppressed(self):
-        controller = FanController()
+        write = Mock()
+        controller = FanController(make_io(request_pwm=write))
         controller._st.last_written_pct = 40.0
-        with patch(
-            "victus_hub.services.fan_control._daemon_client.request_fan_pwm",
-        ) as write:
-            controller._control_tick(low_profile(42), 50.0, None, 0.0)
+        controller._control_tick(low_profile(42), 50.0, None, 0.0)
         write.assert_not_called()
         self.assertEqual(controller._st.last_written_pct, 40.0)
 
     def test_target_change_above_threshold_is_written(self):
-        controller = FanController()
+        write = Mock()
+        controller = FanController(make_io(request_pwm=write))
         controller._st.last_written_pct = 40.0
-        with patch(
-            "victus_hub.services.fan_control._daemon_client.request_fan_pwm",
-        ) as write:
-            controller._control_tick(low_profile(43), 50.0, None, 0.0)
+        controller._control_tick(low_profile(43), 50.0, None, 0.0)
         write.assert_called_once_with(109)
         self.assertEqual(controller._st.last_written_pct, 43.0)
+
+
+class TestPollSkipsTempsOutsideCustom(unittest.TestCase):
+    def test_auto_preset_does_not_read_temperatures(self):
+        read_temps = Mock(return_value=(90.0, 90.0))
+        config = FanConfig(
+            profiles=[linear_profile(), linear_profile(), linear_profile()],
+            custom_enabled=False,
+            manual_preset="auto",
+        )
+        controller = FanController(make_io(load_config=lambda: config, read_temps=read_temps))
+        controller._poll_once()
+        read_temps.assert_not_called()
+
+    def test_max_preset_does_not_read_temperatures(self):
+        read_temps = Mock(return_value=(90.0, 90.0))
+        config = FanConfig(
+            profiles=[linear_profile(), linear_profile(), linear_profile()],
+            custom_enabled=False,
+            manual_preset="max",
+        )
+        controller = FanController(make_io(load_config=lambda: config, read_temps=read_temps))
+        controller._poll_once()
+        read_temps.assert_not_called()
+
+
+class TestCurveResponse(unittest.TestCase):
+    def _poll_once(self, *, response="smooth", smart=False, min_fan_change_pct=2.0):
+        config = FanConfig(
+            profiles=[linear_profile(), linear_profile(), linear_profile()],
+            custom_enabled=True,
+            smart_enabled=smart,
+            curve_response=response,
+            min_fan_change_pct=min_fan_change_pct,
+        )
+        controller = FanController(make_io(load_config=lambda: config))
+        with patch.object(controller, "_control_tick") as control_tick:
+            controller._poll_once()
+        return control_tick.call_args.args
+
+    def test_aggressive_response_uses_smart_lambdas(self):
+        args = self._poll_once(response="aggressive")
+        self.assertEqual(args[5], SMART_EWMA_LAMBDA_INCREASE)
+        self.assertEqual(args[6], SMART_EWMA_LAMBDA_DECREASE)
+
+    def test_smart_mode_stays_aggressive(self):
+        args = self._poll_once(smart=True)
+        self.assertEqual(args[5], SMART_EWMA_LAMBDA_INCREASE)
+        self.assertEqual(args[6], SMART_EWMA_LAMBDA_DECREASE)
+
+    def test_smart_mode_uses_fixed_min_fan_change(self):
+        args = self._poll_once(smart=True, min_fan_change_pct=4.5)
+        self.assertEqual(args[4], 2.0)
+
+    def test_custom_mode_uses_configured_min_fan_change(self):
+        args = self._poll_once(min_fan_change_pct=4.5)
+        self.assertEqual(args[4], 4.5)
+
+    def test_smooth_response_uses_default_lambdas(self):
+        args = self._poll_once()
+        self.assertEqual(args[5], EWMA_LAMBDA_INCREASE)
+        self.assertEqual(args[6], EWMA_LAMBDA_DECREASE)
 
 
 class TestLoopState(unittest.TestCase):
@@ -241,6 +330,39 @@ class TestLoopState(unittest.TestCase):
         self.assertIsNone(state.gpu_demand)
         self.assertTrue(state.overheat_active)
         self.assertEqual(state.curve_signature, signature)
+
+
+class TestSmartCurve(unittest.TestCase):
+    def test_cpu_idle_is_off(self):
+        self.assertEqual(interpolate_fan(smart_cpu_points(), 58), 0)
+
+    def test_cpu_spinup_skips_stall_band(self):
+        self.assertEqual(interpolate_fan(smart_cpu_points(), 60), 32)
+
+    def test_cpu_gaming_cruise(self):
+        self.assertEqual(interpolate_fan(smart_cpu_points(), 80), 62)
+
+    def test_gpu_spinup(self):
+        self.assertEqual(interpolate_fan(smart_gpu_points(), 54), 32)
+
+    def test_gpu_gaming_cruise(self):
+        self.assertEqual(interpolate_fan(smart_gpu_points(), 75), 68)
+
+    def test_first_sample_at_cruise_uses_smart_table(self):
+        state = LoopState()
+        target = update_curve_target(
+            state,
+            FanProfileConfig(
+                cpu_points=smart_cpu_points(),
+                gpu_points=smart_gpu_points(),
+            ),
+            cpu_sample=80.0,
+            gpu_sample=None,
+            now=0.0,
+            lambda_increase=SMART_EWMA_LAMBDA_INCREASE,
+            lambda_decrease=SMART_EWMA_LAMBDA_DECREASE,
+        )
+        self.assertEqual(target, 62.0)
 
 
 class TestSmallHelpers(unittest.TestCase):

@@ -10,6 +10,8 @@ MODULE_DIR="$(cd -- "$SCRIPT_DIR/.." && pwd)"
 MODULE_KO="$MODULE_DIR/${MODULE_NAME}.ko"
 INSTALL_PATH="/lib/modules/${KERNEL_RELEASE}/extra/${MODULE_NAME}.ko"
 AUTOLOAD_CONF="/etc/modules-load.d/${MODULE_NAME}.conf"
+DEPMOD_CONF="/etc/depmod.d/victus-hub-hp-wmi-${KERNEL_RELEASE}.conf"
+PLATFORM_PATH="/sys/devices/platform/hp-wmi"
 
 if [ "$(id -u)" -eq 0 ]; then
   SUDO=()
@@ -31,6 +33,44 @@ if [ ! -f "$MODULE_KO" ]; then
   exit 1
 fi
 
+# Capture the exact build identity before changing the installed driver.
+BUILD_NOTE=$(mktemp)
+trap 'rm -f "$BUILD_NOTE"' EXIT
+objcopy --dump-section .note.gnu.build-id="$BUILD_NOTE" "$MODULE_KO" /dev/null
+if [ ! -s "$BUILD_NOTE" ]; then
+  printf 'Built module has no build ID; cannot verify the loaded driver.\n' >&2
+  exit 1
+fi
+
+# MUX support now lives in hp-wmi. Retire the former standalone install.
+if [ -d /sys/module/hp_gpu_mux ]; then
+  printf 'Unloading legacy hp-gpu-mux...\n'
+  "${SUDO[@]}" modprobe -r hp-gpu-mux || "${SUDO[@]}" rmmod hp_gpu_mux
+fi
+"${SUDO[@]}" rm -f /etc/modules-load.d/hp-gpu-mux.conf
+for legacy_ko in /lib/modules/*/extra/hp-gpu-mux.ko{,.xz,.zst,.gz}; do
+  [ -f "$legacy_ko" ] || continue
+  "${SUDO[@]}" rm -f "$legacy_ko"
+  legacy_release="${legacy_ko#/lib/modules/}"
+  "${SUDO[@]}" depmod -a "${legacy_release%%/*}"
+done
+
+printf 'Installing %s to %s...\n' "$MODULE_KO" "$INSTALL_PATH"
+"${SUDO[@]}" install -Dm644 "$MODULE_KO" "$INSTALL_PATH"
+
+# extra/ does not have priority over kernel/ on every distribution. Restrict
+# the override to this kernel so other kernels can still use their stock module.
+"${SUDO[@]}" install -d /etc/depmod.d
+printf 'override %s %s extra\n' "$MODULE_NAME" "$KERNEL_RELEASE" | "${SUDO[@]}" tee "$DEPMOD_CONF" >/dev/null
+printf 'Updating module dependency cache...\n'
+"${SUDO[@]}" depmod -a "$KERNEL_RELEASE"
+
+SELECTED_PATH=$(modinfo -k "$KERNEL_RELEASE" -n "$MODULE_NAME")
+if [ "$(readlink -f "$SELECTED_PATH")" != "$(readlink -f "$INSTALL_PATH")" ]; then
+  printf 'Module lookup selected %s instead of %s; refusing to report success.\n' "$SELECTED_PATH" "$INSTALL_PATH" >&2
+  exit 1
+fi
+
 if [ -d "/sys/module/${MODULE_SYS_NAME}" ]; then
   printf 'Unloading currently loaded %s...\n' "$MODULE_NAME"
   "${SUDO[@]}" modprobe -r "$MODULE_NAME" || "${SUDO[@]}" rmmod "$MODULE_SYS_NAME"
@@ -40,14 +80,8 @@ fi
 # Free it before loading so probe can recreate /sys/devices/platform/hp-wmi/.
 if [ -d "/sys/module/${BIOSCFG_SYS_NAME}" ]; then
   printf 'Unloading %s (shares WMI BIOS GUID with %s)...\n' "$BIOSCFG_SYS_NAME" "$MODULE_NAME"
-  "${SUDO[@]}" modprobe -r "$BIOSCFG_SYS_NAME" || "${SUDO[@]}" rmmod "$BIOSCFG_SYS_NAME" || true
+  "${SUDO[@]}" modprobe -r "$BIOSCFG_SYS_NAME" || "${SUDO[@]}" rmmod "$BIOSCFG_SYS_NAME"
 fi
-
-printf 'Installing %s to %s...\n' "$MODULE_KO" "$INSTALL_PATH"
-"${SUDO[@]}" install -Dm644 "$MODULE_KO" "$INSTALL_PATH"
-
-printf 'Updating module dependency cache...\n'
-"${SUDO[@]}" depmod -a "$KERNEL_RELEASE"
 
 printf 'Configuring autoload at boot: %s\n' "$AUTOLOAD_CONF"
 printf '%s\n' "$MODULE_NAME" | "${SUDO[@]}" tee "$AUTOLOAD_CONF" >/dev/null
@@ -55,6 +89,16 @@ printf '%s\n' "$MODULE_NAME" | "${SUDO[@]}" tee "$AUTOLOAD_CONF" >/dev/null
 printf 'Loading module...\n'
 "${SUDO[@]}" modprobe "$MODULE_NAME"
 
+if ! cmp -s "$BUILD_NOTE" "/sys/module/${MODULE_SYS_NAME}/notes/.note.gnu.build-id"; then
+  printf 'Loaded %s build ID does not match the custom module; installation failed.\n' "$MODULE_NAME" >&2
+  exit 1
+fi
+if [ ! -e "$PLATFORM_PATH/gpu_mux_mode" ] || [ ! -e "$PLATFORM_PATH/gpu_mux_supported_names" ]; then
+  printf 'Custom %s loaded but MUX interfaces are missing; check the kernel log.\n' "$MODULE_NAME" >&2
+  exit 1
+fi
+
 printf 'Installed and loaded %s.\n' "$MODULE_NAME"
+printf 'Verified custom module build ID and MUX interfaces.\n'
 printf 'Platform device: /sys/devices/platform/hp-wmi/\n'
 printf 'Platform profile: /sys/firmware/acpi/platform_profile\n'

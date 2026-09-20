@@ -19,6 +19,12 @@ def _format_hardware_title(product: str, board: str) -> str:
     return f"{product} ({board})"
 
 
+def board_title() -> str:
+    """Short board id for the settings header, e.g. 'Board 8BD4'."""
+    board = _read_trimmed_sysfs(BOARD_NAME_PATH)
+    return f"Board {board}" if board else ""
+
+
 def hardware_title() -> str:
     product = _read_trimmed_sysfs(PRODUCT_NAME_PATH)
     board = _read_trimmed_sysfs(BOARD_NAME_PATH)

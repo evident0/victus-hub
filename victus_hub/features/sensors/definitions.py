@@ -8,6 +8,8 @@ from dataclasses import dataclass, field
 from typing import Callable
 import re
 
+from victus_hub.backend.types import SensorReading
+
 @dataclass
 class SensorDefinition:
     key: str
@@ -57,7 +59,7 @@ SENSOR_DEFINITIONS: list[SensorDefinition] = [
     ),
     SensorDefinition(
         key="cpu-usage", group="CPU", name="CPU Usage", unit="%",
-        value_min=0, value_max=100, graphable=False,
+        value_min=0, value_max=100, graphable=True,
         reading=_make_reading("cpu_usage"),
         numeric_value=_make_numeric("cpu_usage_pct"),
     ),
@@ -75,7 +77,7 @@ SENSOR_DEFINITIONS: list[SensorDefinition] = [
     ),
     SensorDefinition(
         key="gpu-usage", group="GPU", name="GPU Usage", unit="%",
-        value_min=0, value_max=100, graphable=False,
+        value_min=0, value_max=100, graphable=True,
         reading=_make_reading("gpu_usage"),
         numeric_value=_make_numeric("gpu_usage_pct"),
     ),
@@ -136,7 +138,7 @@ def dynamic_sensor_definition(sensor) -> SensorDefinition:
         graphable=True,
         reading=lambda snap: next(
             (e.reading for e in snap.extra_sensors if e.key == sensor.key),
-            sensor.reading,
+            SensorReading("Unavailable", sensor.reading.source),
         ),
         numeric_value=lambda snap: next(
             (e.numeric_value for e in snap.extra_sensors if e.key == sensor.key),
