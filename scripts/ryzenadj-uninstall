@@ -1,9 +1,20 @@
 #!/usr/bin/env bash
 # Uninstall the ryzenadj tool: remove the installed binary and the source clone
-# at ~/RyzenAdj left by ryzenadj-install.
+# at ~/RyzenAdj left by ryzenadj-install, including sudo installations.
 set -euo pipefail
 
-CLONE_DIR="$HOME/RyzenAdj"
+if [ -z "${USER_HOME:-}" ]; then
+  if [ "$(id -u)" -eq 0 ] && [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != root ]; then
+    USER_HOME=$(getent passwd "$SUDO_USER" | cut -d: -f6)
+  else
+    USER_HOME="$HOME"
+  fi
+fi
+CLONE_DIRS=("$USER_HOME/RyzenAdj")
+# ryzenadj-install uses HOME even under sudo, which normally means /root.
+if [ "$HOME" != "$USER_HOME" ]; then
+  CLONE_DIRS+=("$HOME/RyzenAdj")
+fi
 INSTALL_BIN="/usr/local/bin/ryzenadj"
 
 if [ "$(id -u)" -eq 0 ]; then
@@ -19,11 +30,13 @@ else
   printf '%s not found — already removed.\n' "$INSTALL_BIN"
 fi
 
-if [ -d "$CLONE_DIR" ]; then
-  printf 'Removing source clone at %s\n' "$CLONE_DIR"
-  rm -rf "$CLONE_DIR"
-else
-  printf 'No source clone at %s — nothing to remove.\n' "$CLONE_DIR"
-fi
+for clone_dir in "${CLONE_DIRS[@]}"; do
+  if [ -d "$clone_dir" ]; then
+    printf 'Removing source clone at %s\n' "$clone_dir"
+    "${SUDO[@]}" rm -rf "$clone_dir"
+  else
+    printf 'No source clone at %s — nothing to remove.\n' "$clone_dir"
+  fi
+done
 
 printf '\033[32mUninstalled ryzenadj.\033[0m\n'

@@ -13,7 +13,7 @@ MODULE_NAME="hp-wmi"
 MODULE_SYS_NAME="hp_wmi"
 BIOSCFG_SYS_NAME="hp_bioscfg"
 KERNEL_RELEASE="$(uname -r)"
-INSTALL_PATH="/lib/modules/${KERNEL_RELEASE}/extra/${MODULE_NAME}.ko"
+INSTALL_PATHS=(/lib/modules/"${KERNEL_RELEASE}"/extra/"${MODULE_NAME}".ko{,.xz,.zst,.gz})
 AUTOLOAD_CONF="/etc/modules-load.d/${MODULE_NAME}.conf"
 DEPMOD_CONF="/etc/depmod.d/victus-hub-hp-wmi-${KERNEL_RELEASE}.conf"
 PLATFORM_PATH="/sys/devices/platform/hp-wmi"
@@ -25,9 +25,14 @@ else
 fi
 
 custom_installed=false
-if [ -f "$INSTALL_PATH" ] || [ -f "$AUTOLOAD_CONF" ] || [ -f "$DEPMOD_CONF" ]; then
+if [ -f "$AUTOLOAD_CONF" ] || [ -f "$DEPMOD_CONF" ]; then
   custom_installed=true
 fi
+for path in "${INSTALL_PATHS[@]}"; do
+  if [ -f "$path" ]; then
+    custom_installed=true
+  fi
+done
 
 if [ "$custom_installed" = false ]; then
   printf 'No custom %s install found under extra/ or modules-load.d; leaving in-tree module alone.\n' "$MODULE_NAME"
@@ -53,10 +58,11 @@ if [ -f "$AUTOLOAD_CONF" ]; then
   "${SUDO[@]}" rm -f "$AUTOLOAD_CONF"
 fi
 
-if [ -f "$INSTALL_PATH" ]; then
-  printf 'Removing installed module: %s\n' "$INSTALL_PATH"
-  "${SUDO[@]}" rm -f "$INSTALL_PATH"
-fi
+for path in "${INSTALL_PATHS[@]}"; do
+  [ -f "$path" ] || continue
+  printf 'Removing installed module: %s\n' "$path"
+  "${SUDO[@]}" rm -f "$path"
+done
 
 if [ -f "$DEPMOD_CONF" ]; then
   printf 'Removing module selection override: %s\n' "$DEPMOD_CONF"

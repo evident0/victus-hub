@@ -4,7 +4,6 @@ set -euo pipefail
 MODULE_NAME="hp-kbd-rgb"
 MODULE_SYS_NAME="hp_kbd_rgb"
 KERNEL_RELEASE="$(uname -r)"
-INSTALL_PATH="/lib/modules/${KERNEL_RELEASE}/extra/${MODULE_NAME}.ko"
 AUTOLOAD_CONF="/etc/modules-load.d/${MODULE_NAME}.conf"
 
 if [ "$(id -u)" -eq 0 ]; then
@@ -23,12 +22,19 @@ if [ -f "$AUTOLOAD_CONF" ]; then
   "${SUDO[@]}" rm -f "$AUTOLOAD_CONF"
 fi
 
-if [ -f "$INSTALL_PATH" ]; then
-  printf 'Removing installed module: %s\n' "$INSTALL_PATH"
-  "${SUDO[@]}" rm -f "$INSTALL_PATH"
+removed=0
+for ko in /lib/modules/*/extra/${MODULE_NAME}.ko{,.xz,.zst,.gz}; do
+  [ -f "$ko" ] || continue
+  printf 'Removing installed module: %s\n' "$ko"
+  "${SUDO[@]}" rm -f "$ko"
+  rel="${ko#/lib/modules/}"
+  "${SUDO[@]}" depmod -a "${rel%%/*}"
+  removed=1
+done
+
+if [ "$removed" -eq 0 ]; then
+  printf 'Updating module dependency cache...\n'
+  "${SUDO[@]}" depmod -a "$KERNEL_RELEASE"
 fi
 
-printf 'Updating module dependency cache...\n'
-"${SUDO[@]}" depmod -a "$KERNEL_RELEASE"
-
-printf 'Uninstalled %s for kernel %s.\n' "$MODULE_NAME" "$KERNEL_RELEASE"
+printf 'Uninstalled %s.\n' "$MODULE_NAME"

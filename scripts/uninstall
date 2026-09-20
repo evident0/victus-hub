@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # Uninstall all Victus Hub components:
-#   1. .desktop entry + icon
-#   2. victus-hubd daemon           (stop, disable, remove service, pip uninstall)
-#   3. victus-hub program           (pip uninstall — same distribution)
+#   1. .desktop entries + icons
+#   2. victus-hubd daemon           (stop, disable, remove service + sleep hook)
+#   3. victus-hub program           (pip uninstall + leftover launchers)
 #   4. custom hp-wmi + hp-kbd-rgb kernel modules (and legacy MUX cleanup)
-#   5. ryzenadj                    (remove binary + ~/RyzenAdj source clone)
-# ~/.config/victus-hub is left in place (user settings preserved).
+#   5. ryzenadj                    (remove binary + RyzenAdj source clone)
+# ~/.config is left in place (user settings preserved).
 set -euo pipefail
 
 APP_ONLY=0
@@ -19,10 +19,33 @@ if [ "$#" -ne 0 ]; then
 fi
 
 ROOT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+# Check before removing anything, including when user and system installs coexist.
+SYSTEM_PACKAGE_DIRS=(
+	/usr/local/lib/python*/{site,dist}-packages
+	/usr/local/lib64/python*/site-packages
+	/usr/lib/python*/{site,dist}-packages
+	/usr/lib64/python*/site-packages
+)
+if [ "$(id -u)" -ne 0 ]; then
+	SYSTEM_INSTALL_PATHS=(/usr/local/{bin,sbin}/victus-hub)
+	for dir in "${SYSTEM_PACKAGE_DIRS[@]}"; do
+		SYSTEM_INSTALL_PATHS+=("$dir"/victus_hub-*.dist-info "$dir"/__editable__.victus_hub-*.pth)
+	done
+	for path in "${SYSTEM_INSTALL_PATHS[@]}"; do
+		if [ -e "$path" ] || [ -L "$path" ]; then
+			printf 'A system-wide Victus Hub installation was found. Rerun with sudo:\n  sudo %q' "$0" >&2
+			if [ "$APP_ONLY" -eq 1 ]; then printf ' --app-only' >&2; fi
+			printf '\n' >&2
+			exit 1
+		fi
+	done
+fi
+OPT_DIR="/opt/victus-hub"
 SERVICE_NAME=victus-hubd.service
 SERVICE_DST="/etc/systemd/system/$SERVICE_NAME"
 SLEEP_DST="/usr/lib/systemd/system-sleep/victus-hub"
 SOCKET_RUNTIME_DIR="/run/victus-hubd"
+STATE_DIR="/var/lib/victus-hubd"
 ICON_DST="/usr/share/icons/hicolor/1024x1024/apps/victus-hub.png"
 DESKTOP_DST="/usr/share/applications/victus-hub.desktop"
 HP_WMI_KMOD_UNINSTALL="$ROOT_DIR/kernel/hp-wmi/scripts/uninstall"
@@ -35,12 +58,48 @@ else
 	SUDO=(sudo)
 fi
 
-# ── 1. Desktop entry + icon ──
-printf '\033[1;34m── Removing desktop entry + icon ──\033[0m\n'
+if [ "$(id -u)" -eq 0 ] && [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != root ]; then
+	USER_HOME=$(getent passwd "$SUDO_USER" | cut -d: -f6)
+	REAL_USER="$SUDO_USER"
+else
+	USER_HOME="$HOME"
+	REAL_USER="${SUDO_USER:-${USER:-$(id -un)}}"
+fi
+USER_DESKTOP_DST="$USER_HOME/.local/share/applications/victus-hub.desktop"
+
+remove_path() {
+	local path
+	for path in "$@"; do
+		if [ -e "$path" ] || [ -L "$path" ]; then
+			printf 'Removing %s\n' "$path"
+			"${SUDO[@]}" rm -rf "$path"
+		fi
+	done
+}
+
+pip_uninstall() {
+	local -a cmd=("$@")
+	"${cmd[@]}" python3 -c 'from importlib.metadata import distribution, PackageNotFoundError
+try:
+    distribution("victus-hub")
+except PackageNotFoundError:
+    raise SystemExit(1)' || return 0
+	"${cmd[@]}" python3 -m pip uninstall -y --root-user-action=ignore victus-hub \
+		|| "${cmd[@]}" python3 -m pip uninstall -y --root-user-action=ignore --break-system-packages victus-hub \
+		|| true
+}
+
+# ── 1. Desktop entries + icons ──
+printf '\033[1;34m── Removing desktop entries + icon ──\033[0m\n'
 if [ -f "$DESKTOP_DST" ]; then
 	printf 'Removing %s\n' "$DESKTOP_DST"
 	"${SUDO[@]}" rm -f "$DESKTOP_DST"
 	"${SUDO[@]}" update-desktop-database /usr/share/applications 2>/dev/null || true
+fi
+if [ -f "$USER_DESKTOP_DST" ]; then
+	printf 'Removing %s\n' "$USER_DESKTOP_DST"
+	rm -f "$USER_DESKTOP_DST"
+	update-desktop-database "$(dirname "$USER_DESKTOP_DST")" 2>/dev/null || true
 fi
 if [ -f "$ICON_DST" ]; then
 	printf 'Removing icon %s\n' "$ICON_DST"
@@ -54,6 +113,14 @@ for size in 16 22 24 32 48 64 128 256 512 1024; do
 		"${SUDO[@]}" rm -f "$icon"
 	fi
 done
+for icon in "$USER_HOME"/.local/share/icons/hicolor/*/apps/victus-hub.png; do
+	[ -e "$icon" ] || [ -L "$icon" ] || continue
+	printf 'Removing %s\n' "$icon"
+	rm -f "$icon"
+done
+if [ -d "$USER_HOME/.local/share/icons/hicolor" ]; then
+	gtk-update-icon-cache -f "$USER_HOME/.local/share/icons/hicolor" 2>/dev/null || true
+fi
 
 # ── 2. Daemon ──
 printf '\033[1;34m── Uninstalling victus-hubd daemon ──\033[0m\n'
@@ -76,6 +143,7 @@ if command -v systemctl >/dev/null 2>&1; then
 		"${SUDO[@]}" systemctl daemon-reload
 		"${SUDO[@]}" systemctl reset-failed "$SERVICE_NAME" 2>/dev/null || true
 	fi
+	"${SUDO[@]}" rm -f "/etc/systemd/system/multi-user.target.wants/$SERVICE_NAME"
 else
 	printf 'systemctl not found — skipping systemd steps.\n'
 fi
@@ -85,16 +153,39 @@ if [ -f "$SLEEP_DST" ]; then
 	"${SUDO[@]}" rm -f "$SLEEP_DST"
 fi
 
-# Best-effort cleanup of runtime artifacts
-if [ -d "$SOCKET_RUNTIME_DIR" ]; then
-	printf 'Removing runtime directory %s\n' "$SOCKET_RUNTIME_DIR"
-	"${SUDO[@]}" rm -rf "$SOCKET_RUNTIME_DIR" || true
-fi
+remove_path "$SOCKET_RUNTIME_DIR" "$STATE_DIR"
 
 # ── 3. Program + daemon Python packages ──
 # A single pip distribution (victus-hub) ships both victus_hub* and victus_hubd*.
+# The one-liner installer runs pip as root into /usr/local; a user checkout may
+# also install into ~/.local. Uninstall both, then delete leftover launchers.
 printf '\033[1;34m── Uninstalling victus-hub Python packages ──\033[0m\n'
-python3 -m pip uninstall -y victus-hub 2>/dev/null || true
+pip_uninstall
+if [ "$(id -u)" -eq 0 ] && [ -n "${REAL_USER:-}" ] && [ "$REAL_USER" != root ]; then
+	pip_uninstall sudo -H -u "$REAL_USER"
+fi
+
+remove_path \
+	/usr/local/bin/victus-hub \
+	/usr/local/sbin/victus-hub \
+	"$USER_HOME/.local/bin/victus-hub"
+
+# Sweep pip metadata left behind when the editable tree (/opt/victus-hub) was
+# deleted before pip uninstall, or when pip could not remove root-owned files.
+for dir in \
+	"${SYSTEM_PACKAGE_DIRS[@]}" \
+	"$USER_HOME"/.local/lib/python*/site-packages
+do
+	[ -d "$dir" ] || continue
+	for leftover in \
+		"$dir"/victus_hub-*.dist-info \
+		"$dir"/__editable__.victus_hub-*.pth \
+		"$dir"/__editable___victus_hub_*_finder.py \
+		"$dir"/__pycache__/__editable___victus_hub_*.pyc
+	do
+		remove_path "$leftover"
+	done
+done
 
 # ── 4. Kernel modules ──
 if [ "$APP_ONLY" -eq 1 ]; then
@@ -123,11 +214,24 @@ if [ -d /sys/module/hp_gpu_mux ]; then
 	"${SUDO[@]}" modprobe -r hp-gpu-mux || "${SUDO[@]}" rmmod hp_gpu_mux
 fi
 "${SUDO[@]}" rm -f /etc/modules-load.d/hp-gpu-mux.conf
-for legacy_ko in /lib/modules/*/extra/hp-gpu-mux.ko{,.xz,.zst,.gz}; do
-	[ -f "$legacy_ko" ] || continue
-	"${SUDO[@]}" rm -f "$legacy_ko"
-	legacy_release="${legacy_ko#/lib/modules/}"
-	"${SUDO[@]}" depmod -a "${legacy_release%%/*}"
+
+# Sweep extra/ copies and depmod overrides on every installed kernel.
+# The kmod uninstallers target the running kernel only.
+for ko in \
+	/lib/modules/*/extra/hp-wmi.ko{,.xz,.zst,.gz} \
+	/lib/modules/*/extra/hp-kbd-rgb.ko{,.xz,.zst,.gz} \
+	/lib/modules/*/extra/hp-gpu-mux.ko{,.xz,.zst,.gz}
+do
+	[ -f "$ko" ] || continue
+	printf 'Removing leftover module %s\n' "$ko"
+	"${SUDO[@]}" rm -f "$ko"
+	legacy_release="${ko#/lib/modules/}"
+	"${SUDO[@]}" depmod -a "${legacy_release%%/*}" || true
+done
+for conf in /etc/depmod.d/victus-hub-hp-wmi-*.conf; do
+	[ -f "$conf" ] || continue
+	printf 'Removing %s\n' "$conf"
+	"${SUDO[@]}" rm -f "$conf"
 done
 
 # ── 5. ryzenadj ──
@@ -135,9 +239,16 @@ printf '\033[1;34m── Uninstalling ryzenadj ──\033[0m\n'
 if [ ! -x "$RYZENADJ_UNINSTALL" ]; then
 	printf 'ryzenadj uninstall script not found or not executable: %s\n' "$RYZENADJ_UNINSTALL" >&2
 else
-	bash "$RYZENADJ_UNINSTALL"
+	USER_HOME="$USER_HOME" bash "$RYZENADJ_UNINSTALL"
+fi
+
+# One-liner installer clones into /opt/victus-hub. Do not delete ROOT_DIR —
+# uninstall.sh removes /opt after this script returns when running from there.
+if [ -e "$OPT_DIR" ] && [ "$(readlink -f "$ROOT_DIR")" != "$(readlink -f "$OPT_DIR")" ]; then
+	printf 'Removing %s\n' "$OPT_DIR"
+	"${SUDO[@]}" rm -rf "$OPT_DIR"
 fi
 
 printf '\033[32m── Uninstall complete ──\033[0m\n'
-printf '  ~/.config/victus-hub was left in place (user settings preserved).\n'
+printf '  ~/.config was left in place (user settings preserved).\n'
 printf '  Custom hp-wmi (if any) was removed and in-tree hp-wmi restored when possible.\n'
