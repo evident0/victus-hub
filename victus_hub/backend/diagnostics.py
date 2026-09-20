@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import platform
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from importlib.metadata import PackageNotFoundError, version as pkg_version
@@ -45,6 +46,13 @@ _DAEMON_LOG_NOISE = (
     "[cpu-power]",
 )
 _JOURNAL_ERROR_RE = re.compile(r"\berr(?:or)?\b|traceback|exception|failed", re.I)
+_HP_MODULE_RE = re.compile(r"\b(?:hp[_-]wmi|hp[_-]kbd[_-]rgb)\b", re.I)
+_HP_MODULE_PROBLEM_RE = re.compile(
+    r"\berr(?:or)?\b|fail(?:ed)?|warn(?:ing)?|unable|invalid|unknown|"
+    r"exception|abort|could not",
+    re.I,
+)
+_ACPI_ERROR_RE = re.compile(r"\bACPI(?: BIOS)? (?:Error|Exception|Warning)\b", re.I)
 
 
 @dataclass(frozen=True)
@@ -82,6 +90,7 @@ def write_diagnostics_report(dest_dir: Path | None = None) -> Path:
 
 
 def build_report() -> str:
+    kernel_journal = collect_kernel_journal()
     return render_markdown(
         generated=datetime.now(),
         system=collect_system_info(),
@@ -89,6 +98,8 @@ def build_report() -> str:
         modules=collect_kernel_modules(),
         session_log=session_log_lines(),
         daemon_log=collect_daemon_journal(),
+        module_errors=collect_module_errors(kernel_journal),
+        acpi_errors=collect_acpi_errors(kernel_journal),
     )
 
 
@@ -253,6 +264,48 @@ def collect_daemon_journal(n: int = 80) -> str | None:
     return "\n".join(kept[-n:])
 
 
+def collect_kernel_journal(n: int = 8000) -> str | None:
+    cmd = command_path("journalctl")
+    if cmd is None:
+        return None
+    out = run_command(
+        cmd,
+        ["-k", "-n", str(n), "--no-pager", "-o", "short-iso"],
+    )
+    return out or None
+
+
+def kernel_module_error_line(line: str) -> bool:
+    """True for hp-wmi / hp-kbd-rgb error and warning lines."""
+    if not _HP_MODULE_RE.search(line):
+        return False
+    return bool(_HP_MODULE_PROBLEM_RE.search(line))
+
+
+def acpi_error_line(line: str) -> bool:
+    """True for ACPI Error / BIOS Error / Exception / Warning lines."""
+    return bool(_ACPI_ERROR_RE.search(line))
+
+
+def collect_module_errors(journal: str | None, n: int = 80) -> str | None:
+    return _filter_journal_lines(journal, kernel_module_error_line, n)
+
+
+def collect_acpi_errors(journal: str | None, n: int = 80) -> str | None:
+    return _filter_journal_lines(journal, acpi_error_line, n)
+
+
+def _filter_journal_lines(
+    journal: str | None, predicate: Callable[[str], bool], n: int,
+) -> str | None:
+    if journal is None:
+        return None
+    kept = [line for line in journal.splitlines() if predicate(line)]
+    if not kept:
+        return ""
+    return "\n".join(kept[-n:])
+
+
 def render_markdown(
     *,
     generated: datetime,
@@ -261,6 +314,8 @@ def render_markdown(
     modules: list[tuple[str, bool]],
     session_log: list[str],
     daemon_log: str | None,
+    module_errors: str | None = None,
+    acpi_errors: str | None = None,
 ) -> str:
     lines = [
         "# Victus Hub diagnostics",
@@ -298,6 +353,24 @@ def render_markdown(
     for name, loaded in modules:
         lines.append(f"| `{name}` | {'yes' if loaded else 'no'} |")
 
+    lines += ["", "## hp-wmi / RGB module errors", ""]
+    lines.extend(
+        _log_section(
+            module_errors,
+            empty="_No hp-wmi / RGB module errors._",
+            missing="_Kernel journal not available._",
+        )
+    )
+
+    lines += ["", "## ACPI errors", ""]
+    lines.extend(
+        _log_section(
+            acpi_errors,
+            empty="_No ACPI errors._",
+            missing="_Kernel journal not available._",
+        )
+    )
+
     lines += ["", "## Session log", ""]
     if session_log:
         lines.append("```")
@@ -316,6 +389,14 @@ def render_markdown(
 
     lines.append("")
     return "\n".join(lines)
+
+
+def _log_section(text: str | None, *, empty: str, missing: str) -> list[str]:
+    if text is None:
+        return [missing]
+    if not text:
+        return [empty]
+    return ["```", text, "```"]
 
 
 def _cell(value: str) -> str:
