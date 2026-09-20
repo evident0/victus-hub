@@ -2,7 +2,7 @@
 
 ![main tab](showcase_main.png)
 
-A control panel for HP Victus and Omen laptops on Linux. 
+A lightweight control panel for HP Victus and Omen laptops on Linux. 
 
 It was built and tested on 8BD4 (HP Victus 16-s0001nv) 
 with Fedora.
@@ -17,8 +17,8 @@ curl -sL https://raw.githubusercontent.com/evident0/victus-hub/master/uninstall.
 ```
 
 ## What it does
-- **System profiles** — maps the three UI profiles to `tuned-adm` (tested on fedora acpi profile is set correctly)
-   or `power-profilesctl` if available.
+- **System profiles** — maps the three UI profiles to `tuned-adm`
+   or `power-profilesctl`.
 - **Custom fan control** — Four modes:
   *auto* (hands control back to the EC), *smart* (built-in curve, fast
   on heat / slow on cooldown), *max* (100%), and *custom* (your
@@ -98,10 +98,6 @@ Both development scripts accept an optional terminal debug level:
 ./scripts/ui-test 3
 ```
 
-From the `scripts/` directory, use `./dev-run 1` or `./ui-test 3`.
-These levels filter application log messages and the in-app diagnostics
-session log; script setup progress is still shown.
-`./scripts/install` pins the desktop entry to level `0`.
 For a direct launch, use `VICTUS_HUB_DEBUG_LEVEL=2 victus-hub` (the same
 environment variable is supported by `python3 -m victus_hubd`).
 
@@ -122,3 +118,8 @@ ACPI compatibility definition and a read-only `gpu_mux_supported_names` attribut
 for the app. MUX nodes live under `/sys/devices/platform/hp-wmi/`. Fan mode is
 shared through `pwm1_enable`; the app applies its combined fan target to both
 `pwm1` (CPU) and `pwm2` (GPU).
+
+## Credits
+
+- **P4R1H (https://ohmanapp.github.io/)** For the ui design that I recreated in qt with qt creator. 
+- **Literally anyone who contributed code to the hp-wmi driver** <3.
