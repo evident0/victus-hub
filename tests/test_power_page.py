@@ -48,10 +48,28 @@ class TestPowerPage(unittest.TestCase):
         self.assertTrue(all(row.value.buttonSymbols() == QAbstractSpinBox.ButtonSymbols.UpDownArrows
                             for row in self.page.findChildren(_SliderRow)))
 
+    def test_unsaved_frequency_defaults_to_full_hardware_range(self):
+        self.assertEqual(self.page._frequency_min.slider.value(), 1100980)
+        self.assertEqual(self.page._frequency_max.slider.value(), 5137904)
+        self.writer.assert_not_called()
+
+    def test_power_limits_default_to_disabled_for_both_vendors(self):
+        from victus_hub.features.power.limits import read_power_enabled
+
+        for intel in (False, True):
+            with self.subTest(intel=intel), \
+                    patch("victus_hub.features.power.limits.is_intel_cpu", return_value=intel), \
+                    patch("victus_hub.features.power.limits.QSettings") as settings:
+                settings.return_value.value.side_effect = lambda key, default, **kwargs: default
+                self.assertFalse(read_power_enabled())
+                group = "intelPowerLimits" if intel else "powerLimits"
+                settings.return_value.value.assert_called_once_with(f"{group}/enabled", False, type=bool)
+
     def test_frequency_units_precision_and_ordering(self):
         minimum, maximum = self.page._frequency_min, self.page._frequency_max
         self.assertEqual(minimum.value.value(), 1100.980)
         self.assertEqual(maximum.value.maximum(), 5137.904)
+        maximum.value.setValue(4600)
         minimum.value.setValue(4800)
         self.assertEqual(minimum.slider.value(), 4800000)
         self.assertEqual(maximum.value.value(), 4800)

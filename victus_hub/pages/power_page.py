@@ -218,6 +218,9 @@ class PowerPage(QWidget):
         self._frequency_applied.connect(self._on_frequency_applied)
         self._load_frequency_limits()
         saved_frequency = read_frequency_limits()
+        if saved_frequency is None and self._frequency_min.isEnabled():
+            self._frequency_min.setValue(self._frequency_min.slider.minimum())
+            self._frequency_max.setValue(self._frequency_max.slider.maximum())
         if saved_frequency is not None and self._frequency_min.isEnabled():
             minimum, maximum = saved_frequency
             self._frequency_max.setValue(maximum)

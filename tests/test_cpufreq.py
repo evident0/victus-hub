@@ -38,6 +38,19 @@ class TestCpuFrequency(unittest.TestCase):
         for policy in read_frequency_policies(self.root):
             self.assertEqual((policy.minimum, policy.maximum), (1200000, 4200000))
 
+    def test_amd_boost_ceiling_survives_power_save(self):
+        for path in self.root.glob("policy*"):
+            (path / "amd_pstate_max_freq").write_text("5137904")
+            (path / "cpuinfo_max_freq").write_text("3801000")
+            (path / "scaling_max_freq").write_text("3801000")
+        self.assertTrue(all(p.hardware_max == 5137904 for p in read_frequency_policies(self.root)))
+        apply_frequency_limits(1100980, 5137904, self.root)
+        self.assertTrue(all(p.maximum == 5137904 for p in read_frequency_policies(self.root)))
+
+    def test_invalid_optional_amd_ceiling_falls_back(self):
+        (self.root / "policy0" / "amd_pstate_max_freq").write_text("invalid")
+        self.assertEqual(read_frequency_policies(self.root)[0].hardware_max, 5137904)
+
     def test_validate_all_policies_before_writing(self):
         (self.root / "policy1" / "cpuinfo_max_freq").write_text("4700000")
         with self.assertRaisesRegex(RuntimeError, "hardware range"):
