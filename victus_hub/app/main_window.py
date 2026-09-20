@@ -38,8 +38,8 @@ class MainWindow(QMainWindow):
         api.start_sensor_reader()
         api.sync_settings_with_daemon()
         self.setWindowTitle("Victus Hub")
-        self.resize(460, 740)
-        self.setMinimumSize(420, 720)
+        self.resize(460, 680)
+        self.setMinimumSize(420, 680)
 
         # App icon — logoV.png with native colors (no tint, no solid background)
         self._app_icon = load_icon("logoV.png", size=48)
@@ -59,7 +59,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(self._sidebar)
 
         # Stacked pages — wrapped in a scroll area so a page taller than the
-        # window (min height is a fixed 720) scrolls instead of squishing.
+        # window (min height is a fixed 700) scrolls instead of squishing.
         self._stack = QStackedWidget()
         self._stack.setObjectName("pageStack")
         self._stack.setMinimumWidth(360)
@@ -92,7 +92,7 @@ class MainWindow(QMainWindow):
             self._stack.addWidget(page)
 
         # Keep the stack's inner min height in sync so a tall page scrolls
-        # instead of squishing. Window min height stays 720.
+        # instead of squishing. Window min height stays 700.
         self._stack.currentChanged.connect(self._on_current_page_changed)
 
         # Sidebar -> stack sync
@@ -217,7 +217,7 @@ class MainWindow(QMainWindow):
 
     def _update_min_height(self, index: int) -> None:
         """Give the current page enough inner height to avoid squishing.
-        Does not change the window minimum (always 720)."""
+        Does not change the window minimum (always 700)."""
         page = self._stack.widget(index)
         if page is not None:
             self._stack.setMinimumHeight(page.minimumSizeHint().height())
@@ -227,9 +227,20 @@ class MainWindow(QMainWindow):
         1: 460,
         2: 700,
         3: 700,
-        4: 720,
+        4: 700,
         5: 460,
     }
+
+    """
+    _PAGE_WIDTH = {
+            0: 460,
+            1: 460,
+            2: 700,
+            3: 700,
+            4: 720,
+            5: 460,
+        }
+    """
 
     def _morph_to_page(self, index: int) -> None:
         w = self._PAGE_WIDTH.get(index, 460)

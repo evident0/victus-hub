@@ -21,7 +21,7 @@ from victus_hub.features.keyboard.shortcut import (
     read_keybind_settings,
     write_keybind_settings,
 )
-from victus_hub.widgets.chrome import PageHead, SettingsRow
+from victus_hub.widgets.chrome import PageHead, SettingsRow, hairline
 from victus_hub.widgets.toggle_switch import ToggleSwitch
 from victus_hub.services.battery_power import BATTERY_POWER_SAVE_KEY
 
@@ -172,6 +172,7 @@ class SettingsPage(QWidget):
             "unless you manually change modes while Victus Hub is running",
             self._battery_power_save,
         ))
+        layout.addWidget(hairline())
 
         self._disable_nvidia_queries = ToggleSwitch()
         self._disable_nvidia_queries.setChecked(nvidia_query_disable_enabled())
@@ -184,6 +185,7 @@ class SettingsPage(QWidget):
             "to avoid waking the GPU and save battery. Only applies in Power Save mode.",
             self._disable_nvidia_queries,
         ))
+        layout.addWidget(hairline())
 
         self._hardware_shortcuts = ToggleSwitch()
         self._hardware_shortcuts.setChecked(
@@ -197,6 +199,7 @@ class SettingsPage(QWidget):
             "Left Ctrl + Left Shift + M: cycle performance mode",
             self._hardware_shortcuts,
         ))
+        layout.addWidget(hairline())
 
         self._shortcut_ctrl = None
         self._kb = read_keybind_settings()
