@@ -38,8 +38,8 @@ class MainWindow(QMainWindow):
         api.start_sensor_reader()
         api.sync_settings_with_daemon()
         self.setWindowTitle("Victus Hub")
-        self.resize(460, 680)
-        self.setMinimumSize(420, 680)
+        self.resize(self._PAGE_WIDTH[0], self._WINDOW_HEIGHT)
+        self.setMinimumSize(420, self._WINDOW_HEIGHT)
 
         # App icon — logoV.png with native colors (no tint, no solid background)
         self._app_icon = load_icon("logoV.png", size=48)
@@ -230,6 +230,9 @@ class MainWindow(QMainWindow):
         4: 700,
         5: 460,
     }
+    # A manual drag may make the window taller. That size lasts only until
+    # the next tab change, which returns to this height.
+    _WINDOW_HEIGHT = 680
 
     """
     _PAGE_WIDTH = {
@@ -244,7 +247,7 @@ class MainWindow(QMainWindow):
 
     def _morph_to_page(self, index: int) -> None:
         w = self._PAGE_WIDTH.get(index, 460)
-        self.resize(w, self.height())
+        self.resize(w, self._WINDOW_HEIGHT)
 
     def _apply_accent(self, index: int) -> None:
         set_accent(index)
