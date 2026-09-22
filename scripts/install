@@ -74,7 +74,7 @@ cleanup_install() {
 }
 trap cleanup_install EXIT
 "${SUDO[@]}" /usr/bin/python3 -I -m venv "$NEW_ENV"
-"${SUDO[@]}" "$NEW_ENV/bin/python" -I -m pip install --upgrade "$ROOT_DIR"
+"${SUDO[@]}" "$NEW_ENV/bin/python" -I -m pip install --upgrade --disable-pip-version-check "$ROOT_DIR"
 # Verify imports using the exact interpreter used by the service/launcher.
 "${SUDO[@]}" "$NEW_ENV/bin/python" -I -c 'from victus_hubd import daemon; from victus_hub.main import main'
 "${SUDO[@]}" chown -R root:root "$NEW_ENV"
@@ -129,13 +129,19 @@ printf '\033[1;34m── Installing desktop entry ──\033[0m\n'
 if [ -f "$ICON_SRC" ]; then
 	# Install the program's own icon (logoV) at standard hicolor sizes so the
 	# .desktop Icon=victus-hub resolves crisply at every DPI/menu size.
-	if command -v convert >/dev/null 2>&1; then
+	ICON_CONVERTER=()
+	if command -v magick >/dev/null 2>&1; then
+		ICON_CONVERTER=(magick)
+	elif command -v convert >/dev/null 2>&1; then
+		ICON_CONVERTER=(convert)
+	fi
+	if [ "${#ICON_CONVERTER[@]}" -gt 0 ]; then
 		ICON_TMP=$(mktemp -d)
 		for size in 16 22 24 32 48 64 128 256 512 1024; do
 			dst="/usr/share/icons/hicolor/${size}x${size}/apps/victus-hub.png"
 			printf 'Installing %sx%s icon to %s\n' "$size" "$size" "$dst"
 			"${SUDO[@]}" install -d "/usr/share/icons/hicolor/${size}x${size}/apps"
-			convert "$ICON_SRC" -resize "${size}x${size}" "png32:$ICON_TMP/victus-hub-${size}.png"
+			"${ICON_CONVERTER[@]}" "$ICON_SRC" -resize "${size}x${size}" "png32:$ICON_TMP/victus-hub-${size}.png"
 			"${SUDO[@]}" install -Dm644 "$ICON_TMP/victus-hub-${size}.png" "$dst"
 		done
 	else

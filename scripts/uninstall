@@ -46,7 +46,6 @@ SERVICE_DST="/etc/systemd/system/$SERVICE_NAME"
 SLEEP_DST="/usr/lib/systemd/system-sleep/victus-hub"
 SOCKET_RUNTIME_DIR="/run/victus-hubd"
 STATE_DIR="/var/lib/victus-hubd"
-ICON_DST="/usr/share/icons/hicolor/1024x1024/apps/victus-hub.png"
 DESKTOP_DST="/usr/share/applications/victus-hub.desktop"
 HP_WMI_KMOD_UNINSTALL="$ROOT_DIR/kernel/hp-wmi/scripts/uninstall"
 KBD_RGB_KMOD_UNINSTALL="$ROOT_DIR/kernel/hp-kbd-rgb/scripts/uninstall"
@@ -100,18 +99,19 @@ if [ -f "$USER_DESKTOP_DST" ]; then
 	rm -f "$USER_DESKTOP_DST"
 	update-desktop-database "$(dirname "$USER_DESKTOP_DST")" 2>/dev/null || true
 fi
-if [ -f "$ICON_DST" ]; then
-	printf 'Removing icon %s\n' "$ICON_DST"
-	"${SUDO[@]}" rm -f "$ICON_DST"
-	"${SUDO[@]}" gtk-update-icon-cache -f /usr/share/icons/hicolor 2>/dev/null || true
-fi
 # Remove multi-size icons installed by scripts/install
+ICONS_REMOVED=0
 for size in 16 22 24 32 48 64 128 256 512 1024; do
 	icon="/usr/share/icons/hicolor/${size}x${size}/apps/victus-hub.png"
-	if [ -f "$icon" ]; then
+	if [ -e "$icon" ] || [ -L "$icon" ]; then
+		printf 'Removing icon %s\n' "$icon"
 		"${SUDO[@]}" rm -f "$icon"
+		ICONS_REMOVED=1
 	fi
 done
+if [ "$ICONS_REMOVED" -eq 1 ]; then
+	"${SUDO[@]}" gtk-update-icon-cache -f /usr/share/icons/hicolor 2>/dev/null || true
+fi
 for icon in "$USER_HOME"/.local/share/icons/hicolor/*/apps/victus-hub.png; do
 	[ -e "$icon" ] || [ -L "$icon" ] || continue
 	printf 'Removing %s\n' "$icon"

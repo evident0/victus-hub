@@ -80,20 +80,41 @@ class TestPreflight(unittest.TestCase):
 
 class TestDkmsHooks(unittest.TestCase):
     def test_new_kernel_gets_override_and_initramfs_refresh(self):
+        for location in ("updates/dkms", "updates", "extra"):
+            with self.subTest(location=location):
+                self.check_hooks(default_priority=False, location=location)
+
+    def test_normal_dkms_priority_removes_unnecessary_override(self):
+        for location in ("updates/dkms", "updates", "extra"):
+            with self.subTest(location=location):
+                self.check_hooks(default_priority=True, location=location)
+
+    def check_hooks(self, default_priority, location):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             binary = root / "bin"
             binary.mkdir()
             log = root / "log"
-            for command in ("depmod", "update-initramfs"):
+            tool, args = {
+                "updates/dkms": ("update-initramfs", "-u -k future-kernel"),
+                "updates": ("mkinitcpio", "-P"),
+                "extra": ("dracut", "--force --kver future-kernel"),
+            }[location]
+            for command in ("depmod", tool):
                 path = binary / command
                 path.write_text(f'#!/bin/bash\nprintf "{command} %s\\n" "$*" >> "$TEST_LOG"\n')
                 path.chmod(0o755)
-            for command in ("install", "rm"):
+            for command in ("install", "rm", "readlink"):
                 (binary / command).symlink_to(shutil.which(command))
-            module = root / "lib/modules/future-kernel/updates/dkms/hp-wmi.ko.zst"
+            module = root / "lib/modules/future-kernel" / location / "hp-wmi.ko.zst"
             module.parent.mkdir(parents=True)
             module.touch()
+            modinfo = binary / "modinfo"
+            modinfo.write_text(f'#!/bin/bash\nprintf "%s\\n" "{module if default_priority else root / "stock/hp-wmi.ko"}"\n')
+            modinfo.chmod(0o755)
+            conf = root / "etc/depmod.d/victus-hub-hp-wmi-future-kernel.conf"
+            conf.parent.mkdir(parents=True)
+            conf.write_text("override hp-wmi future-kernel extra\n")
             env = dict(os.environ, PATH=str(binary), TEST_LOG=str(log))
             for hook in ("dkms-post-install", "dkms-post-remove"):
                 text = (REPO / "kernel" / hook).read_text()
@@ -104,11 +125,14 @@ class TestDkmsHooks(unittest.TestCase):
                 result = subprocess.run(["/bin/bash", str(script), "future-kernel", "hp-wmi"], env=env, capture_output=True, text=True)
                 self.assertEqual(result.returncode, 0, result.stderr)
                 conf = root / "etc/depmod.d/victus-hub-hp-wmi-future-kernel.conf"
-                if hook.endswith("install"):
-                    self.assertEqual(conf.read_text(), "override hp-wmi future-kernel updates/dkms\n")
+                if hook.endswith("install") and not default_priority:
+                    self.assertEqual(conf.read_text(), f"override hp-wmi future-kernel {location}\n")
                 else:
                     self.assertFalse(conf.exists())
-            self.assertEqual(log.read_text(), "depmod -a future-kernel\nupdate-initramfs -u -k future-kernel\n" * 2)
+            expected = f"depmod -a future-kernel\n{tool} {args}\n" * 2
+            if not default_priority:
+                expected = "depmod -a future-kernel\n" + expected
+            self.assertEqual(log.read_text(), expected)
 
 
 class TestDkmsInstaller(unittest.TestCase):
@@ -276,6 +300,7 @@ python.chmod(0o755)
         self.assertTrue((app / "current/bin/python").is_file())
         log = self.log.read_text()
         self.assertIn("python -I -m pip install --upgrade", log)
+        self.assertIn("--disable-pip-version-check", log)
         self.assertIn("systemctl restart victus-hubd.service", log)
         service = (self.root / "etc/systemd/system/victus-hubd.service").read_text()
         self.assertIn("/current/bin/python -I -m victus_hubd", service)
@@ -291,3 +316,35 @@ python.chmod(0o755)
         self.assertNotEqual(result.returncode, 0)
         self.assertFalse((self.root / "opt").exists())
         self.assertFalse(self.log.exists())
+
+    def test_icons_prefer_magick_and_support_legacy_convert(self):
+        # Hide any host ImageMagick binaries so the legacy case is real.
+        for name in ("dirname", "id", "install", "mktemp", "chmod", "rm", "ln",
+                     "mv", "tee", "cp", "cmp", "seq", "readlink", "touch"):
+            (self.bin / name).symlink_to(shutil.which(name))
+        self.env["PATH"] = str(self.bin)
+        icon = self.root / "victus_hub/resources/icons/logoV.png"
+        icon.parent.mkdir(parents=True)
+        icon.touch()
+        for name in ("magick", "convert"):
+            command = self.bin / name
+            command.write_text(
+                f'#!/bin/bash\nprintf "{name} %s\\n" "$*" >> "$TEST_LOG"\n'
+                'output=${@: -1}; touch "${output#png32:}"\n'
+            )
+            command.chmod(0o755)
+        cache = self.bin / "gtk-update-icon-cache"
+        cache.write_text("#!/bin/bash\nexit 0\n")
+        cache.chmod(0o755)
+        for converter in ("magick", "convert"):
+            with self.subTest(converter=converter):
+                self.log.write_text("")
+                result = self.install()
+                self.assertEqual(result.returncode, 0, result.stderr)
+                lines = self.log.read_text().splitlines()
+                self.assertEqual(sum(line.startswith(converter + " ") for line in lines), 10)
+                if converter == "magick":
+                    self.assertFalse(any(line.startswith("convert ") for line in lines))
+                    (self.bin / "magick").unlink()
+                for size in (16, 22, 24, 32, 48, 64, 128, 256, 512, 1024):
+                    self.assertTrue((self.root / f"usr/share/icons/hicolor/{size}x{size}/apps/victus-hub.png").exists())

@@ -120,7 +120,7 @@ class SensorsPage(QWidget):
             header.setSectionResizeMode(col, QHeaderView.Fixed)
             self._tree.setColumnWidth(col, 100)
             self._tree.headerItem().setTextAlignment(
-                col, int(Qt.AlignRight | Qt.AlignVCenter),
+                col, Qt.AlignRight | Qt.AlignVCenter,
             )
 
         card_layout.addWidget(self._tree)
@@ -238,7 +238,7 @@ class SensorsPage(QWidget):
                 item.setText(_COL_MIN, str(stats.get("minimum", "—")))
                 item.setText(_COL_AVG, str(stats.get("average", "—")))
                 for col in (_COL_CURRENT, _COL_MAX, _COL_MIN, _COL_AVG):
-                    item.setTextAlignment(col, int(Qt.AlignRight | Qt.AlignVCenter))
+                    item.setTextAlignment(col, Qt.AlignRight | Qt.AlignVCenter)
 
                 # Temp coloring
                 if d.unit == "\u00B0C":
@@ -254,7 +254,7 @@ class SensorsPage(QWidget):
         # Align metric columns on group rows too
         for gitem in self._group_items.values():
             gitem.setTextAlignment(
-                _COL_CURRENT, int(Qt.AlignRight | Qt.AlignVCenter),
+                _COL_CURRENT, Qt.AlignRight | Qt.AlignVCenter,
             )
 
         QTimer.singleShot(0, lambda: scroll_bar.setValue(saved_scroll))

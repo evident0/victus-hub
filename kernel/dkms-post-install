@@ -8,9 +8,17 @@ if [ "$module" = hp-wmi ]; then
 	for location in updates/dkms updates extra; do
 		for file in /lib/modules/"$release"/"$location"/hp-wmi.ko{,.xz,.gz,.zst}; do
 			[ -f "$file" ] || continue
-			install -d /etc/depmod.d
-			printf 'override hp-wmi %s %s\n' "$release" "$location" > "/etc/depmod.d/victus-hub-hp-wmi-$release.conf"
+			# Prefer the distro's normal DKMS priority. Unnecessary overrides
+			# also trigger a slash-escaping warning in some dracut versions.
+			conf="/etc/depmod.d/victus-hub-hp-wmi-$release.conf"
+			rm -f "$conf"
 			depmod -a "$release"
+			selected=$(modinfo -k "$release" -n hp-wmi 2>/dev/null || true)
+			if [ -z "$selected" ] || [ "$(readlink -f -- "$selected")" != "$(readlink -f -- "$file")" ]; then
+				install -d /etc/depmod.d
+				printf 'override hp-wmi %s %s\n' "$release" "$location" > "$conf"
+				depmod -a "$release"
+			fi
 			# Avoid an old stock hp-wmi copy winning from an existing initramfs.
 			if command -v update-initramfs >/dev/null 2>&1; then
 				update-initramfs -u -k "$release"
