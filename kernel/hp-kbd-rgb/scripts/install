@@ -57,8 +57,9 @@ fi
 
 printf 'Loading dependency and module...\n'
 "${SUDO[@]}" modprobe "$DEPENDENCY"
-"${SUDO[@]}" modprobe "$MODULE_NAME"
+source "$MODULE_DIR/../../scripts/optional-rgb.sh"
+load_optional_rgb
 
-printf 'Installed and loaded %s.\n' "$MODULE_NAME"
+printf 'Installed %s (RGB availability depends on the keyboard).\n' "$MODULE_NAME"
 printf 'Check: cat /sys/devices/platform/hp-kbd-rgb/keyboard_type\n'
 printf 'Test:  echo "0 255 0" | sudo tee /sys/devices/platform/hp-kbd-rgb/color\n'

@@ -153,6 +153,7 @@ if [ -f "$SLEEP_DST" ]; then
 fi
 
 remove_path "$SOCKET_RUNTIME_DIR" "$STATE_DIR"
+remove_path /opt/victus-hub-app
 
 # ── 3. Program + daemon Python packages ──
 # A single pip distribution (victus-hub) ships both victus_hub* and victus_hubd*.
@@ -192,6 +193,23 @@ if [ "$APP_ONLY" -eq 1 ]; then
 	printf '  Kernel modules, RyzenAdj, and user settings left in place.\n'
 	exit 0
 fi
+# Remove DKMS registrations for all kernels before restoring the stock driver.
+for source_dir in /usr/src/victus-hub-hp-wmi-* /usr/src/victus-hub-hp-kbd-rgb-*; do
+	[ -d "$source_dir" ] || continue
+	if ! command -v dkms >/dev/null 2>&1; then
+		printf 'Install dkms before uninstalling the registered drivers.\n' >&2
+		exit 1
+	fi
+	name=${source_dir##*/}
+	case "$name" in
+		victus-hub-hp-wmi-*) package=victus-hub-hp-wmi ;;
+		*) package=victus-hub-hp-kbd-rgb ;;
+	esac
+	version=${name#"$package"-}
+	"${SUDO[@]}" dkms remove -m "$package" -v "$version" --all
+	remove_path "$source_dir"
+done
+remove_path /etc/dkms/framework.conf.d/victus-hub.conf
 # hp-wmi uninstall is a no-op when no custom extra/ install is present (avoids
 # unloading in-tree hp_wmi and losing the WMI GUID race to hp_bioscfg).
 printf '\033[1;34m── Uninstalling custom hp-wmi kernel module (if installed) ──\033[0m\n'

@@ -230,7 +230,7 @@ class SettingsPage(QWidget):
         kb_l.addWidget(self._kb_clear_btn)
         layout.addWidget(SettingsRow(
             "Program shortcut",
-            "Raises the panel from anywhere",
+            "Ctrl/Alt/Super + key, or a function/OMEN key; capture with this window focused",
             kb_ctrl,
         ))
 
@@ -261,6 +261,11 @@ class SettingsPage(QWidget):
         """Wire the shared ShortcutController (owned by MainWindow)."""
         self._shortcut_ctrl = ctrl
         ctrl.captured.connect(self._on_shortcut_captured)
+        ctrl.capture_error.connect(self._on_capture_error)
+
+    def _on_capture_error(self, message: str) -> None:
+        self._finish_capture()
+        self._kb_value.setText(message)
 
     def _shortcut_text(self, s: KeybindSettings) -> str:
         return keybind_label(s.mods, s.key)

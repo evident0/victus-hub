@@ -11,9 +11,15 @@ set -euo pipefail
 REPO_URL="https://github.com/evident0/victus-hub.git"
 CLONE_DIR="/opt/victus-hub"
 
-echo '==> Cloning victus-hub (for uninstall scripts)...'
-rm -rf "$CLONE_DIR"
-git clone --depth 1 "$REPO_URL" "$CLONE_DIR"
+if [ ! -f "$CLONE_DIR/scripts/uninstall" ]; then
+	command -v git >/dev/null 2>&1 || { printf 'Install git or use an existing checkout to uninstall.\n' >&2; exit 1; }
+	echo '==> Cloning victus-hub (for uninstall scripts)...'
+	STAGING=$(mktemp -d /opt/victus-hub-uninstall.XXXXXXXX)
+	trap 'rm -rf "$STAGING"' EXIT
+	git clone --depth 1 "$REPO_URL" "$STAGING/source"
+	bash "$STAGING/source/scripts/uninstall"
+	exit
+fi
 
 echo '==> Running uninstaller...'
 cd "$CLONE_DIR"

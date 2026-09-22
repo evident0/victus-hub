@@ -14,10 +14,12 @@ import threading
 import time
 
 from victus_hub.backend import protocol
+from victus_hub.backend.shortcut_policy import validate_shortcut
 from victus_hub.backend.fan_config import config_from_dict
 from victus_hub.backend.rapl import RaplPowerSampler
 from victus_hub.features.keyboard.lighting import lighting_from_dict, lighting_to_dict
 from victus_hubd import cpufreq, intel, ryzenadj, sysfs
+from victus_hubd.auth import Peer, authenticate
 from victus_hubd.runtime import Runtime
 from victus_hubd.state import power_from_dict, state_to_dict
 
@@ -50,36 +52,46 @@ _kbd_lock = threading.Lock()
 _kbd_stop = threading.Event()
 _kbd_thread: threading.Thread | None = None
 
-# Last non-modifier keypress state (for the program-shortcut feature).
+# Held modifiers are used locally; ordinary keypresses are never retained.
 _held_mods: set[int] = set()
-_last_press_mods: tuple[int, ...] = ()
-_last_press_key: int = 0
-_last_press_seq: int = 0
-_kbd_subscribers: set[socket.socket] = set()
+_kbd_subscribers: dict[socket.socket, tuple[Peer, tuple[int, ...], int]] = {}
 _kbd_subscribers_lock = threading.Lock()
 _runtime: Runtime | None = None
+MAX_REQUEST_BYTES = 64 * 1024
+MAX_CLIENTS = 32
+_client_slots = threading.BoundedSemaphore(MAX_CLIENTS)
 
 
-def _publish_line(payload: bytes) -> None:
-    """Push one line to event subscribers without blocking input reading."""
+def _publish_line(payload: bytes, shortcut: tuple[tuple[int, ...], int] | None = None) -> None:
+    """Authorize delivery, then send without waiting on a slow client."""
     with _kbd_subscribers_lock:
-        for stream in tuple(_kbd_subscribers):
+        subscribers = tuple(_kbd_subscribers.items())
+    for stream, (peer, mods, key) in subscribers:
+        if shortcut is not None and shortcut != (mods, key):
+            continue
+        # Recheck on delivery: an existing connection must not bypass a lock
+        # screen or fast user switch. No key events are queued for later.
+        if not peer.authorized():
+            continue
+        with _kbd_subscribers_lock:
+            if stream not in _kbd_subscribers:
+                continue
             try:
                 sent = stream.send(payload, socket.MSG_DONTWAIT | socket.MSG_NOSIGNAL)
                 if sent == len(payload):
                     continue
             except OSError:
                 pass
-            _kbd_subscribers.discard(stream)
+            _kbd_subscribers.pop(stream, None)
             try:
                 stream.shutdown(socket.SHUT_RDWR)
             except OSError:
                 pass
 
 
-def _publish_keypress(mods: tuple[int, ...], key: int, seq: int) -> None:
-    """Push each press without letting a slow subscriber block input reading."""
-    _publish_line(f"KEY\t{','.join(map(str, mods))}\t{key}\t{seq}\n".encode())
+def _publish_shortcut(mods: tuple[int, ...], key: int) -> None:
+    """Only emit a named activation for the client's registered shortcut."""
+    _publish_line(b"SHORTCUT\n", (mods, key))
 
 
 def _publish_lighting(settings) -> None:
@@ -88,25 +100,33 @@ def _publish_lighting(settings) -> None:
     _publish_line(f"LIGHTING\t{body}\n".encode())
 
 
-def _stream_keyboard_events(stream: socket.socket) -> None:
+def _stream_shortcut_events(stream: socket.socket, peer: Peer, body: str) -> None:
     """Subscribe until disconnect; never replay the last (possibly stale) key."""
+    payload = _parse_json_object(body, "shortcut")
+    mods, key = validate_shortcut(payload.get("mods", []), payload.get("key", 0))
     try:
         with _kbd_subscribers_lock:
-            stream.sendall(b"OK\tkeyboard-events\n")
-            _kbd_subscribers.add(stream)
+            stream.sendall(b"OK\tshortcut-events\n")
+            stream.setblocking(False)
+            _kbd_subscribers[stream] = (peer, mods, key)
         # The client sends no more requests. This blocks until it disconnects.
-        stream.recv(1)
+        while True:
+            readable, _, _ = select.select([stream], [], [], 1)
+            if readable:
+                stream.recv(1)
+                break
+            # Stay connected during session locks, but delivery remains gated.
     except OSError:
         pass
     finally:
         with _kbd_subscribers_lock:
-            _kbd_subscribers.discard(stream)
+            _kbd_subscribers.pop(stream, None)
         stream.close()
 
 
 def _record_key_event(code: int, value: int) -> None:
     """Track physical presses; releases update modifiers, repeats do not act."""
-    global _kbd_last_input, _last_press_mods, _last_press_key, _last_press_seq
+    global _kbd_last_input
     press = None
     with _kbd_lock:
         if value == 1:
@@ -114,10 +134,7 @@ def _record_key_event(code: int, value: int) -> None:
             if code in _MODIFIER_CODES:
                 _held_mods.add(code)
             else:
-                _last_press_mods = tuple(sorted(_held_mods))
-                _last_press_key = code
-                _last_press_seq += 1
-                press = (_last_press_mods, _last_press_key, _last_press_seq)
+                press = (tuple(sorted(_held_mods)), code)
         elif value == 0 and code in _MODIFIER_CODES:
             _held_mods.discard(code)
     if press is not None:
@@ -127,7 +144,7 @@ def _record_key_event(code: int, value: int) -> None:
                 runtime.handle_key(press[0], press[1])
             except Exception:
                 logger.exception("hardware shortcut failed")
-        _publish_keypress(*press)
+        _publish_shortcut(*press)
 
 
 def _kbd_watcher_loop() -> None:
@@ -237,19 +254,6 @@ def kbd_elapsed_since_last_input() -> float:
         return time.monotonic() - _kbd_last_input
 
 
-def kbd_last_event() -> tuple[tuple[int, ...], int, int]:
-    """Return the last non-modifier keypress for the program-shortcut feature.
-
-    Returns ``(mods, key, seq)`` where ``mods`` is the sorted tuple of
-    modifier keycodes held at the moment of the press, ``key`` is the
-    non-modifier keycode (0 if none recorded yet), and ``seq`` is a
-    monotonic counter that bumps on every recorded press so callers can
-    detect a fresh event.
-    """
-    with _kbd_lock:
-        return _last_press_mods, _last_press_key, _last_press_seq
-
-
 def _recv_line(stream: socket.socket) -> bytes | None:
     """Read exactly one newline-terminated line from `stream`.
 
@@ -257,14 +261,23 @@ def _recv_line(stream: socket.socket) -> bytes | None:
     or EOF before any data.
     """
     data = b""
+    deadline = time.monotonic() + 5
     while not data.endswith(b"\n"):
         try:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise RuntimeError("request timed out")
+            stream.settimeout(remaining)
             chunk = stream.recv(1024)
         except OSError:
             return None
         if not chunk:
             return None if not data else data
         data += chunk
+        if len(data) > MAX_REQUEST_BYTES:
+            raise RuntimeError("request too large")
+        if b"\n" in data and (not data.endswith(b"\n") or data.count(b"\n") != 1):
+            raise RuntimeError("one request per connection is required")
     return data
 
 
@@ -429,12 +442,6 @@ def _make_dispatch(
         except RuntimeError as e:
             return protocol.format_status_response((False, str(e)))
 
-    def _keyboard_last_event(_body: str) -> str:
-        logger.info("[keyboard] daemon request: keyboard-last-event")
-        mods, key, seq = kbd_last_event()
-        mods_csv = ",".join(str(m) for m in mods)
-        return f"OK\t{mods_csv}\t{key}\t{seq}\n"
-
     def _power_limits(body: str) -> str:
         s, f, sl, tctl = _parse_power_limits(body)
         logger.info(
@@ -584,7 +591,6 @@ def _make_dispatch(
         ("keyboard-brightness\t", _keyboard_brightness),
         ("keyboard-user-brightness\t", _keyboard_user_brightness),
         ("keyboard-last-input", _keyboard_last_input),
-        ("keyboard-last-event", _keyboard_last_event),
     ]
 
 
@@ -597,6 +603,20 @@ def handle_client(
     runtime: Runtime | None = None,
 ) -> None:
     """Handle one client connection. Runs in its own thread."""
+    try:
+        stream.settimeout(5)
+        peer = authenticate(stream)
+        _handle_request(stream, sampler, sampler_lock, runtime, peer)
+    except (RuntimeError, UnicodeError) as error:
+        try:
+            stream.sendall(f"ERR\t{error}\n".encode())
+        except OSError:
+            pass
+    finally:
+        stream.close()
+
+
+def _handle_request(stream, sampler, sampler_lock, runtime, peer):
     data = _recv_line(stream)
     if data is None:
         try:
@@ -606,14 +626,20 @@ def handle_client(
         return
 
     request = data.decode().rstrip("\n")
-    if request == "keyboard-events":
-        _stream_keyboard_events(stream)
+    if not peer.authorized():
+        raise RuntimeError("access denied: session is no longer active and unlocked")
+    if request in {"prepare-sleep", "resume"} and peer.uid != 0:
+        raise RuntimeError("access denied: sleep hooks require root")
+    if request.startswith("shortcut-events\t"):
+        _stream_shortcut_events(stream, peer, request.split("\t", 1)[1])
         return
     dispatch = _make_dispatch(sampler, sampler_lock, runtime)
     matched_prefix: str | None = None
     handler = None
     for prefix, h in dispatch:
-        if request.startswith(prefix):
+        if (prefix.endswith("\t") and request.startswith(prefix)) or request == prefix or (
+            prefix == "cpu-frequency-config" and request.startswith(prefix + "\t")
+        ):
             matched_prefix = prefix
             handler = h
             break
@@ -654,6 +680,8 @@ def run_daemon() -> None:
 
     server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     server.bind(socket_path)
+    # Connect permission is deliberately public; SO_PEERCRED + logind authorize
+    # every request. No installation-time user group or stale session ACLs.
     os.chmod(socket_path, 0o666)
     server.listen(5)
     server.settimeout(1.0)
@@ -696,7 +724,13 @@ def run_daemon() -> None:
                 handle_client(s, sampler, sampler_lock, runtime)
             except Exception:
                 logger.exception("client handler crashed")
+            finally:
+                s.close()
+                _client_slots.release()
 
+        if not _client_slots.acquire(blocking=False):
+            conn.close()
+            continue
         t = threading.Thread(target=_handle, args=(conn,), daemon=True)
         t.start()
 

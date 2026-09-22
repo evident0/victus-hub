@@ -4,10 +4,12 @@ import json
 import logging
 from pathlib import Path
 
-from PySide6.QtCore import QFileSystemWatcher, QObject, QSettings, Qt, Signal
+from PySide6.QtCore import QEvent, QFileSystemWatcher, QObject, QSettings, Qt, Signal
 from PySide6.QtNetwork import QLocalSocket
+from PySide6.QtWidgets import QApplication
 
 from victus_hub.backend.daemon_client import SOCKET_PATH
+from victus_hub.backend.shortcut_policy import MODIFIERS, validate_shortcut
 from victus_hub.features.keyboard.lighting import lighting_from_dict
 from victus_hub.features.keyboard.shortcut import (
     HARDWARE_SHORTCUTS_KEY, read_keybind_settings,
@@ -20,6 +22,7 @@ class ShortcutController(QObject):
     triggered = Signal()
     captured = Signal(object, int)
     lighting_changed = Signal(object)
+    capture_error = Signal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -28,6 +31,8 @@ class ShortcutController(QObject):
         self._capturing = False
         self._subscribed = False
         self._closed = False
+        self._capture_mods = set()
+        QApplication.instance().installEventFilter(self)
         self._socket = QLocalSocket(self)
         self._socket.connected.connect(self._subscribe)
         self._socket.readyRead.connect(self._read_events)
@@ -44,7 +49,9 @@ class ShortcutController(QObject):
         if self._closed:
             return
         directory = Path(SOCKET_PATH).parent
-        for path in (directory.parent, directory):
+        # Also retry after unlock/login if a daemon restart happened while this
+        # session was unauthorized. logind replaces its session-state files.
+        for path in (directory.parent, directory, Path("/run/systemd/sessions")):
             if path.is_dir() and str(path) not in self._paths.directories():
                 self._paths.addPath(str(path))
         if self._socket.state() == QLocalSocket.LocalSocketState.UnconnectedState:
@@ -52,7 +59,13 @@ class ShortcutController(QObject):
 
     def _subscribe(self) -> None:
         self._subscribed = False
-        self._socket.write(b"keyboard-events\n")
+        try:
+            mods, key = validate_shortcut(self._settings.mods, self._settings.key)
+        except RuntimeError as error:
+            logger.warning("Program shortcut disabled: %s", error)
+            mods, key = (), 0
+        payload = json.dumps({"mods": mods, "key": key if self._settings.enabled else 0})
+        self._socket.write(f"shortcut-events\t{payload}\n".encode())
 
     def _disconnected(self) -> None:
         subscribed = self._subscribed
@@ -65,6 +78,8 @@ class ShortcutController(QObject):
 
     def reload_settings(self) -> None:
         self._settings = read_keybind_settings()
+        self._subscribed = False
+        self._socket.abort()
         self._connect()
 
     def set_hardware_enabled(self, enabled: bool) -> None:
@@ -77,10 +92,11 @@ class ShortcutController(QObject):
         # Discard buffered presses from before the user clicked Set.
         self._read_events(discard=True)
         self._capturing = True
-        self._connect()
+        self._capture_mods.clear()
 
     def cancel_capture(self) -> None:
         self._capturing = False
+        self._capture_mods.clear()
 
     def is_capturing(self) -> bool:
         return self._capturing
@@ -91,6 +107,54 @@ class ShortcutController(QObject):
         self._paths.blockSignals(True)
         self._socket.blockSignals(True)
         self._socket.abort()
+        QApplication.instance().removeEventFilter(self)
+
+    def eventFilter(self, watched, event):
+        # Capture only events delivered to this application while it has focus.
+        # Never ask the root daemon to capture arbitrary keys globally.
+        if not self._capturing:
+            return False
+        if event.type() == QEvent.Type.ShortcutOverride:
+            event.accept()
+            return True
+        if event.type() == QEvent.Type.ApplicationDeactivate:
+            self.cancel_capture()
+            self.capture_error.emit("Shortcut capture cancelled when the app lost focus")
+            return False
+        if event.type() not in (QEvent.Type.KeyPress, QEvent.Type.KeyRelease):
+            return False
+        if event.isAutoRepeat():
+            return True
+        # Qt's xcb and Wayland plugins expose XKB keycodes (evdev + 8).
+        key = int(event.nativeScanCode()) - 8
+        if key <= 0:
+            return False
+        if key in MODIFIERS:
+            if event.type() == QEvent.Type.KeyPress:
+                self._capture_mods.add(key)
+            else:
+                self._capture_mods.discard(key)
+            return True
+        if event.type() == QEvent.Type.KeyRelease:
+            return True
+        mods = set(self._capture_mods)
+        for flag, candidates, fallback in (
+            (Qt.ControlModifier, {29, 97}, 29),
+            (Qt.ShiftModifier, {42, 54}, 42),
+            (Qt.AltModifier, {56, 100}, 56),
+            (Qt.MetaModifier, {125, 126}, 125),
+        ):
+            if event.modifiers() & flag and not mods & candidates:
+                mods.add(fallback)
+        try:
+            mods, key = validate_shortcut(tuple(mods), key)
+        except RuntimeError as error:
+            self.capture_error.emit(str(error))
+            self.cancel_capture()
+            return True
+        self.cancel_capture()
+        self.captured.emit(frozenset(mods), key)
+        return True
 
     def _read_events(self, discard: bool = False) -> None:
         while self._socket.canReadLine():
@@ -98,7 +162,7 @@ class ShortcutController(QObject):
             if line.startswith("ERR"):
                 logger.warning("Shortcut event stream unavailable: %s; restart victus-hubd", line)
                 continue
-            if line == "OK\tkeyboard-events":
+            if line == "OK\tshortcut-events":
                 self._subscribed = True
                 continue
             if line.startswith("LIGHTING\t"):
@@ -112,25 +176,5 @@ class ShortcutController(QObject):
                 if isinstance(payload, dict):
                     self.lighting_changed.emit(lighting_from_dict(payload))
                 continue
-            if discard or not line.startswith("KEY\t"):
-                continue
-            try:
-                _, raw_mods, raw_key, raw_seq = line.split("\t")
-                mods = frozenset(int(m) for m in raw_mods.split(",") if m)
-                key = int(raw_key)
-                int(raw_seq)
-            except ValueError:
-                logger.warning("Malformed keyboard event")
-                continue
-            self._handle_key(mods, key)
-
-    def _handle_key(self, mods: frozenset[int], key: int) -> None:
-        if key == 0:
-            return
-        if self._capturing:
-            self._capturing = False
-            self.captured.emit(mods, key)
-            return
-        if self._settings.enabled and key == self._settings.key \
-                and mods == frozenset(self._settings.mods):
-            self.triggered.emit()
+            if line == "SHORTCUT" and not discard and not self._capturing:
+                self.triggered.emit()

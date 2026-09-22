@@ -21,6 +21,8 @@ class TestReloadScript(unittest.TestCase):
         scripts.mkdir()
         for name in ("reload", "debug-level.sh"):
             shutil.copyfile(REPO / "scripts" / name, scripts / name)
+        reload_script = scripts / "reload"
+        reload_script.write_text(reload_script.read_text().replace("/usr/local/bin/victus-hub", str(self.root / "bin/victus-hub")))
         (scripts / "install").write_text(
             'printf "install %s\\n" "$*" >> "$TEST_LOG"\n'
             'exit "${TEST_INSTALL_EXIT:-0}"\n'
@@ -33,6 +35,7 @@ class TestReloadScript(unittest.TestCase):
                 'if [ "$1" = - ]; then exec "$TEST_PYTHON" "$@"; fi\n'
                 'printf "launch %s debug=%s\\n" "$*" "$VICTUS_HUB_DEBUG_LEVEL" >> "$TEST_LOG"'
             ),
+            "victus-hub": 'printf "launch victus-hub debug=%s\\n" "$VICTUS_HUB_DEBUG_LEVEL" >> "$TEST_LOG"',
         }.items():
             command = bin_dir / name
             command.write_text("#!/bin/bash\nset -eu\n" + body + "\n")
@@ -55,7 +58,7 @@ class TestReloadScript(unittest.TestCase):
     def test_starts_ui_when_not_running(self):
         result = self.reload("3")
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(self.log.read_text(), "install --app-only\nlaunch -m victus_hub debug=3\n")
+        self.assertEqual(self.log.read_text(), "install --app-only\nlaunch victus-hub debug=3\n")
 
     def test_stops_socket_owner_before_launching_replacement(self):
         path = self.root / "victus-hub-single-instance.sock"
@@ -76,7 +79,7 @@ time.sleep(30)
             result = self.reload()
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(process.wait(timeout=2), -15)
-            self.assertIn("launch -m victus_hub", self.log.read_text())
+            self.assertIn("launch victus-hub", self.log.read_text())
         finally:
             if process.poll() is None:
                 process.kill()

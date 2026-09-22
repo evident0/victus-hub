@@ -153,8 +153,7 @@ maybe_install_ryzenadj() {
 # The RyzenAdj installer skips non-AMD CPUs.
 install_components() {
 	printf '\033[1;34m── Installing kernel modules / tools ──\033[0m\n'
-	run_install_script "$HP_WMI_KMOD_INSTALL" "$HP_WMI_MODULE_NAME"
-	run_install_script "$KBD_RGB_KMOD_INSTALL" "$KBD_RGB_MODULE_NAME"
+	bash "$ROOT_DIR/scripts/dkms-install"
 	run_install_script "$RYZENADJ_INSTALL" "ryzenadj"
 }
 

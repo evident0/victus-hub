@@ -11,6 +11,20 @@ with Fedora.
 ```
 curl -sL https://raw.githubusercontent.com/evident0/victus-hub/master/install.sh | sudo bash
 ```
+The installer checks prerequisites before changing the system. If anything is
+missing it stops, lists the requirements, and prints Ubuntu/Mint/Debian, Arch,
+or Fedora package commands. **Install the missing packages yourself**, then
+rerun it. It does not automatically install distribution packages.
+
+Requirements include Python 3.10+, Python venv/ensurepip, systemd/logind, Qt
+runtime libraries, DKMS, build tools, and headers matching the running kernel.
+The bundled hp-wmi needs newer platform-profile kernel APIs; upstream 6.8 and
+6.12 do not provide them. Preflight reports this when the relevant header is
+available. DKMS handles rebuilds, not compatibility with arbitrary kernel APIs.
+
+The app is installed into a root-owned virtual environment under
+`/opt/victus-hub-app/`, with a launcher at `/usr/local/bin/victus-hub`.
+Neither the GUI nor daemon relies on an editable checkout or system-wide pip.
 ## Uninstall (One-Liner)
 ```
 curl -sL https://raw.githubusercontent.com/evident0/victus-hub/master/uninstall.sh | sudo bash
@@ -53,6 +67,17 @@ After cloning the repository run:
 ./scripts/install
 ```
 
+To check requirements without installing anything:
+
+```bash
+bash scripts/install --check
+```
+
+RGB is optional: if `hp-kbd-rgb` cannot load (for example on a keyboard without
+supported RGB), installation continues with a message and disables its boot
+autoload entry. Fan control and the rest of the app can still be installed.
+Driver compilation/signing errors are reported as installation failures.
+
 ### Secure Boot
 
 Secure Boot can stay enabled. Install `mokutil`, `openssl`, and the kernel
@@ -78,9 +103,26 @@ sudo mokutil --import /var/lib/victus-hub/mok/MOK.der
 ```
 
 Reinstalls reuse the same key, so enrollment is only needed once. The key is
-preserved by uninstalling as well. These installers build for the running
-kernel; after a kernel update, rerun the installer with matching headers to
-rebuild and sign the drivers for that kernel.
+preserved by uninstalling as well. With Secure Boot enabled, DKMS 3 or newer
+is required. The installer configures DKMS's signing-key defaults in
+`/etc/dkms/framework.conf.d/victus-hub.conf` to use this enrolled key. This
+applies to subsequent DKMS builds, including other DKMS drivers; existing
+configuration files and enrolled certificates are retained.
+
+### Kernel updates
+
+The main installer registers both drivers with DKMS using root-owned source
+copies under `/usr/src/victus-hub-hp-*`. Distribution DKMS kernel/header hooks
+automatically rebuild them for new kernels. **Keep matching kernel headers
+installed** (on Arch use the headers package for your kernel flavour).
+The hp-wmi hook updates module selection and regenerates the initramfs using
+the installed distro tool. Uninstall removes DKMS registrations for all kernels.
+
+Check `dkms status` after a kernel update. A future incompatible kernel can
+still cause a build failure; inspect `/var/lib/dkms/` build logs and boot the
+previous working kernel until the driver is updated. The low-level scripts
+under `kernel/*/scripts/` remain single-kernel development helpers; use the
+main installer for DKMS-managed distribution installs.
 
 ## Uninstalling
 
@@ -102,6 +144,19 @@ It runs as a tray app — closing the window hides it to the system tray.
 Click the tray icon to bring it back, or use the global hotkey you can
 configure in the Settings page. A second launch raises the existing
 instance rather than starting a new one.
+
+Daemon commands require root or an active, unlocked local graphical session
+on `seat0`, verified through Unix peer credentials and systemd-logind. Remote,
+inactive, locked, and non-graphical sessions cannot issue commands. Root-only
+system hooks still work during suspend/shutdown. The daemon fails closed when
+session authorization cannot be determined.
+
+Program shortcuts are captured only inside the focused app window. Use
+Ctrl/Alt/Super with another key, or a function/OMEN key. The daemon exports
+only activation of the registered shortcut, never ordinary keypresses or a
+last-key history. Existing ordinary-key-only bindings need to be reassigned.
+Shortcut delivery is reauthorized for each event and paused while locked or
+switched away; daemon-owned fan/lighting policies continue running.
 
 Hardware control (fan curves, keyboard lighting, power-limit reapply,
 battery power-save, and Ctrl+Shift shortcuts) runs in `victus-hubd`.

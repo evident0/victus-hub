@@ -11,7 +11,8 @@ from unittest.mock import Mock, patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QSettings, QTimer
+from PySide6.QtCore import QEvent, QSettings, QTimer, Qt
+from PySide6.QtGui import QKeyEvent
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
@@ -55,6 +56,7 @@ class TestShortcutStream(QtTestCase):
             patch("victus_hub.services.shortcut_controller.read_keybind_settings",
                   return_value=KeybindSettings(key=149)),
             patch.object(daemon, "_held_mods", set()),
+            patch.object(daemon, "authenticate", return_value=Mock(authorized=lambda: True)),
         ):
             patcher.start()
             self.addCleanup(patcher.stop)
@@ -120,11 +122,9 @@ class TestShortcutStream(QtTestCase):
         captured = Mock()
         self.controller.captured.connect(captured)
         self.controller.start_capture()
-        daemon._record_key_event(KEY_LEFTCTRL, 1)
-        daemon._record_key_event(KEY_LEFTSHIFT, 1)
-        self.press(103)
-        daemon._record_key_event(KEY_LEFTSHIFT, 0)
-        daemon._record_key_event(KEY_LEFTCTRL, 0)
+        event = QKeyEvent(QEvent.KeyPress, Qt.Key_Up, Qt.ControlModifier | Qt.ShiftModifier,
+                          103 + 8, 0, 0)
+        self.controller.eventFilter(self.controller, event)
         self.wait_for(lambda: captured.call_count == 1)
         captured.assert_called_once_with(frozenset({KEY_LEFTCTRL, KEY_LEFTSHIFT}), 103)
         self.assertEqual(self.lighting, [])

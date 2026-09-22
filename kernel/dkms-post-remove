@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+set -euo pipefail
+release=$1
+module=$2
+[ "$module" = hp-wmi ] || exit 0
+rm -f "/etc/depmod.d/victus-hub-hp-wmi-$release.conf"
+[ -d "/lib/modules/$release" ] || exit 0
+depmod -a "$release"
+if command -v update-initramfs >/dev/null 2>&1; then
+	update-initramfs -u -k "$release"
+elif command -v dracut >/dev/null 2>&1; then
+	dracut --force --kver "$release"
+elif command -v mkinitcpio >/dev/null 2>&1; then
+	mkinitcpio -P
+fi

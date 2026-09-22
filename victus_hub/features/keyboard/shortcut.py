@@ -12,14 +12,6 @@ from dataclasses import dataclass, field
 from PySide6.QtCore import QSettings
 
 
-@dataclass
-class KeyEvent:
-    """A single non-modifier keypress reported by the daemon."""
-    mods: tuple[int, ...]  # modifier keycodes held at press time (sorted)
-    key: int               # non-modifier keycode, 0 if none recorded
-    seq: int               # monotonic counter; bumps on each recorded press
-
-
 # ── Linux input keycodes (subset of linux/input-event-codes.h) ──
 
 KEY_LEFTCTRL = 29

@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# Called by DKMS for the target kernel, including kernels not running yet.
+set -euo pipefail
+release=$1
+module=$2
+if [ "$module" = hp-wmi ]; then
+	# DKMS chooses different destinations on Debian/Arch, Fedora and SUSE.
+	for location in updates/dkms updates extra; do
+		for file in /lib/modules/"$release"/"$location"/hp-wmi.ko{,.xz,.gz,.zst}; do
+			[ -f "$file" ] || continue
+			install -d /etc/depmod.d
+			printf 'override hp-wmi %s %s\n' "$release" "$location" > "/etc/depmod.d/victus-hub-hp-wmi-$release.conf"
+			depmod -a "$release"
+			# Avoid an old stock hp-wmi copy winning from an existing initramfs.
+			if command -v update-initramfs >/dev/null 2>&1; then
+				update-initramfs -u -k "$release"
+			elif command -v dracut >/dev/null 2>&1; then
+				dracut --force --kver "$release"
+			elif command -v mkinitcpio >/dev/null 2>&1; then
+				mkinitcpio -P
+			fi
+			exit 0
+		done
+	done
+	printf 'DKMS hp-wmi installation for %s could not be located.\n' "$release" >&2
+	exit 1
+fi

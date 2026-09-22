@@ -126,25 +126,6 @@ def request_keyboard_last_input() -> float:
     return float(protocol.parse_status_response(response))
 
 
-def request_keyboard_last_event() -> tuple[list[int], int, int]:
-    """Return the last non-modifier keypress: (mods, key, seq).
-
-    The daemon emits ``OK\\t{mods_csv}\\t{key}\\t{seq}\\n`` (see
-    victus_hubd/daemon.py).  ``mods_csv`` is a comma-separated list of
-    modifier keycodes held at press time, ``key`` is the non-modifier
-    keycode (0 if none), and ``seq`` is a monotonic counter that bumps on
-    every recorded press so callers can detect a fresh event.
-    """
-    response = _request_daemon("keyboard-last-event\n", quiet=True)
-    line = response.strip()
-    parts = line.split("\t")
-    if len(parts) < 4 or parts[0] != "OK":
-        raise RuntimeError(f"unexpected keyboard-last-event response: {line}")
-    mods_csv = parts[1]
-    mods = [int(x) for x in mods_csv.split(",") if x]
-    return mods, int(parts[2]), int(parts[3])
-
-
 def request_cpu_frequency_limits(minimum: int, maximum: int) -> str:
     response = _request_daemon(f"cpu-frequency-limits\t{minimum}\t{maximum}\n")
     return protocol.parse_status_response(response)

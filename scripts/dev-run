@@ -45,48 +45,9 @@ cd "$ROOT_DIR"
 # ── Optional: custom hp-wmi (includes MUX), RGB, ryzenadj ──
 prompt_optional_components
 
-# ── Reinstall daemon ──
-
-printf '\033[1;34m── Installing victus-hubd daemon ──\033[0m\n'
-
-# Editable pip install so victus_hubd is importable from anywhere
-python3 -m pip install -e . --quiet 2>/dev/null || true
-
-# Install systemd service (template uses @ROOT_DIR@; substitute real path)
-SERVICE_SRC="$ROOT_DIR/data/victus-hubd.service"
-SERVICE_DST="/etc/systemd/system/$SERVICE_NAME"
-
-TMP_UNIT=$(mktemp)
-sed "s|@ROOT_DIR@|$ROOT_DIR|g" "$SERVICE_SRC" > "$TMP_UNIT"
-
-NEEDS_RELOAD=0
-if [ ! -f "$SERVICE_DST" ] || ! cmp -s "$TMP_UNIT" "$SERVICE_DST"; then
-	printf 'Installing systemd service to %s\n' "$SERVICE_DST"
-	sudo install -Dm644 "$TMP_UNIT" "$SERVICE_DST"
-	NEEDS_RELOAD=1
-fi
-rm -f "$TMP_UNIT"
-
-if [ "$NEEDS_RELOAD" -eq 1 ]; then
-	sudo systemctl daemon-reload
-	sudo systemctl reset-failed "$SERVICE_NAME" >/dev/null 2>&1 || true
-	sudo systemctl enable "$SERVICE_NAME" >/dev/null
-fi
-
-printf 'Starting %s...\n' "$SERVICE_NAME"
-sudo systemctl restart "$SERVICE_NAME"
-
-# Wait for socket to appear
-for _ in $(seq 1 30); do
-	if [ -S "$SOCKET_PATH" ]; then
-		printf '\033[32mDaemon ready (%s)\033[0m\n' "$SOCKET_PATH"
-		break
-	fi
-	sleep 0.2
-done
+bash "$ROOT_DIR/scripts/install" --app-only
 
 # ── Run Qt app ──
 
 printf '\033[1;34m── Starting Victus Hub ──\033[0m\n'
-cd "$ROOT_DIR"
-exec env QT_QPA_PLATFORM=wayland python3 -m victus_hub
+/usr/local/bin/victus-hub

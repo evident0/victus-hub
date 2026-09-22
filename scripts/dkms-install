@@ -1,0 +1,91 @@
+#!/usr/bin/env bash
+# Install persistent, root-owned DKMS sources independent of the checkout.
+set -euo pipefail
+ROOT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+KERNEL_RELEASE=$(uname -r)
+if [ "$(id -u)" -eq 0 ]; then SUDO=(); else SUDO=(sudo); fi
+source "$ROOT_DIR/scripts/secure-boot.sh"
+secure_boot_prepare
+
+# DKMS 3 uses framework signing settings for automatic rebuilds. Reuse the
+# enrolled project key rather than silently switching keys after an update.
+if [ "$SECURE_BOOT" -eq 1 ]; then
+	version=$(dkms --version)
+	if [[ ! "$version" =~ dkms[-[:space:]]+([0-9]+) ]] || [ "${BASH_REMATCH[1]}" -lt 3 ]; then
+		printf 'Secure Boot automatic signing requires DKMS >= 3. Install a newer DKMS and rerun.\n' >&2
+		exit 1
+	fi
+	"${SUDO[@]}" install -d /etc/dkms/framework.conf.d
+	printf 'mok_signing_key="%s"\nmok_certificate="%s"\n' "$MOK_KEY" "$MOK_CERT" |
+		"${SUDO[@]}" tee /etc/dkms/framework.conf.d/victus-hub.conf >/dev/null
+fi
+
+for module in hp-wmi hp-kbd-rgb; do
+	package="victus-hub-$module"
+	# Source identity makes development reinstalls and upgrades distinct DKMS
+	# versions, even when the application's marketing version is unchanged.
+	digest=$(sha256sum "$ROOT_DIR/kernel/$module/$module.c" "$ROOT_DIR/kernel/$module/Makefile" "$ROOT_DIR/kernel/dkms-post-install" "$ROOT_DIR/kernel/dkms-post-remove" "$ROOT_DIR/scripts/dkms-install" | cut -d ' ' -f1 | sha256sum)
+	version="1.0.${digest:0:12}"
+	source_dir="/usr/src/$package-$version"
+	"${SUDO[@]}" install -d -m755 "$source_dir"
+	"${SUDO[@]}" install -m644 "$ROOT_DIR/kernel/$module/$module.c" "$ROOT_DIR/kernel/$module/Makefile" "$source_dir/"
+	"${SUDO[@]}" install -m755 "$ROOT_DIR/kernel/dkms-post-install" "$source_dir/dkms-post-install"
+	"${SUDO[@]}" install -m755 "$ROOT_DIR/kernel/dkms-post-remove" "$source_dir/dkms-post-remove"
+	# MAKE is quoted so DKMS does not append KERNELRELEASE; KDIR explicitly
+	# points to the target kernel instead of uname -r on future rebuilds.
+	"${SUDO[@]}" tee "$source_dir/dkms.conf" >/dev/null <<CONF
+PACKAGE_NAME="$package"
+PACKAGE_VERSION="$version"
+BUILT_MODULE_NAME[0]="$module"
+DEST_MODULE_LOCATION[0]="/extra"
+AUTOINSTALL="yes"
+MAKE[0]="make KDIR=/lib/modules/\${kernelver}/build"
+POST_INSTALL="dkms-post-install \${kernelver} $module"
+POST_REMOVE="dkms-post-remove \${kernelver} $module"
+CONF
+	if ! "${SUDO[@]}" dkms status -m "$package" -v "$version" | grep -q .; then
+		"${SUDO[@]}" dkms add -m "$package" -v "$version"
+	fi
+	if ! "${SUDO[@]}" dkms status -m "$package" -v "$version" -k "$KERNEL_RELEASE" | grep -Eq ': (built|installed)'; then
+		"${SUDO[@]}" dkms build -m "$package" -v "$version" -k "$KERNEL_RELEASE"
+	fi
+	# Remove previous package versions before installing the new one so only
+	# the current source is selected by future dkms autoinstall invocations.
+	for previous in /usr/src/"$package"-*; do
+		[ -d "$previous" ] || continue
+		[ "$previous" != "$source_dir" ] || continue
+		old_version=${previous##*/$package-}
+		"${SUDO[@]}" dkms remove -m "$package" -v "$old_version" --all
+		"${SUDO[@]}" rm -rf "$previous"
+	done
+	# Retire unmanaged copies from the old installer for this kernel.
+	for old in /lib/modules/"$KERNEL_RELEASE"/extra/"$module".ko{,.xz,.gz,.zst}; do
+		[ ! -f "$old" ] || "${SUDO[@]}" rm -f "$old"
+	done
+	"${SUDO[@]}" dkms install -m "$package" -v "$version" -k "$KERNEL_RELEASE" --force
+	if [ "$SECURE_BOOT" -eq 1 ]; then
+		signer=$(modinfo -k "$KERNEL_RELEASE" -F signer "$module")
+		if [ "$signer" != Victus-Hub ]; then
+			printf 'DKMS used a different signing key (%s). Check /etc/dkms/framework.conf.d before rebooting.\n' "$signer" >&2
+			exit 1
+		fi
+	fi
+	"${SUDO[@]}" install -d /etc/modules-load.d
+	printf '%s\n' "$module" | "${SUDO[@]}" tee "/etc/modules-load.d/$module.conf" >/dev/null
+done
+
+if [ "$MOK_PENDING" -eq 1 ]; then
+	printf 'DKMS drivers installed; hardware detection/loading deferred until MOK enrollment and reboot.\n'
+	exit 0
+fi
+if [ -d /sys/module/hp_wmi ]; then "${SUDO[@]}" modprobe -r hp-wmi; fi
+if [ -d /sys/module/hp_bioscfg ]; then "${SUDO[@]}" modprobe -r hp-bioscfg; fi
+"${SUDO[@]}" modprobe hp-wmi
+if [ ! -e /sys/devices/platform/hp-wmi/gpu_mux_supported_names ]; then
+	printf 'Custom hp-wmi interfaces are missing after loading; inspect journalctl -k -b.\n' >&2
+	exit 1
+fi
+if [ -d /sys/module/hp_kbd_rgb ]; then "${SUDO[@]}" modprobe -r hp-kbd-rgb; fi
+source "$ROOT_DIR/scripts/optional-rgb.sh"
+load_optional_rgb
+printf 'DKMS will rebuild the drivers when matching kernel headers are installed.\n'

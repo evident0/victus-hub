@@ -39,24 +39,9 @@ else
 fi
 
 if [ "${#MISSING[@]}" -gt 0 ]; then
-  printf '\033[1;34m── Installing build dependencies ──\033[0m\n'
-  if command -v dnf >/dev/null 2>&1; then
-    "${SUDO[@]}" dnf install -y "${MISSING[@]}"
-  elif command -v apt >/dev/null 2>&1; then
-    DEB_PKGS=()
-    for p in "${MISSING[@]}"; do
-      case "$p" in
-        gcc-c++)        DEB_PKGS+=(g++);;
-        pciutils-devel) DEB_PKGS+=(libpci-dev);;
-        *)              DEB_PKGS+=("$p");;
-      esac
-    done
-    "${SUDO[@]}" apt install -y "${DEB_PKGS[@]}"
-  else
-    printf 'Cannot auto-install dependencies (%s).\n' "${MISSING[*]}" >&2
-    printf 'Install cmake, a C++ compiler, make, git, and libpci dev headers manually.\n' >&2
-    exit 1
-  fi
+  printf 'Missing RyzenAdj build requirements: %s\n' "${MISSING[*]}" >&2
+  printf 'Install them yourself, then rerun:\n  Ubuntu/Mint: sudo apt install cmake g++ make git libpci-dev\n  Arch: sudo pacman -S --needed cmake base-devel git pciutils\n  Fedora: sudo dnf install cmake gcc-c++ make git pciutils-devel\n' >&2
+  exit 1
 fi
 
 # Re-check the critical tools in case a dep install was skipped or partial.
