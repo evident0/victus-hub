@@ -1,6 +1,6 @@
 # Victus Hub
 
-![main tab](showcase_main.png)
+![main tab](showcase/showcase_main.png)
 
 A lightweight control panel for HP Victus and Omen laptops on Linux. 
 
@@ -44,7 +44,7 @@ Settings persist under `~/.config/victus-hub/`.
 
 Keyboard Panel            |  Fans Panel
 :-------------------------:|:-------------------------:
-![](showcase_keyboard.png)  |  ![](showcase_curve.png)
+![](showcase/showcase_keyboard.png)  |  ![](showcase/showcase_curve.png)
 
 ## Installing (manual)
 
