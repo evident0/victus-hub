@@ -110,6 +110,21 @@ hand fans back to the EC and turn the keyboard backlight off.
 
 ## Logging/Debugging
 
+To refresh the app and daemon after editing this checkout, run from your
+desktop session **without sudo**:
+
+```bash
+./scripts/reload
+```
+
+This refreshes the app-only installation, restarts `victus-hubd`, and restarts
+your UI using the current checkout. It requests sudo for system changes and
+leaves kernel modules and the RyzenAdj installation in place. The UI runs in
+the terminal; the daemon stays running after it closes.
+
+`scripts/reload` also accepts the debug levels below (for example,
+`./scripts/reload 3`).
+
 The app logs to the terminal it was launched from (so run it from a
 terminal or check the desktop entry's output). The daemon logs via
 `journalctl -u victus-hubd`.

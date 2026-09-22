@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+# Refresh the app + daemon from this checkout, then restart the user's UI.
+# --app-only leaves kernel modules and the RyzenAdj installation in place.
+set -euo pipefail
+
+ROOT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+# shellcheck source=debug-level.sh
+source "$ROOT_DIR/scripts/debug-level.sh"
+
+if [ "$(id -u)" -eq 0 ]; then
+	printf 'Run %s as your desktop user, without sudo; installation requests sudo as needed.\n' "$0" >&2
+	exit 1
+fi
+
+# Use the existing app-only installer to refresh the editable package, service,
+# and desktop entry. It also restarts victus-hubd.
+bash "$ROOT_DIR/scripts/install" --app-only
+
+printf 'Restarting Victus Hub...\n'
+# Identify the UI through its single-instance socket, rather than matching
+# process names (which could also match the daemon or another user's UI).
+python3 - <<'PY'
+import os
+import select
+import signal
+import socket
+import struct
+import tempfile
+
+path = os.path.join(
+    os.environ.get("XDG_RUNTIME_DIR") or tempfile.gettempdir(),
+    "victus-hub-single-instance.sock",
+)
+with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
+    sock.settimeout(2)
+    try:
+        sock.connect(path)
+    except (FileNotFoundError, ConnectionRefusedError):
+        raise SystemExit(0)
+    pid, uid, _ = struct.unpack(
+        "3i", sock.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize("3i"))
+    )
+    if uid != os.getuid():
+        raise SystemExit("The running UI belongs to another user; refusing to stop it.")
+    try:
+        pidfd = os.pidfd_open(pid)
+    except ProcessLookupError:
+        raise SystemExit(0)
+    try:
+        signal.pidfd_send_signal(pidfd, signal.SIGTERM)
+        if not select.select([pidfd], [], [], 10)[0]:
+            raise SystemExit("Victus Hub did not exit within 10 seconds; close it and retry.")
+    except ProcessLookupError:
+        pass
+    finally:
+        os.close(pidfd)
+PY
+
+cd "$ROOT_DIR"
+exec env QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-xcb}" python3 -m victus_hub
