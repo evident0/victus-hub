@@ -11,7 +11,7 @@ with Fedora.
 ```
 curl -sL https://raw.githubusercontent.com/evident0/victus-hub/master/install.sh | sudo bash
 ```
-.
+
 ## Uninstall (One-Liner)
 ```
 curl -sL https://raw.githubusercontent.com/evident0/victus-hub/master/uninstall.sh | sudo bash
