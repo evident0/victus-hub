@@ -16,6 +16,18 @@ if [ "$#" -ne 0 ]; then
 	exit 2
 fi
 
+# install.sh prints this before cloning and sets VICTUS_HUB_BANNER_SHOWN.
+if [ "${VICTUS_HUB_BANNER_SHOWN:-}" != 1 ]; then
+	printf '\033[1;36m'
+	printf '%s\n' \
+		'__     _____ ____ _____ _   _ ____    _   _ _   _ ____  ' \
+		'\ \   / /_ _/ ___|_   _| | | / ___|  | | | | | | | __ ) ' \
+		' \ \ / / | | |     | | | | | \___ \  | |_| | | | |  _ \ ' \
+		'  \ V /  | | |___  | | | |_| |___) | |  _  | |_| | |_) |' \
+		'   \_/  |___\____| |_|  \___/|____/  |_| |_|\___/|____/ '
+	printf '\033[0m\n'
+fi
+
 ROOT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 # shellcheck source=kmod-prompts.sh
 source "$ROOT_DIR/scripts/kmod-prompts.sh"
