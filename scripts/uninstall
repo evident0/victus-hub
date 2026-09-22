@@ -252,3 +252,6 @@ fi
 printf '\033[32m── Uninstall complete ──\033[0m\n'
 printf '  ~/.config was left in place (user settings preserved).\n'
 printf '  Custom hp-wmi (if any) was removed and in-tree hp-wmi restored when possible.\n'
+if "${SUDO[@]}" test -d /var/lib/victus-hub/mok; then
+	printf '  Secure Boot signing keys in /var/lib/victus-hub/mok were preserved for reinstalling.\n'
+fi

@@ -53,12 +53,42 @@ After cloning the repository run:
 ./scripts/install
 ```
 
+### Secure Boot
+
+Secure Boot can stay enabled. Install `mokutil`, `openssl`, and the kernel
+headers/devel package matching `uname -r` before running the installer. Both
+custom drivers (`hp-wmi` and `hp-kbd-rgb`) are signed automatically using a
+shared key stored under `/var/lib/victus-hub/mok/` with root-only access.
+
+On the first install, choose a one-time password when `mokutil` prompts you
+(this also works with the one-liner installer). Installation finishes, but
+the new drivers are not loaded until you enroll the key:
+
+1. Reboot into the **MOK Manager** screen provided by your shim bootloader.
+2. Choose **Enroll MOK → Continue → Yes**.
+3. Enter the password you chose during installation, then reboot again.
+
+The signed drivers are configured to load at boot. Until enrollment is
+complete, features requiring the custom drivers may be unavailable. A
+shim/MOK-capable boot chain is required for this enrollment workflow.
+If installing without a terminal, or if you need to retry enrollment, run:
+
+```bash
+sudo mokutil --import /var/lib/victus-hub/mok/MOK.der
+```
+
+Reinstalls reuse the same key, so enrollment is only needed once. The key is
+preserved by uninstalling as well. These installers build for the running
+kernel; after a kernel update, rerun the installer with matching headers to
+rebuild and sign the drivers for that kernel.
+
 ## Uninstalling
 
 ```
 ./scripts/uninstall
 ```
-Your settings under `~/.config/victus-hub/` are left in place. Removes everything else
+Your settings under `~/.config/victus-hub/` and Secure Boot signing keys under
+`/var/lib/victus-hub/mok/` are left in place.
 
 ## Running
 

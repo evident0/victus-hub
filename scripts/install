@@ -136,3 +136,14 @@ else
 fi
 printf '  • Daemon:        %s (running)\n' "$SERVICE_NAME"
 printf '  • Program:       victus-hub   (app menu or: victus-hub)\n'
+if [ "$APP_ONLY" -eq 0 ]; then
+	# Module installers run in subprocesses; recheck enrollment for the final summary.
+	# shellcheck source=secure-boot.sh
+	source "$ROOT_DIR/scripts/secure-boot.sh"
+	if "${SUDO[@]}" test -f "$MOK_CERT" && command -v mokutil >/dev/null 2>&1; then
+		if [[ $(LC_ALL=C mokutil --sb-state 2>/dev/null) == *'SecureBoot enabled'* ]] && \
+			! "${SUDO[@]}" mokutil --test-key "$MOK_CERT" >/dev/null 2>&1; then
+			secure_boot_instructions
+		fi
+	fi
+fi

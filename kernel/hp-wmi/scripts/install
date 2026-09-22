@@ -25,6 +25,10 @@ if [ ! -d "/lib/modules/${KERNEL_RELEASE}/build" ]; then
   exit 1
 fi
 
+# shellcheck source=../../../scripts/secure-boot.sh
+source "$MODULE_DIR/../../scripts/secure-boot.sh"
+secure_boot_prepare
+
 printf 'Building %s for kernel %s...\n' "$MODULE_NAME" "$KERNEL_RELEASE"
 make -C "$MODULE_DIR"
 
@@ -43,7 +47,7 @@ if [ ! -s "$BUILD_NOTE" ]; then
 fi
 
 # MUX support now lives in hp-wmi. Retire the former standalone install.
-if [ -d /sys/module/hp_gpu_mux ]; then
+if [ "$MOK_PENDING" -eq 0 ] && [ -d /sys/module/hp_gpu_mux ]; then
   printf 'Unloading legacy hp-gpu-mux...\n'
   "${SUDO[@]}" modprobe -r hp-gpu-mux || "${SUDO[@]}" rmmod hp_gpu_mux
 fi
@@ -56,7 +60,7 @@ for legacy_ko in /lib/modules/*/extra/hp-gpu-mux.ko{,.xz,.zst,.gz}; do
 done
 
 printf 'Installing %s to %s...\n' "$MODULE_KO" "$INSTALL_PATH"
-"${SUDO[@]}" install -Dm644 "$MODULE_KO" "$INSTALL_PATH"
+secure_boot_install_module "$MODULE_KO" "$INSTALL_PATH"
 
 # extra/ does not have priority over kernel/ on every distribution. Restrict
 # the override to this kernel so other kernels can still use their stock module.
@@ -71,6 +75,15 @@ if [ "$(readlink -f "$SELECTED_PATH")" != "$(readlink -f "$INSTALL_PATH")" ]; th
   exit 1
 fi
 
+printf 'Configuring autoload at boot: %s\n' "$AUTOLOAD_CONF"
+"${SUDO[@]}" install -d /etc/modules-load.d
+printf '%s\n' "$MODULE_NAME" | "${SUDO[@]}" tee "$AUTOLOAD_CONF" >/dev/null
+
+if [ "$MOK_PENDING" -eq 1 ]; then
+  printf 'Installed signed %s; loading and runtime verification deferred until MOK enrollment and reboot.\n' "$MODULE_NAME"
+  exit 0
+fi
+
 if [ -d "/sys/module/${MODULE_SYS_NAME}" ]; then
   printf 'Unloading currently loaded %s...\n' "$MODULE_NAME"
   "${SUDO[@]}" modprobe -r "$MODULE_NAME" || "${SUDO[@]}" rmmod "$MODULE_SYS_NAME"
@@ -82,9 +95,6 @@ if [ -d "/sys/module/${BIOSCFG_SYS_NAME}" ]; then
   printf 'Unloading %s (shares WMI BIOS GUID with %s)...\n' "$BIOSCFG_SYS_NAME" "$MODULE_NAME"
   "${SUDO[@]}" modprobe -r "$BIOSCFG_SYS_NAME" || "${SUDO[@]}" rmmod "$BIOSCFG_SYS_NAME"
 fi
-
-printf 'Configuring autoload at boot: %s\n' "$AUTOLOAD_CONF"
-printf '%s\n' "$MODULE_NAME" | "${SUDO[@]}" tee "$AUTOLOAD_CONF" >/dev/null
 
 printf 'Loading module...\n'
 "${SUDO[@]}" modprobe "$MODULE_NAME"

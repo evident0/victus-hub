@@ -23,6 +23,10 @@ if [ ! -d "/lib/modules/${KERNEL_RELEASE}/build" ]; then
   exit 1
 fi
 
+# shellcheck source=../../../scripts/secure-boot.sh
+source "$MODULE_DIR/../../scripts/secure-boot.sh"
+secure_boot_prepare
+
 printf 'Building %s for kernel %s...\n' "$MODULE_NAME" "$KERNEL_RELEASE"
 make -C "$MODULE_DIR"
 
@@ -31,19 +35,25 @@ if [ ! -f "$MODULE_KO" ]; then
   exit 1
 fi
 
-if [ -d "/sys/module/${MODULE_SYS_NAME}" ]; then
-  printf 'Unloading currently loaded %s...\n' "$MODULE_NAME"
-  "${SUDO[@]}" modprobe -r "$MODULE_NAME" || "${SUDO[@]}" rmmod "$MODULE_SYS_NAME"
-fi
-
 printf 'Installing %s to %s...\n' "$MODULE_KO" "$INSTALL_PATH"
-"${SUDO[@]}" install -Dm644 "$MODULE_KO" "$INSTALL_PATH"
+secure_boot_install_module "$MODULE_KO" "$INSTALL_PATH"
 
 printf 'Updating module dependency cache...\n'
 "${SUDO[@]}" depmod -a "$KERNEL_RELEASE"
 
 printf 'Configuring autoload at boot: %s\n' "$AUTOLOAD_CONF"
+"${SUDO[@]}" install -d /etc/modules-load.d
 printf '%s\n%s\n' "$DEPENDENCY" "$MODULE_NAME" | "${SUDO[@]}" tee "$AUTOLOAD_CONF" >/dev/null
+
+if [ "$MOK_PENDING" -eq 1 ]; then
+  printf 'Installed signed %s; loading deferred until MOK enrollment and reboot.\n' "$MODULE_NAME"
+  exit 0
+fi
+
+if [ -d "/sys/module/${MODULE_SYS_NAME}" ]; then
+  printf 'Unloading currently loaded %s...\n' "$MODULE_NAME"
+  "${SUDO[@]}" modprobe -r "$MODULE_NAME" || "${SUDO[@]}" rmmod "$MODULE_SYS_NAME"
+fi
 
 printf 'Loading dependency and module...\n'
 "${SUDO[@]}" modprobe "$DEPENDENCY"
