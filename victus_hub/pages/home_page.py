@@ -141,7 +141,7 @@ class HomePage(QWidget):
 
         self._footer = FooterBar()
         self._footer.set_left("HP Laptop")
-        self._footer.set_right("v1.0.0")
+        self._footer.set_right("v1.0.1")
         layout.addWidget(self._footer)
 
         self.refresh_power()
