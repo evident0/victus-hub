@@ -11,6 +11,7 @@ import time
 from dataclasses import replace
 
 from victus_hub.backend import hardware, profiles, fan_config, daemon_client
+from victus_hub.backend.hardware_capabilities import HardwareCapabilities, detect_capabilities
 from victus_hub.backend.sensors import SensorReader
 from victus_hub.backend.types import (
     SensorReading,
@@ -32,6 +33,7 @@ __all__ = [
     "FanProfileConfig",
     "FanConfig",
     "get_hardware_title",
+    "get_hardware_capabilities",
     "read_sensors",
     "get_current_profile",
     "set_system_profile",
@@ -259,6 +261,24 @@ def apply_power_limits(stapm: int, fast: int, slow: int, tctl_temp: int = 95) ->
 
 def get_fan_config() -> FanConfig:
     return fan_config.load()
+
+
+def get_hardware_capabilities() -> HardwareCapabilities:
+    """Read daemon-detected controls, falling back to the same local probe.
+
+    Older/unavailable daemons do not supply capabilities. The UI's emulated
+    keyboard mode is a preview-only override for scripts/ui-test.
+    """
+    from victus_hub.backend.modules import emulated_keyboard_zone_count
+
+    try:
+        raw = daemon_client.request_get_state()["capabilities"]
+        capabilities = HardwareCapabilities.from_dict(raw)
+    except (KeyError, TypeError, ValueError, RuntimeError):
+        capabilities = detect_capabilities()
+    if emulated_keyboard_zone_count() is not None:
+        return HardwareCapabilities(capabilities.fan_modes, True, capabilities.gpu_mux)
+    return capabilities
 
 
 def _push_policy(label: str, send) -> None:

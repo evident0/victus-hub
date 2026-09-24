@@ -37,6 +37,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         api.start_sensor_reader()
         api.sync_settings_with_daemon()
+        self._capabilities = api.get_hardware_capabilities()
         self.setWindowTitle("Victus Hub")
         self.resize(self._PAGE_WIDTH[0], self._WINDOW_HEIGHT)
         self.setMinimumSize(420, self._WINDOW_HEIGHT)
@@ -56,6 +57,7 @@ class MainWindow(QMainWindow):
 
         # Sidebar
         self._sidebar = Sidebar()
+        self._sidebar.set_tab_visible(3, self._capabilities.keyboard_lighting)
         layout.addWidget(self._sidebar)
 
         # Stacked pages — wrapped in a scroll area so a page taller than the
@@ -72,9 +74,13 @@ class MainWindow(QMainWindow):
         self._scroll.setWidget(self._stack)
         layout.addWidget(self._scroll, 1)
 
-        self._home_page = HomePage()
+        self._home_page = HomePage(
+            fan_modes=self._capabilities.fan_modes,
+            keyboard_lighting=self._capabilities.keyboard_lighting,
+            gpu_mux=self._capabilities.gpu_mux,
+        )
         self._power_page = PowerPage()
-        self._fans_page = FansPage()
+        self._fans_page = FansPage(fan_modes=self._capabilities.fan_modes)
         self._sensors_page = SensorsPage()
         self._keyboard_page = KeyboardPage()
         self._settings_page = SettingsPage()
@@ -179,11 +185,11 @@ class MainWindow(QMainWindow):
         self._profile_watcher.start()
         try:
             _cfg = api.get_fan_config()
-            if _cfg.custom_enabled and _cfg.smart_enabled:
+            if _cfg.custom_enabled and _cfg.smart_enabled and "smart" in self._capabilities.fan_modes:
                 self._selected_fan_mode = "smart"
-            elif _cfg.custom_enabled:
+            elif _cfg.custom_enabled and "custom" in self._capabilities.fan_modes:
                 self._selected_fan_mode = "custom"
-            elif _cfg.manual_preset == "max":
+            elif _cfg.manual_preset == "max" and "max" in self._capabilities.fan_modes:
                 self._selected_fan_mode = "max"
             else:
                 self._selected_fan_mode = "auto"
@@ -205,6 +211,8 @@ class MainWindow(QMainWindow):
 
     def set_active_tab(self, index: int):
         """Switch to the given tab index."""
+        if index == 3 and not self._capabilities.keyboard_lighting:
+            return
         self._sidebar.set_active(index)
         self._stack.setCurrentIndex(index)
 
@@ -323,6 +331,8 @@ class MainWindow(QMainWindow):
         fan_group.setExclusive(True)
         self._tray_fan_actions: dict[str, QAction] = {}
         for key, label, icon, _accent, _has_action in FAN_MODES:
+            if key not in self._capabilities.fan_modes:
+                continue
             action = QAction(label, self)
             action.setCheckable(True)
             action.setIcon(load_icon(icon, size=16))
@@ -517,6 +527,9 @@ class MainWindow(QMainWindow):
 
     def _on_fan_mode(self, mode: str):
         """Handle Auto/Smart/Max/Custom fan mode button clicks."""
+        if mode not in self._capabilities.fan_modes:
+            self._sync_fan_mode_ui(self._selected_fan_mode)
+            return
         self._selected_fan_mode = mode
         self._sync_fan_mode_ui(mode)
         self._sync_tray_checks()

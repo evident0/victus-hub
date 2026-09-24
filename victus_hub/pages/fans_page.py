@@ -41,11 +41,10 @@ class FansPage(QWidget):
     fan_mode_selected = Signal(str)
 
     _PROFILE_NAMES = [p[0] for p in _PROFILE_NAMES_SRC]
-    _FAN_KEYS = [m[0] for m in FAN_MODES]
-    _FAN_LABELS = [m[1] for m in FAN_MODES]
-
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, *, fan_modes: tuple[str, ...] | None = None):
         super().__init__(parent)
+        available = [m for m in FAN_MODES if fan_modes is None or m[0] in fan_modes]
+        self._fan_keys = [m[0] for m in available]
         self._edit_profile = 1
         self._fan_mode = "auto"
         self._profiles: list[FanProfileConfig] = []
@@ -69,7 +68,8 @@ class FansPage(QWidget):
         mode_col = QVBoxLayout()
         mode_col.setContentsMargins(0, 24, 0, 0)
         mode_col.setSpacing(0)
-        self._mode_seg = Seg(self._FAN_LABELS, kind="page", tips=_FAN_TIPS)
+        self._mode_seg = Seg([m[1] for m in available], kind="page",
+                             tips=[_FAN_TIPS[FAN_MODES.index(m)] for m in available])
         self._mode_seg.picked.connect(self._on_mode_seg)
         mode_col.addWidget(self._mode_seg)
         layout.addLayout(mode_col)
@@ -166,11 +166,10 @@ class FansPage(QWidget):
 
     def set_selected_fan_mode(self, mode: str) -> None:
         """Select a fan-mode segment without emitting a signal."""
+        if mode not in self._fan_keys:
+            return
         self._fan_mode = mode
-        try:
-            self._mode_seg.select(self._FAN_KEYS.index(mode), True)
-        except ValueError:
-            pass
+        self._mode_seg.select(self._fan_keys.index(mode), True)
         self._update_mode_content()
 
     def _update_mode_content(self) -> None:
@@ -192,9 +191,9 @@ class FansPage(QWidget):
         self._update_profile_label()
 
     def _on_mode_seg(self, index: int) -> None:
-        if index < 0 or index >= len(self._FAN_KEYS):
+        if index < 0 or index >= len(self._fan_keys):
             return
-        mode = self._FAN_KEYS[index]
+        mode = self._fan_keys[index]
         if mode == self._fan_mode:
             return
         self._fan_mode = mode

@@ -33,14 +33,14 @@ def platform_profile_backend() -> tuple[str, str]:
 def fan_control_module() -> tuple[str, str]:
     """Detect whether hp-wmi exposes fan control.
 
-    - Green ``"hp-wmi"`` — hwmon found and pwm1_enable exists (custom fan control)
-    - Orange ``"limited"`` — hwmon found but pwm1_enable missing (only auto / max)
+    - Green ``"hp-wmi"`` — both mode and manual PWM controls exposed
+    - Orange ``"limited"`` — hwmon present without manual PWM
     - Red ``"not supported"`` — no hp-wmi hwmon at all
     """
     hwmon = find_hwmon_by_name("hp", "hp_wmi", "hp-wmi")
     if hwmon is None:
         return ("not supported", RED)
-    if (hwmon / "pwm1_enable").exists():
+    if (hwmon / "pwm1_enable").exists() and (hwmon / "pwm1").exists():
         return ("hp-wmi", GREEN)
     return ("limited", ORANGE)
 
@@ -71,15 +71,17 @@ def emulated_keyboard_zone_count() -> int | None:
 
 
 def keyboard_rgb_module() -> tuple[str, str]:
-    """Detect whether the hp-kbd-rgb kernel module is loaded.
+    """Detect usable hp-kbd-rgb lighting controls.
 
-    - Green ``"hp-kbd-rgb"`` if /sys/devices/platform/hp-kbd-rgb exists
+    - Green ``"hp-kbd-rgb"`` if an RGB LED control exists
     - Green ``"emulated"`` if ``VICTUS_HUB_EMULATE_ZONES`` is set
     - Red ``"not supported"`` otherwise
     """
     if emulated_keyboard_zone_count() is not None:
         return ("emulated", GREEN)
-    if Path("/sys/devices/platform/hp-kbd-rgb").is_dir():
+    from victus_hub.backend.hardware_capabilities import keyboard_lighting_supported
+
+    if keyboard_lighting_supported():
         return ("hp-kbd-rgb", GREEN)
     return ("not supported", RED)
 

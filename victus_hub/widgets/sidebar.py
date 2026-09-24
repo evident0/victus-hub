@@ -182,6 +182,8 @@ class Sidebar(QWidget):
     def set_active(self, index: int):
         if index < 0 or index >= len(self._buttons):
             return
+        if not self._buttons[index].isVisibleTo(self):
+            return
         if index == self._active_index and self._pill.isVisible():
             return
         self._active_index = index
@@ -189,6 +191,9 @@ class Sidebar(QWidget):
             btn.set_selected(i == index)
         self._place_pill(True)
         self.tab_changed.emit(index)
+
+    def set_tab_visible(self, index: int, visible: bool) -> None:
+        self._buttons[index].setVisible(visible)
 
     def paintEvent(self, _event):
         p = QPainter(self)

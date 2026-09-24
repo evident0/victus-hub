@@ -549,8 +549,12 @@ def _make_dispatch(
             return protocol.format_status_response((False, str(e)))
 
     def _get_state(_body: str) -> str:
+        from victus_hub.backend.hardware_capabilities import detect_capabilities
+
+        state = state_to_dict(_require_runtime().snapshot())
+        state["capabilities"] = detect_capabilities().to_dict()
         payload = json.dumps(
-            state_to_dict(_require_runtime().snapshot()),
+            state,
             separators=(",", ":"),
         )
         return f"OK\t{payload}\n"

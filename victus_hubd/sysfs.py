@@ -23,7 +23,8 @@ def hp_hwmon() -> Path | None:
 def manual_fan_supported() -> bool:
     """Use the driver's per-device manual PWM capability, not its board name."""
     hwmon = hp_hwmon()
-    return hwmon is not None and (hwmon / "pwm1").exists()
+    return (hwmon is not None and (hwmon / "pwm1_enable").exists()
+            and (hwmon / "pwm1").exists())
 
 
 

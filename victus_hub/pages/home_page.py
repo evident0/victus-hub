@@ -7,7 +7,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt, Signal
 
-from victus_hub.widgets.profile_section import ProfileSection
+from victus_hub.widgets.profile_section import LOCAL_MUX, ProfileSection
 from victus_hub.widgets.chrome import PageHead, BigMetric, FooterBar, hairline
 from victus_hub.app.theme import COLORS, mode_name, ui_font
 from victus_hub.features.keyboard.lighting import (
@@ -38,7 +38,8 @@ class HomePage(QWidget):
     lighting_clicked = Signal()
     power_clicked = Signal()
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, *, fan_modes: tuple[str, ...] | None = None,
+                 keyboard_lighting: bool = True, gpu_mux=LOCAL_MUX):
         super().__init__(parent)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(24, 24, 24, 20)
@@ -69,7 +70,7 @@ class HomePage(QWidget):
         grid.addWidget(self._fan2, 2, 1)
         layout.addLayout(grid)
 
-        self._profile_section = ProfileSection()
+        self._profile_section = ProfileSection(fan_modes=fan_modes, gpu_mux=gpu_mux)
         self._profile_section.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self._profile_section.profile_selected.connect(self.profile_selected.emit)
         self._profile_section.fan_mode_selected.connect(self.fan_mode_selected.emit)
@@ -133,6 +134,8 @@ class HomePage(QWidget):
         lr.addWidget(l_arrow)
         light_row.mousePressEvent = lambda e: self.lighting_clicked.emit()  # type: ignore[method-assign]
         layout.addWidget(light_row)
+        self._light_row = light_row
+        light_row.setVisible(keyboard_lighting)
 
         layout.addStretch(1)
 

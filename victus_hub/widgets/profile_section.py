@@ -10,7 +10,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, Signal
 
 from victus_hub import api
-from victus_hub.features.gpu.mux import GpuMuxMode, read_gpu_mux_state
+from victus_hub.features.gpu.mux import GpuMuxMode, GpuMuxState, read_gpu_mux_state
 from victus_hub.app.theme import COLORS, ECO, BALANCED, PERF, ui_font
 from victus_hub.backend.nvidia import get_gpu_name
 from victus_hub.widgets.seg import Seg, LinkSeg
@@ -30,6 +30,8 @@ FAN_MODES = [
     ("custom", "Custom", "fan.png", BALANCED, True),
 ]
 
+LOCAL_MUX = object()
+
 
 class ProfileSection(QWidget):
     """Mode pill, fan links, optional MUX segment."""
@@ -38,8 +40,10 @@ class ProfileSection(QWidget):
     fan_mode_selected = Signal(str)
     fan_curves_requested = Signal()
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, *, fan_modes: tuple[str, ...] | None = None,
+                 gpu_mux: GpuMuxState | None | object = LOCAL_MUX):
         super().__init__(parent)
+        self._fan_modes = [m for m in FAN_MODES if fan_modes is None or m[0] in fan_modes]
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
@@ -63,7 +67,7 @@ class ProfileSection(QWidget):
         fans_lbl.setStyleSheet(f"color: {COLORS['text']}; background: transparent;")
         fan_row.addWidget(fans_lbl, 0, Qt.AlignVCenter)
         fan_row.addStretch()
-        self._fan_links = LinkSeg([m[1] for m in FAN_MODES], gap=16, size=14)
+        self._fan_links = LinkSeg([m[1] for m in self._fan_modes], gap=16, size=14)
         self._fan_links.picked.connect(self._on_fan_link)
         self._fan_links.select(0, False)
         fan_row.addWidget(self._fan_links, 0, Qt.AlignVCenter)
@@ -108,19 +112,23 @@ class ProfileSection(QWidget):
         self._mux_block.hide()
         root.addWidget(self._mux_block)
 
-        self._build_mux_buttons(mux_outer)
+        self._build_mux_buttons(mux_outer, gpu_mux)
 
     def _on_curve_click(self, event) -> None:
         if event.button() == Qt.LeftButton:
             self.fan_curves_requested.emit()
 
-    def _build_mux_buttons(self, layout: QVBoxLayout) -> None:
+    def _build_mux_buttons(self, layout: QVBoxLayout,
+                           state: GpuMuxState | None | object) -> None:
         self._mux_modes = ()
         self._mux_index_by_seg = []
         self._mux_selected = None
         self._mux_block.hide()
 
-        state = read_gpu_mux_state()
+        # Standalone widgets retain a local read; MainWindow supplies the
+        # daemon's detected state through the hardware profile.
+        if state is LOCAL_MUX:
+            state = read_gpu_mux_state()
         names = [m.label for m in state.modes] if state is not None else []
         self._mux_seg = Seg(names, kind="compact", parent=self._mux_block)
         layout.addWidget(self._mux_seg)
@@ -146,16 +154,17 @@ class ProfileSection(QWidget):
         self.profile_selected.emit(index)
 
     def set_selected_fan_mode(self, mode: str):
+        keys = [m[0] for m in self._fan_modes]
+        if mode not in keys:
+            return
         self._selected_fan_mode = mode
-        keys = [m[0] for m in FAN_MODES]
-        try:
-            self._fan_links.select(keys.index(mode), True)
-        except ValueError:
-            pass
+        self._fan_links.select(keys.index(mode), True)
         self._curve_row.setVisible(mode == "custom")
 
     def _on_fan_link(self, index: int):
-        mode = FAN_MODES[index][0]
+        if index < 0 or index >= len(self._fan_modes):
+            return
+        mode = self._fan_modes[index][0]
         if mode == self._selected_fan_mode:
             if mode == "custom":
                 self.fan_curves_requested.emit()
