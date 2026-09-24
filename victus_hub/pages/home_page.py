@@ -10,6 +10,7 @@ from PySide6.QtCore import Qt, Signal
 from victus_hub.widgets.profile_section import LOCAL_MUX, ProfileSection
 from victus_hub.widgets.chrome import PageHead, BigMetric, FooterBar, hairline
 from victus_hub.app.theme import COLORS, mode_name, ui_font
+from victus_hub.backend.power_supply import power_status_text
 from victus_hub.features.keyboard.lighting import (
     lighting_frames,
     normalize_lighting_settings,
@@ -141,11 +142,14 @@ class HomePage(QWidget):
 
         self._footer = FooterBar()
         self._footer.set_left("HP Laptop")
-        self._footer.set_right("v1.0.1")
         layout.addWidget(self._footer)
 
         self.refresh_power()
         self.refresh_lighting()
+        self.refresh_power_status()
+
+    def refresh_power_status(self) -> None:
+        self._footer.set_right(power_status_text())
 
     def update_sensor_data(self, snapshot):
         """Refresh the four home readings from a sensor snapshot."""

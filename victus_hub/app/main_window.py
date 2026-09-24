@@ -446,6 +446,7 @@ class MainWindow(QMainWindow):
     # ── Sensor polling ──
 
     def _poll_sensors(self):
+        self._home_page.refresh_power_status()
         try:
             snapshot = api.read_sensors()
         except Exception:

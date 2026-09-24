@@ -162,6 +162,13 @@ class SettingsRow(QWidget):
         self._sub.setVisible(bool(text))
 
 
+def footer_label(text: str = "") -> QLabel:
+    label = QLabel(text)
+    label.setFont(mono_font(11))
+    label.setStyleSheet(f"color: {COLORS['foot']}; background: transparent;")
+    return label
+
+
 class FooterBar(QWidget):
     """Hairline, green heartbeat, mono left/right — Ohman's page foot."""
 
@@ -177,14 +184,10 @@ class FooterBar(QWidget):
         self._dot = QLabel("●")
         self._dot.setStyleSheet(f"color: {COLORS['ok']}; background: transparent; font-size: 8px;")
         row.addWidget(self._dot, 0, Qt.AlignVCenter)
-        self._left = QLabel("")
-        self._left.setFont(mono_font(11))
-        self._left.setStyleSheet(f"color: {COLORS['foot']}; background: transparent;")
+        self._left = footer_label()
         row.addWidget(self._left)
         row.addStretch()
-        self._right = QLabel("")
-        self._right.setFont(mono_font(11))
-        self._right.setStyleSheet(f"color: {COLORS['foot']}; background: transparent;")
+        self._right = footer_label()
         row.addWidget(self._right)
         col.addLayout(row)
 

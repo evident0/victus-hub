@@ -21,7 +21,7 @@ from victus_hub.features.keyboard.shortcut import (
     read_keybind_settings,
 )
 from victus_hub import api
-from victus_hub.widgets.chrome import PageHead, SettingsRow, hairline
+from victus_hub.widgets.chrome import PageHead, SettingsRow, footer_label, hairline
 from victus_hub.widgets.toggle_switch import ToggleSwitch
 from victus_hub.services.battery_power import BATTERY_POWER_SAVE_KEY
 
@@ -236,8 +236,10 @@ class SettingsPage(QWidget):
         outer.addWidget(scroll, 1)
 
         foot = QWidget()
+        foot.setObjectName("settingsFooter")
         foot.setStyleSheet(
-            f"background-color: {COLORS['bg']}; border-top: 1px solid {COLORS['line']};"
+            f"QWidget#settingsFooter {{ background-color: {COLORS['bg']}; "
+            f"border-top: 1px solid {COLORS['line']}; }}"
         )
         fl = QHBoxLayout(foot)
         fl.setContentsMargins(24, 16, 24, 16)
@@ -252,6 +254,7 @@ class SettingsPage(QWidget):
         )
         fl.addWidget(self._diag_btn)
         fl.addStretch()
+        fl.addWidget(footer_label("v1.0.1"))
         outer.addWidget(foot)
 
     def set_shortcut_controller(self, ctrl) -> None:
