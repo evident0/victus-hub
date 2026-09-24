@@ -18,8 +18,8 @@ from victus_hub.backend.shortcut_policy import validate_shortcut
 from victus_hub.backend.fan_config import config_from_dict
 from victus_hub.backend.rapl import RaplPowerSampler
 from victus_hub.features.keyboard.lighting import lighting_from_dict, lighting_to_dict
-from victus_hubd import cpufreq, intel, ryzenadj, sysfs
-from victus_hubd.auth import Peer, authenticate
+from victus_hubd import cpufreq, desktop_activation, intel, ryzenadj, sysfs
+from victus_hubd.auth import Peer, active_desktop_peer, authenticate
 from victus_hubd.runtime import Runtime
 from victus_hubd.state import power_from_dict, state_to_dict
 
@@ -54,21 +54,20 @@ _kbd_thread: threading.Thread | None = None
 
 # Held modifiers are used locally; ordinary keypresses are never retained.
 _held_mods: set[int] = set()
-_kbd_subscribers: dict[socket.socket, tuple[Peer, tuple[int, ...], int]] = {}
+_kbd_subscribers: dict[socket.socket, Peer] = {}
 _kbd_subscribers_lock = threading.Lock()
 _runtime: Runtime | None = None
+_activation_lock = threading.Lock()
 MAX_REQUEST_BYTES = 64 * 1024
 MAX_CLIENTS = 32
 _client_slots = threading.BoundedSemaphore(MAX_CLIENTS)
 
 
-def _publish_line(payload: bytes, shortcut: tuple[tuple[int, ...], int] | None = None) -> None:
+def _publish_line(payload: bytes) -> None:
     """Authorize delivery, then send without waiting on a slow client."""
     with _kbd_subscribers_lock:
         subscribers = tuple(_kbd_subscribers.items())
-    for stream, (peer, mods, key) in subscribers:
-        if shortcut is not None and shortcut != (mods, key):
-            continue
+    for stream, peer in subscribers:
         # Recheck on delivery: an existing connection must not bypass a lock
         # screen or fast user switch. No key events are queued for later.
         if not peer.authorized():
@@ -89,26 +88,45 @@ def _publish_line(payload: bytes, shortcut: tuple[tuple[int, ...], int] | None =
                 pass
 
 
-def _publish_shortcut(mods: tuple[int, ...], key: int) -> None:
-    """Only emit a named activation for the client's registered shortcut."""
-    _publish_line(b"SHORTCUT\n", (mods, key))
-
-
 def _publish_lighting(settings) -> None:
     """Push the lighting policy that a hardware shortcut just applied."""
     body = json.dumps(lighting_to_dict(settings), separators=(",", ":"))
     _publish_line(f"LIGHTING\t{body}\n".encode())
 
 
-def _stream_shortcut_events(stream: socket.socket, peer: Peer, body: str) -> None:
-    """Subscribe until disconnect; never replay the last (possibly stale) key."""
-    payload = _parse_json_object(body, "shortcut")
-    mods, key = validate_shortcut(payload.get("mods", []), payload.get("key", 0))
+def _start_activation(press: tuple[tuple[int, ...], int]) -> None:
+    """Start one activation on demand; coalesce presses until it finishes."""
+    if not _activation_lock.acquire(blocking=False):
+        return
+    try:
+        threading.Thread(target=_activate_once, args=(press,), daemon=True,
+                         name="ui-activation").start()
+    except RuntimeError:
+        _activation_lock.release()
+        logger.exception("could not start program shortcut activation")
+
+
+def _activate_once(press: tuple[tuple[int, ...], int]) -> None:
+    """Perform this keypress's session lookup and D-Bus call off evdev."""
+    try:
+        peer = active_desktop_peer()
+        runtime = _runtime
+        if peer is not None and runtime is not None:
+            if runtime.program_shortcuts.get(peer.uid) == press and press[1] != 0:
+                desktop_activation.activate(peer)
+    except Exception:
+        logger.exception("program shortcut activation failed")
+    finally:
+        _activation_lock.release()
+
+
+def _stream_shortcut_events(stream: socket.socket, peer: Peer) -> None:
+    """Stream lighting changes; launch shortcuts are daemon-owned."""
     try:
         with _kbd_subscribers_lock:
             stream.sendall(b"OK\tshortcut-events\n")
             stream.setblocking(False)
-            _kbd_subscribers[stream] = (peer, mods, key)
+            _kbd_subscribers[stream] = peer
         # The client sends no more requests. This blocks until it disconnects.
         while True:
             readable, _, _ = select.select([stream], [], [], 1)
@@ -144,15 +162,16 @@ def _record_key_event(code: int, value: int) -> None:
                 runtime.handle_key(press[0], press[1])
             except Exception:
                 logger.exception("hardware shortcut failed")
-        _publish_shortcut(*press)
+            if runtime.program_shortcuts.matches_any(*press):
+                _start_activation(press)
 
 
 def _kbd_watcher_loop() -> None:
     """Read keyboard events from the built-in keyboard + WMI hotkeys device.
 
     Tracks the idle time (for keyboard-backlight dimming) and, for the
-    program-shortcut feature, the set of currently-held modifiers plus the
-    last non-modifier keypress (with the modifiers held at that moment).
+    program-shortcut feature, the currently-held modifiers at each physical
+    non-modifier press. Activation runs only on matching presses.
 
     Watches both the i8042 AT keyboard (ordinary keys + combos) and the
     "HP WMI hotkeys" device (where the OMEN key surfaces).  Retries device
@@ -341,6 +360,7 @@ def _make_dispatch(
     sampler: RaplPowerSampler,
     sampler_lock: threading.Lock | None,
     runtime: Runtime | None = None,
+    peer: Peer | None = None,
 ):
     """Build the (prefix -> handler) table for the request dispatch.
 
@@ -534,6 +554,14 @@ def _make_dispatch(
         result = _require_runtime().set_hardware_shortcuts(enabled)
         return protocol.format_status_response((True, result))
 
+    def _program_shortcut(body: str) -> str:
+        if peer is None:
+            raise RuntimeError("a desktop user is required")
+        payload = _parse_json_object(body, "program-shortcut")
+        mods, key = validate_shortcut(payload.get("mods"), payload.get("key"))
+        _require_runtime().program_shortcuts.set(peer.uid, mods, key)
+        return protocol.format_status_response((True, "program-shortcut"))
+
     def _disable_nvidia_queries(body: str) -> str:
         enabled = _parse_int(body, "disable-nvidia-queries") != 0
         result = _require_runtime().set_disable_nvidia_queries(enabled)
@@ -587,6 +615,7 @@ def _make_dispatch(
         ("cpu-frequency-limits\t", _cpu_frequency_limits),
         ("battery-power-save\t", _battery_power_save),
         ("hardware-shortcuts\t", _hardware_shortcuts),
+        ("program-shortcut\t", _program_shortcut),
         ("disable-nvidia-queries\t", _disable_nvidia_queries),
         ("set-profile\t", _set_profile),
         ("get-state", _get_state),
@@ -634,10 +663,10 @@ def _handle_request(stream, sampler, sampler_lock, runtime, peer):
         raise RuntimeError("access denied: session is no longer active and unlocked")
     if request in {"prepare-sleep", "resume"} and peer.uid != 0:
         raise RuntimeError("access denied: sleep hooks require root")
-    if request.startswith("shortcut-events\t"):
-        _stream_shortcut_events(stream, peer, request.split("\t", 1)[1])
+    if request == "shortcut-events":
+        _stream_shortcut_events(stream, peer)
         return
-    dispatch = _make_dispatch(sampler, sampler_lock, runtime)
+    dispatch = _make_dispatch(sampler, sampler_lock, runtime, peer)
     matched_prefix: str | None = None
     handler = None
     for prefix, h in dispatch:

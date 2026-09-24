@@ -37,6 +37,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         api.start_sensor_reader()
         api.sync_settings_with_daemon()
+        api.sync_program_shortcut()
         self._capabilities = api.get_hardware_capabilities()
         self.setWindowTitle("Victus Hub")
         self.resize(self._PAGE_WIDTH[0], self._WINDOW_HEIGHT)
@@ -163,9 +164,8 @@ class MainWindow(QMainWindow):
         QApplication.instance().aboutToQuit.connect(self._profile_watcher.stop)
 
 
-        # Program shortcut (global hotkey to unhide/restore the window)
+        # Capture configured keys and receive daemon lighting updates.
         self._shortcut = ShortcutController(self)
-        self._shortcut.triggered.connect(self._show_all_windows)
         self._shortcut.lighting_changed.connect(self._on_daemon_lighting)
         self._settings_page.hardware_shortcuts_changed.connect(self._shortcut.set_hardware_enabled)
         self._settings_page.hardware_shortcuts_changed.connect(api.set_hardware_shortcuts)

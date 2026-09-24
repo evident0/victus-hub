@@ -3,7 +3,7 @@
 preflight() {
 	local app_only=${1:-0} kernel missing=() tool packages
 	kernel=$(uname -r)
-	for tool in python3 systemctl loginctl; do
+	for tool in python3 systemctl loginctl gdbus; do
 		command -v "$tool" >/dev/null 2>&1 || missing+=("$tool")
 	done
 	if [ "$(id -u)" -ne 0 ]; then
@@ -49,14 +49,14 @@ preflight() {
 	printf 'Install prerequisites yourself, then rerun the installer. Missing requirements:\n' >&2
 	printf '  - %s\n' "${missing[@]}" >&2
 	if command -v apt-get >/dev/null 2>&1; then
-		packages="python3 python3-venv libsystemd0 libegl1 libgl1 libxkbcommon0 libxkbcommon-x11-0 libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-render-util0 libxcb-xinerama0"
+		packages="python3 python3-venv libsystemd0 libglib2.0-bin libegl1 libgl1 libxkbcommon0 libxkbcommon-x11-0 libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-render-util0 libxcb-xinerama0"
 		[ "$app_only" -eq 1 ] || packages+=" git build-essential dkms linux-headers-$kernel mokutil openssl cmake pkg-config libpci-dev"
 		printf '\nUbuntu/Mint/Debian package names (install the missing ones):\n  sudo apt install %s\n' "$packages" >&2
 	elif command -v pacman >/dev/null 2>&1; then
-		printf '\nArch package names (install the missing ones):\n  sudo pacman -S --needed python systemd mesa libglvnd libxkbcommon libxkbcommon-x11 xcb-util-cursor xcb-util-wm xcb-util-image xcb-util-keysyms xcb-util-renderutil libxcb\n' >&2
+		printf '\nArch package names (install the missing ones):\n  sudo pacman -S --needed python systemd glib2 mesa libglvnd libxkbcommon libxkbcommon-x11 xcb-util-cursor xcb-util-wm xcb-util-image xcb-util-keysyms xcb-util-renderutil libxcb\n' >&2
 		[ "$app_only" -eq 1 ] || printf '  sudo pacman -S --needed base-devel git dkms linux-headers mokutil openssl cmake pciutils\nUse linux-lts-headers/linux-zen-headers instead if that is your kernel.\n' >&2
 	elif command -v dnf >/dev/null 2>&1; then
-		printf '\nFedora package names (install the missing ones):\n  sudo dnf install python3 python3-pip systemd-libs mesa-libEGL libglvnd-glx libxkbcommon libxkbcommon-x11 xcb-util-cursor xcb-util-wm xcb-util-image xcb-util-keysyms xcb-util-renderutil libxcb\n' >&2
+		printf '\nFedora package names (install the missing ones):\n  sudo dnf install python3 python3-pip systemd-libs glib2 mesa-libEGL libglvnd-glx libxkbcommon libxkbcommon-x11 xcb-util-cursor xcb-util-wm xcb-util-image xcb-util-keysyms xcb-util-renderutil libxcb\n' >&2
 		[ "$app_only" -eq 1 ] || printf '  sudo dnf install git gcc gcc-c++ make binutils dkms kernel-devel-%s mokutil openssl cmake pkgconf-pkg-config pciutils-devel\n' "$kernel" >&2
 	else
 		printf '\nUse your distribution package manager to install the requirements listed above.\n' >&2

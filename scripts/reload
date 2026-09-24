@@ -17,43 +17,62 @@ fi
 bash "$ROOT_DIR/scripts/install" --app-only
 
 printf 'Restarting Victus Hub...\n'
-# Identify the UI through its single-instance socket, rather than matching
-# process names (which could also match the daemon or another user's UI).
+# Identify the UI by the application name on this user's session bus.
 python3 - <<'PY'
 import os
+import re
 import select
 import signal
 import socket
 import struct
+import subprocess
 import tempfile
 
-path = os.path.join(
-    os.environ.get("XDG_RUNTIME_DIR") or tempfile.gettempdir(),
-    "victus-hub-single-instance.sock",
+result = subprocess.run(
+    ["gdbus", "call", "--session", "--dest", "org.freedesktop.DBus",
+     "--object-path", "/org/freedesktop/DBus",
+     "--method", "org.freedesktop.DBus.GetConnectionUnixProcessID",
+     "io.github.evident0.VictusHub"],
+    capture_output=True, text=True, timeout=2,
 )
-with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
-    sock.settimeout(2)
+if result.returncode:
+    # An older UI may still own the pre-D-Bus single-instance socket during
+    # the first reload after upgrading. Stop it before starting the new UI.
+    path = os.path.join(os.environ.get("XDG_RUNTIME_DIR") or tempfile.gettempdir(),
+                        "victus-hub-single-instance.sock")
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
+        sock.settimeout(2)
+        try:
+            sock.connect(path)
+        except (FileNotFoundError, ConnectionRefusedError):
+            raise SystemExit(0)
+        pid, uid, _ = struct.unpack(
+            "3i", sock.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED,
+                                   struct.calcsize("3i"))
+        )
+else:
+    match = re.search(r"uint32 (\d+)", result.stdout)
+    if match is None:
+        raise SystemExit("Could not identify the running Victus Hub UI.")
+    pid = int(match.group(1))
     try:
-        sock.connect(path)
-    except (FileNotFoundError, ConnectionRefusedError):
+        uid = os.stat(f"/proc/{pid}").st_uid
+    except FileNotFoundError:
         raise SystemExit(0)
-    pid, uid, _ = struct.unpack(
-        "3i", sock.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize("3i"))
-    )
-    if uid != os.getuid():
-        raise SystemExit("The running UI belongs to another user; refusing to stop it.")
-    try:
-        pidfd = os.pidfd_open(pid)
-    except ProcessLookupError:
-        raise SystemExit(0)
-    try:
-        signal.pidfd_send_signal(pidfd, signal.SIGTERM)
-        if not select.select([pidfd], [], [], 10)[0]:
-            raise SystemExit("Victus Hub did not exit within 10 seconds; close it and retry.")
-    except ProcessLookupError:
-        pass
-    finally:
-        os.close(pidfd)
+if uid != os.getuid():
+    raise SystemExit("The running UI belongs to another user; refusing to stop it.")
+try:
+    pidfd = os.pidfd_open(pid)
+except ProcessLookupError:
+    raise SystemExit(0)
+try:
+    signal.pidfd_send_signal(pidfd, signal.SIGTERM)
+    if not select.select([pidfd], [], [], 10)[0]:
+        raise SystemExit("Victus Hub did not exit within 10 seconds; close it and retry.")
+except ProcessLookupError:
+    pass
+finally:
+    os.close(pidfd)
 PY
 
 exec /usr/local/bin/victus-hub

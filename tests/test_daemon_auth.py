@@ -85,14 +85,16 @@ class TestDaemonBoundary(unittest.TestCase):
             response, _ = self.request(command)
             self.assertIn(b"sleep hooks require root", response)
 
-    def test_unmodified_typing_cannot_be_registered(self):
+    def test_program_shortcuts_cannot_subscribe_to_lighting_stream(self):
         response, _ = self.request(b'shortcut-events\t{"mods": [], "key": 30}\n')
-        self.assertIn(b"Ctrl, Alt or Super", response)
+        self.assertIn(b"unsupported request", response)
         for mods in ([], [42], [464]):
             with self.assertRaises(RuntimeError):
                 validate_shortcut(mods, 30)
         self.assertEqual(validate_shortcut([], 149), ((), 149))
         self.assertEqual(validate_shortcut([29, 42], 30), ((29, 42), 30))
+        response, _ = self.request(b'shortcut-events\t{"mods": [], "key": 149}\n')
+        self.assertIn(b'unsupported request', response)
 
     def test_oversized_and_multiline_requests_are_rejected(self):
         with patch.object(daemon, "MAX_REQUEST_BYTES", 100):
@@ -102,25 +104,24 @@ class TestDaemonBoundary(unittest.TestCase):
         self.assertIn(b"one request", response)
         self.assertEqual(writes, 0)
 
-    def test_stream_filters_keys_and_rechecks_lock_state(self):
+    def test_lighting_stream_rechecks_lock_state(self):
         client, server = socket.socketpair()
         client.settimeout(0.05)
         peer = Mock()
         peer.authorized.return_value = True
-        with patch.object(daemon, "_kbd_subscribers", {server: (peer, (), 149)}):
+        from victus_hub.features.keyboard.lighting import LightingSettings
+
+        with patch.object(daemon, "_kbd_subscribers", {server: peer}):
             try:
-                daemon._publish_shortcut((), 30)
-                with self.assertRaises(socket.timeout):
-                    client.recv(100)
-                daemon._publish_shortcut((), 149)
-                self.assertEqual(client.recv(100), b"SHORTCUT\n")
+                daemon._publish_lighting(LightingSettings(enabled=True, brightness=64))
+                self.assertTrue(client.recv(1024).startswith(b"LIGHTING\t"))
                 peer.authorized.return_value = False
-                daemon._publish_shortcut((), 149)
+                daemon._publish_lighting(LightingSettings(enabled=True, brightness=64))
                 with self.assertRaises(socket.timeout):
-                    client.recv(100)
+                    client.recv(1024)
                 peer.authorized.return_value = True
-                daemon._publish_shortcut((), 149)
-                self.assertEqual(client.recv(100), b"SHORTCUT\n")
+                daemon._publish_lighting(LightingSettings(enabled=True, brightness=64))
+                self.assertTrue(client.recv(1024).startswith(b"LIGHTING\t"))
             finally:
                 client.close()
                 server.close()

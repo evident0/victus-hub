@@ -226,6 +226,13 @@ def request_hardware_shortcuts(enabled: bool) -> str:
     return protocol.parse_status_response(response)
 
 
+def request_program_shortcut(mods: tuple[int, ...], key: int) -> str:
+    response = _request_daemon(
+        f"program-shortcut\t{_json_body({'mods': mods, 'key': key})}\n", missing_ok=True,
+    )
+    return protocol.parse_status_response(response)
+
+
 def request_disable_nvidia_queries(enabled: bool) -> str:
     response = _request_daemon(
         f"disable-nvidia-queries\t{int(enabled)}\n", missing_ok=True,

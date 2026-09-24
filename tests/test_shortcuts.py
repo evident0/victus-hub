@@ -17,8 +17,7 @@ from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
 from victus_hub.features.keyboard.shortcut import (
-    HARDWARE_SHORTCUTS_KEY, KEY_FN, KEY_LEFTCTRL, KEY_LEFTSHIFT,
-    KEY_RIGHTCTRL, KEY_RIGHTSHIFT, KeybindSettings,
+    HARDWARE_SHORTCUTS_KEY, KEY_LEFTCTRL, KEY_LEFTSHIFT,
 )
 from victus_hub.features.keyboard.lighting import LightingSettings
 from victus_hub.services.shortcut_controller import ShortcutController
@@ -53,9 +52,9 @@ class TestShortcutStream(QtTestCase):
         for patcher in (
             patch("victus_hub.services.shortcut_controller.SOCKET_PATH", path),
             patch("victus_hub.services.shortcut_controller.QSettings", return_value=self.settings),
-            patch("victus_hub.services.shortcut_controller.read_keybind_settings",
-                  return_value=KeybindSettings(key=149)),
             patch.object(daemon, "_held_mods", set()),
+            patch.object(daemon, "_runtime", None),
+            patch.object(daemon, "_kbd_subscribers", {}),
             patch.object(daemon, "authenticate", return_value=Mock(authorized=lambda: True)),
         ):
             patcher.start()
@@ -65,9 +64,7 @@ class TestShortcutStream(QtTestCase):
         self.controller = ShortcutController()
         self.addCleanup(self.close_client)
         self.lighting = []
-        self.triggered = Mock()
         self.controller.lighting_changed.connect(self.lighting.append)
-        self.controller.triggered.connect(self.triggered)
         self.wait_for(lambda: self.controller._subscribed)
 
     def serve(self):
@@ -85,7 +82,8 @@ class TestShortcutStream(QtTestCase):
         daemon._record_key_event(code, 1)
         daemon._record_key_event(code, 0)
 
-    def test_burst_delivers_each_action_without_timers(self):
+    def test_ui_stream_only_subscribes_for_lighting(self):
+        self.wait_for(lambda: len(daemon._kbd_subscribers) == 1)
         daemon._record_key_event(KEY_LEFTCTRL, 1)
         daemon._record_key_event(KEY_LEFTSHIFT, 1)
         for code in (103, 103, 108, 105, 106, 50):
@@ -93,7 +91,7 @@ class TestShortcutStream(QtTestCase):
         daemon._record_key_event(KEY_LEFTSHIFT, 0)
         daemon._record_key_event(KEY_LEFTCTRL, 0)
         self.press(149)
-        self.wait_for(lambda: self.triggered.call_count == 1)
+        QTest.qWait(20)
         self.assertEqual(self.lighting, [])
         self.assertEqual(self.controller.findChildren(QTimer), [])
 
@@ -103,7 +101,7 @@ class TestShortcutStream(QtTestCase):
         self.assertEqual(self.lighting[0].brightness, 128)
         self.assertTrue(self.lighting[0].enabled)
 
-    def test_plain_keys_disabled_shortcuts_and_repeat_are_ignored(self):
+    def test_hardware_shortcuts_toggle_stays_independent(self):
         for code in (103, 108, 105, 106, 50):
             self.press(code)
         self.controller.set_hardware_enabled(False)
@@ -113,8 +111,6 @@ class TestShortcutStream(QtTestCase):
         daemon._record_key_event(103, 2)
         daemon._record_key_event(KEY_LEFTSHIFT, 0)
         daemon._record_key_event(KEY_LEFTCTRL, 0)
-        self.press(149)  # ordering barrier and existing program shortcut
-        self.wait_for(lambda: self.triggered.call_count == 1)
         self.assertEqual(self.lighting, [])
         self.assertFalse(self.settings.value(HARDWARE_SHORTCUTS_KEY, type=bool))
 
@@ -130,26 +126,7 @@ class TestShortcutStream(QtTestCase):
         self.assertEqual(self.lighting, [])
         self.assertFalse(self.controller.is_capturing())
 
-    def test_fn_incomplete_right_hand_and_extra_modifiers_are_ignored(self):
-        for mods in (
-            (KEY_FN,), (KEY_LEFTCTRL,), (KEY_LEFTSHIFT,),
-            (KEY_RIGHTCTRL, KEY_LEFTSHIFT), (KEY_LEFTCTRL, KEY_RIGHTSHIFT),
-            (KEY_RIGHTCTRL, KEY_RIGHTSHIFT),
-            (KEY_LEFTCTRL, KEY_LEFTSHIFT, KEY_FN),
-        ):
-            for mod in mods:
-                daemon._record_key_event(mod, 1)
-            for code in (103, 108, 105, 106, 50):
-                self.press(code)
-            for mod in mods:
-                daemon._record_key_event(mod, 0)
-        self.press(149)
-        self.wait_for(lambda: self.triggered.call_count == 1)
-        self.assertEqual(self.lighting, [])
-
-    def test_stream_reconnects_after_disconnect_without_replaying_keys(self):
-        self.press(149)
-        self.wait_for(lambda: self.triggered.call_count == 1)
+    def test_stream_reconnects_after_disconnect_for_lighting(self):
         old_connection = self.connection
         old_worker = self.worker
         old_connection.shutdown(socket.SHUT_RDWR)
@@ -158,8 +135,9 @@ class TestShortcutStream(QtTestCase):
         self.worker = threading.Thread(target=self.serve, daemon=True)
         self.worker.start()
         self.wait_for(lambda: self.connection is not old_connection and self.controller._subscribed)
-        self.press(149)
-        self.wait_for(lambda: self.triggered.call_count == 2)
+        daemon._publish_lighting(LightingSettings(enabled=True, brightness=64))
+        self.wait_for(lambda: len(self.lighting) == 1)
+        self.assertEqual(self.lighting[0].brightness, 64)
 
 
 class TestKeyboardShortcutActions(QtTestCase):

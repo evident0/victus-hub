@@ -2,10 +2,14 @@
 
 import sys
 
+from PySide6.QtDBus import QDBusConnection
 from PySide6.QtWidgets import QApplication
 
+from victus_hub.app.activation import (
+    BUS_NAME, OBJECT_PATH, ApplicationService, notify_existing_instance,
+    request_activation,
+)
 from victus_hub.app.main_window import MainWindow
-from victus_hub.app.single_instance import SingleInstanceGuard, default_socket_path
 from victus_hub.app.theme import load_fonts, stylesheet, ui_font
 from victus_hub.backend.session_log import install as install_session_log
 from victus_hub.logging_config import configure_terminal_logging
@@ -40,23 +44,24 @@ def main():
             ctypes.byref(ctypes.c_int(1)),
             ctypes.sizeof(ctypes.c_int),
         )
-    # ── Single-instance guard ──
-    # A second launch connects to this socket, sends "raise", and exits;
-    # we (the primary) receive it and bring our windows to the front.
-    guard = SingleInstanceGuard(default_socket_path())
-    if not guard.claim():
-        # We were a secondary launch; the primary has already been notified.
-        app.quit()
-        return
+    bus = QDBusConnection.sessionBus()
+    if not bus.isConnected():
+        raise RuntimeError("Victus Hub needs an active desktop session bus")
+    service = ApplicationService()
+    if not bus.registerObject(OBJECT_PATH, service, QDBusConnection.RegisterOption.ExportAllSlots):
+        raise RuntimeError(f"Could not register Victus Hub D-Bus object: {bus.lastError().message()}")
+    if not bus.registerService(BUS_NAME):
+        bus.unregisterObject(OBJECT_PATH)
+        if request_activation(bus):
+            notify_existing_instance()
+            return
+        raise RuntimeError(f"Could not claim Victus Hub D-Bus name: {bus.lastError().message()}")
 
     window = MainWindow()
     window.show()
 
-    guard.raise_requested.connect(window._show_all_windows)
-    guard.flush_pending()
-
-    # Keep the guard alive for the whole app lifetime.
-    app.setProperty("__single_instance_guard", guard)
+    service.activate_requested.connect(window._show_all_windows)
+    service.flush_pending()
 
     sys.exit(app.exec())
 

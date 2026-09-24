@@ -47,6 +47,7 @@ SLEEP_DST="/usr/lib/systemd/system-sleep/victus-hub"
 SOCKET_RUNTIME_DIR="/run/victus-hubd"
 STATE_DIR="/var/lib/victus-hubd"
 DESKTOP_DST="/usr/share/applications/victus-hub.desktop"
+DBUS_SERVICE_DST="/usr/share/dbus-1/services/io.github.evident0.VictusHub.service"
 HP_WMI_KMOD_UNINSTALL="$ROOT_DIR/kernel/hp-wmi/scripts/uninstall"
 KBD_RGB_KMOD_UNINSTALL="$ROOT_DIR/kernel/hp-kbd-rgb/scripts/uninstall"
 RYZENADJ_UNINSTALL="$ROOT_DIR/scripts/ryzenadj-uninstall"
@@ -89,6 +90,7 @@ pip_uninstall() (
 
 # ── 1. Desktop entries + icons ──
 printf '\033[1;34m── Removing desktop entries + icon ──\033[0m\n'
+remove_path "$DBUS_SERVICE_DST"
 if [ -f "$DESKTOP_DST" ]; then
 	printf 'Removing %s\n' "$DESKTOP_DST"
 	"${SUDO[@]}" rm -f "$DESKTOP_DST"

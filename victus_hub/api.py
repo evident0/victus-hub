@@ -331,6 +331,31 @@ def set_hardware_shortcuts(enabled: bool) -> None:
     )
 
 
+def set_program_shortcut(settings) -> None:
+    """Persist this user's launch key in the daemon before saving it locally."""
+    from victus_hub.features.keyboard.shortcut import write_keybind_settings
+
+    mods, key = (settings.mods, settings.key) if settings.enabled else ((), 0)
+    daemon_client.request_program_shortcut(mods, key)
+    write_keybind_settings(settings)
+
+
+def sync_program_shortcut() -> None:
+    """Keep the daemon's durable copy current, including after an upgrade."""
+    from victus_hub.features.keyboard.shortcut import read_keybind_settings, write_keybind_settings
+
+    try:
+        settings = read_keybind_settings()
+        migrate = bool(settings.key and not settings.enabled)
+        mods, key = (settings.mods, settings.key) if settings.enabled or migrate else ((), 0)
+        daemon_client.request_program_shortcut(mods, key)
+        if migrate:
+            settings.enabled = True  # Older settings stored a key without this flag.
+            write_keybind_settings(settings)
+    except RuntimeError as error:
+        logger.warning("sync program shortcut: %s", error)
+
+
 def set_disable_nvidia_queries(enabled: bool) -> None:
     from victus_hub.backend.nvidia import set_nvidia_queries_disabled
 

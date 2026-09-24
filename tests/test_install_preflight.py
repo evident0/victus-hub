@@ -56,6 +56,7 @@ class TestPreflight(unittest.TestCase):
                 (self.bin / manager).unlink()
 
     def test_app_only_does_not_require_build_dependencies(self):
+        self.command("gdbus", "exit 0")
         result = self.run_check(1)
         self.assertEqual(result.returncode, 0, result.stderr)
 

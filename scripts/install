@@ -49,6 +49,7 @@ SOCKET_PATH="/run/victus-hubd/victus-hub.sock"
 ICON_SRC="$ROOT_DIR/victus_hub/resources/icons/logoV.png"
 ICON_DST="/usr/share/icons/hicolor/1024x1024/apps/victus-hub.png"
 DESKTOP_DST="/usr/share/applications/victus-hub.desktop"
+DBUS_SERVICE_DST="/usr/share/dbus-1/services/io.github.evident0.VictusHub.service"
 
 if [ "$(id -u)" -eq 0 ]; then
 	SUDO=()
@@ -162,6 +163,7 @@ VICTUS_HUB_BIN="$(readlink -f "$VICTUS_HUB_BIN")"
 printf 'Resolved victus-hub to %s\n' "$VICTUS_HUB_BIN"
 
 printf 'Installing desktop entry to %s\n' "$DESKTOP_DST"
+"${SUDO[@]}" install -d -m755 "$(dirname "$DBUS_SERVICE_DST")"
 "${SUDO[@]}" tee "$DESKTOP_DST" >/dev/null <<DESKTOP
 [Desktop Entry]
 Type=Application
@@ -172,6 +174,13 @@ Icon=victus-hub
 Terminal=false
 Categories=System;Utility;
 DESKTOP
+
+"${SUDO[@]}" tee "$DBUS_SERVICE_DST" >/dev/null <<DBUS
+[D-BUS Service]
+Name=io.github.evident0.VictusHub
+Exec=env QT_QPA_PLATFORM=xcb VICTUS_HUB_DEBUG_LEVEL=0 $VICTUS_HUB_BIN
+DBUS
+"${SUDO[@]}" chmod 644 "$DBUS_SERVICE_DST"
 
 "${SUDO[@]}" update-desktop-database /usr/share/applications 2>/dev/null || true
 

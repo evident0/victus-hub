@@ -19,8 +19,8 @@ from victus_hub.features.keyboard.shortcut import (
     keybind_from_event,
     keybind_label,
     read_keybind_settings,
-    write_keybind_settings,
 )
+from victus_hub import api
 from victus_hub.widgets.chrome import PageHead, SettingsRow, hairline
 from victus_hub.widgets.toggle_switch import ToggleSwitch
 from victus_hub.services.battery_power import BATTERY_POWER_SAVE_KEY
@@ -203,9 +203,6 @@ class SettingsPage(QWidget):
 
         self._shortcut_ctrl = None
         self._kb = read_keybind_settings()
-        if self._kb.key != 0 and not self._kb.enabled:
-            self._kb = KeybindSettings(enabled=True, mods=self._kb.mods, key=self._kb.key)
-            write_keybind_settings(self._kb)
 
         kb_ctrl = QWidget()
         kb_l = QHBoxLayout(kb_ctrl)
@@ -298,22 +295,30 @@ class SettingsPage(QWidget):
         )
 
     def _on_shortcut_captured(self, mods, key: int):
-        self._kb = keybind_from_event(mods, key)
-        self._kb = KeybindSettings(enabled=True, mods=self._kb.mods, key=self._kb.key)
-        write_keybind_settings(self._kb)
+        if not self._save_shortcut(keybind_from_event(mods, key)):
+            return
         self._finish_capture()
         self._kb_clear_btn.setEnabled(True)
-        if self._shortcut_ctrl is not None:
-            self._shortcut_ctrl.reload_settings()
 
     def _on_clear_shortcut(self):
-        self._kb = KeybindSettings(enabled=False, mods=(), key=0)
-        write_keybind_settings(self._kb)
+        if not self._save_shortcut(KeybindSettings(enabled=False, mods=(), key=0)):
+            return
         self._finish_capture()
         self._kb_clear_btn.setEnabled(False)
         if self._shortcut_ctrl is not None:
             self._shortcut_ctrl.cancel_capture()
-            self._shortcut_ctrl.reload_settings()
+
+    def _save_shortcut(self, settings: KeybindSettings) -> bool:
+        try:
+            api.set_program_shortcut(settings)
+        except RuntimeError as error:
+            if self._shortcut_ctrl is not None:
+                self._shortcut_ctrl.cancel_capture()
+            self._finish_capture()
+            QMessageBox.warning(self, "Program shortcut", f"Could not save shortcut:\n{error}")
+            return False
+        self._kb = settings
+        return True
 
     def _on_generate_diagnostics(self) -> None:
         try:

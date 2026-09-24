@@ -24,6 +24,7 @@ from victus_hub.features.keyboard.lighting import (
 )
 from victus_hub.services.fan_control import FanController, FanIO
 from victus_hubd import cpufreq, host, intel, ryzenadj, sysfs
+from victus_hubd.program_shortcuts import ProgramShortcuts
 from victus_hubd.state import DaemonState, PowerPolicy, load_state, save_state
 
 logger = logging.getLogger(__name__)
@@ -40,6 +41,7 @@ class Runtime:
         self._lock = threading.Lock()
         self._hardware_lock = threading.RLock()
         self._state = load_state()
+        self.program_shortcuts = ProgramShortcuts()
         self._stop = threading.Event()
         self._suspend = threading.Event()
         self._light_wake = threading.Event()

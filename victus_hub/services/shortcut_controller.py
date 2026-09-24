@@ -1,4 +1,4 @@
-"""Global shortcuts driven by the daemon's push stream, without key polling."""
+"""Capture program keybinds in the UI and receive daemon lighting changes."""
 
 import json
 import logging
@@ -11,22 +11,18 @@ from PySide6.QtWidgets import QApplication
 from victus_hub.backend.daemon_client import SOCKET_PATH
 from victus_hub.backend.shortcut_policy import MODIFIERS, validate_shortcut
 from victus_hub.features.keyboard.lighting import lighting_from_dict
-from victus_hub.features.keyboard.shortcut import (
-    HARDWARE_SHORTCUTS_KEY, read_keybind_settings,
-)
+from victus_hub.features.keyboard.shortcut import HARDWARE_SHORTCUTS_KEY
 
 logger = logging.getLogger(__name__)
 
 
 class ShortcutController(QObject):
-    triggered = Signal()
     captured = Signal(object, int)
     lighting_changed = Signal(object)
     capture_error = Signal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._settings = read_keybind_settings()
         self._hardware_enabled = QSettings().value(HARDWARE_SHORTCUTS_KEY, False, type=bool)
         self._capturing = False
         self._subscribed = False
@@ -59,13 +55,7 @@ class ShortcutController(QObject):
 
     def _subscribe(self) -> None:
         self._subscribed = False
-        try:
-            mods, key = validate_shortcut(self._settings.mods, self._settings.key)
-        except RuntimeError as error:
-            logger.warning("Program shortcut disabled: %s", error)
-            mods, key = (), 0
-        payload = json.dumps({"mods": mods, "key": key if self._settings.enabled else 0})
-        self._socket.write(f"shortcut-events\t{payload}\n".encode())
+        self._socket.write(b"shortcut-events\n")
 
     def _disconnected(self) -> None:
         subscribed = self._subscribed
@@ -75,12 +65,6 @@ class ShortcutController(QObject):
 
     def _socket_error(self, _error) -> None:
         logger.warning("Shortcut event stream: %s", self._socket.errorString())
-
-    def reload_settings(self) -> None:
-        self._settings = read_keybind_settings()
-        self._subscribed = False
-        self._socket.abort()
-        self._connect()
 
     def set_hardware_enabled(self, enabled: bool) -> None:
         self._hardware_enabled = enabled
@@ -176,5 +160,3 @@ class ShortcutController(QObject):
                 if isinstance(payload, dict):
                     self.lighting_changed.emit(lighting_from_dict(payload))
                 continue
-            if line == "SHORTCUT" and not discard and not self._capturing:
-                self.triggered.emit()
