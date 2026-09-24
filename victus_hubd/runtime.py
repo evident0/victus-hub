@@ -294,6 +294,9 @@ class Runtime:
                 sysfs.write_pwm_max()
             elif config.manual_preset == "auto" or not config.custom_enabled:
                 sysfs.write_pwm_enable(2)
+            elif not sysfs.manual_fan_supported():
+                logger.warning("Manual fan control unavailable; using EC automatic mode")
+                sysfs.write_pwm_enable(2)
             else:
                 sysfs.write_pwm_enable(1)
         except Exception:
@@ -305,7 +308,11 @@ class Runtime:
                 config = self.fan_config()
                 if self._suspend.is_set() or not config.custom_enabled or config.manual_preset is not None:
                     temps.close_nvidia()
-                self._fan._poll_once()
+                if config.custom_enabled and config.manual_preset is None and not sysfs.manual_fan_supported():
+                    self._fan._st.on_leave_custom()
+                    temps.close_nvidia()
+                else:
+                    self._fan._poll_once()
             except Exception:
                 logger.exception("fan-control tick failed")
             self._stop.wait(1.0)

@@ -209,6 +209,31 @@ class TestRuntimeRegressions(unittest.TestCase):
         self.hw.write_pwm_enable.assert_called_once_with(2)
         self.hw.write_pwm.assert_not_called()
 
+    def test_max_only_board_keeps_ec_instead_of_retrying_manual_curve(self):
+        self.hw.manual_fan_supported.return_value = False
+        self.state.fan = config_from_dict({"custom_curve_enabled": True})
+        self.runtime._apply_fan_mode()
+        self.hw.write_pwm_enable.assert_called_once_with(2)
+        self.hw.write_pwm.assert_not_called()
+
+        self.runtime._fan._poll_once = Mock()
+        self.runtime._stop = Mock()
+        self.runtime._stop.is_set.side_effect = [False, True]
+        with patch("victus_hubd.runtime.temps.close_nvidia"):
+            self.runtime._fan_loop()
+        self.runtime._fan._poll_once.assert_not_called()
+
+    def test_manual_capability_comes_from_sysfs(self):
+        from victus_hubd import sysfs
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "pwm1_enable").touch()
+            with patch.object(sysfs, "hp_hwmon", return_value=root):
+                self.assertFalse(sysfs.manual_fan_supported())
+                (root / "pwm1").touch()
+                self.assertTrue(sysfs.manual_fan_supported())
+
     def test_sleep_waits_for_inflight_lighting_write(self):
         self.state.lighting = lighting_from_dict({"enabled": True})
         entered = threading.Event()

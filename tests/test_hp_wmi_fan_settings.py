@@ -32,7 +32,7 @@ class TestHpWmiFanSettings(unittest.TestCase):
             "hp_wmi_fan_control_supported", "hp_wmi_get_active_fan_speed",
             "hp_wmi_set_fallback_fan_limits", "hp_wmi_fan_speed_probe",
             "hp_wmi_select_fan_reader", "hp_wmi_setup_fallback_fan_settings",
-            "hp_wmi_setup_fan_settings",
+            "hp_wmi_setup_fan_settings", "hp_wmi_hwmon_is_visible",
         ))
         harness = r"""
 #include <assert.h>
@@ -42,6 +42,10 @@ class TestHpWmiFanSettings(unittest.TestCase):
 #include <string.h>
 #include <errno.h>
 typedef uint8_t u8;
+typedef uint32_t u32;
+typedef unsigned short umode_t;
+enum hwmon_sensor_types { hwmon_pwm, hwmon_fan };
+enum { hwmon_pwm_input, hwmon_pwm_enable };
 struct mutex { int unused; };
 struct delayed_work { int unused; };
 #define __packed __attribute__((packed))
@@ -54,11 +58,13 @@ struct delayed_work { int unused; };
 #define pr_warn(...) ((void)0)
 #define pr_info(...) ((void)0)
 """ + declarations + "\n" + fallback + r"""
-static int modern_rpm[2], legacy_rpm[2], table_result;
-static u8 table_data[128];
-static bool force_fan_control_support;
-static int modern_reader(int fan) { return modern_rpm[fan]; }
-static int legacy_reader(int fan) { return legacy_rpm[fan]; }
+    static int modern_rpm[2], legacy_rpm[2], table_result;
+    static int tachometer_reads;
+    static u8 table_data[128];
+    static bool force_fan_control_support;
+    static bool unsafe_board;
+    static int modern_reader(int fan) { tachometer_reads++; return modern_rpm[fan]; }
+    static int legacy_reader(int fan) { tachometer_reads++; return legacy_rpm[fan]; }
 static const struct hp_wmi_fan_profile_params victus_s_fan_profile_params = {
     .get_fan_speed = modern_reader, .fan_table = true,
 };
@@ -68,6 +74,7 @@ static const struct hp_wmi_fan_profile_params legacy_fan_profile_params = {
 static const struct hp_wmi_fan_profile_params *board_profile;
 static const struct hp_wmi_fan_profile_params *hp_wmi_fan_profile(void)
 { return board_profile; }
+    static bool hp_wmi_unsafe_fan_board(void) { return unsafe_board; }
 static bool hp_wmi_fan_table_supported(void)
 { return board_profile && board_profile->fan_table; }
 static int hp_wmi_perform_query(int query, int command, void *data, int in, int out)
@@ -110,7 +117,8 @@ int main(void)
     assert(hp_wmi_setup_fan_settings(&priv) == 0);
     assert(priv.fan_profile == &legacy_fan_profile_params);
     legacy_rpm[0] = legacy_rpm[1] = -EIO;
-    assert(hp_wmi_setup_fan_settings(&priv) == -EOPNOTSUPP);
+    assert(hp_wmi_setup_fan_settings(&priv) == 0);
+    assert(!hp_wmi_fan_control_supported(&priv));
     force_fan_control_support = true;
     assert(hp_wmi_setup_fan_settings(&priv) == 0);
     assert(priv.max_rpm == 55 && hp_wmi_fan_control_supported(&priv));
@@ -122,19 +130,21 @@ int main(void)
     assert(hp_wmi_setup_fan_settings(&priv) == 0);
     assert(priv.max_rpm == 60);
     force_fan_control_support = false;
-    assert(hp_wmi_setup_fan_settings(&priv) == -EINVAL);
+    assert(hp_wmi_setup_fan_settings(&priv) == 0);
+    assert(!hp_wmi_fan_control_supported(&priv));
 
-    /* Probe errors cannot succeed with unusable zero limits when force is off. */
+    /* Probe errors leave EC/Max operational with nonzero fallback limits. */
     table_result = -EIO;
-    assert(hp_wmi_setup_fan_settings(&priv) == -EIO);
+    assert(hp_wmi_setup_fan_settings(&priv) == 0);
+    assert(priv.max_rpm == 60);
     assert(!hp_wmi_fan_control_supported(&priv));
     table_result = 3; /* Positive firmware status must become a Linux errno. */
-    assert(hp_wmi_setup_fan_settings(&priv) == -EINVAL);
+    assert(hp_wmi_setup_fan_settings(&priv) == 0);
     table_result = 0;
     memset(table_data, 0, sizeof(table_data));
-    assert(hp_wmi_setup_fan_settings(&priv) == -EINVAL);
+    assert(hp_wmi_setup_fan_settings(&priv) == 0);
     table->header.num_fans = 2; /* Header present, but no usable entries. */
-    assert(hp_wmi_setup_fan_settings(&priv) == -EINVAL);
+    assert(hp_wmi_setup_fan_settings(&priv) == 0);
 
     /* One failed modern channel selects the working legacy reader for both. */
     force_fan_control_support = true;
@@ -161,6 +171,20 @@ int main(void)
     assert(hp_wmi_setup_fan_settings(&priv) == 0);
     assert(hp_wmi_fan_control_supported(&priv) && priv.max_rpm == 60);
     assert(hp_wmi_get_active_fan_speed(&priv, CPU_FAN) == -EIO);
+
+    /* Even an explicit force option cannot probe a known abort-prone EC. */
+    unsafe_board = true;
+    board_profile = NULL;
+    legacy_rpm[0] = legacy_rpm[1] = 2400;
+    assert(hp_wmi_setup_fan_settings(&priv) == 0);
+    assert(!hp_wmi_fan_control_supported(&priv));
+    assert(priv.fan_profile == NULL);
+    int reads_before = tachometer_reads;
+    assert(hp_wmi_hwmon_is_visible(&priv, hwmon_fan, 0, CPU_FAN) == 0);
+    assert(hp_wmi_hwmon_is_visible(&priv, hwmon_fan, 0, GPU_FAN) == 0);
+    assert(hp_wmi_hwmon_is_visible(&priv, hwmon_pwm, hwmon_pwm_input, CPU_FAN) == 0);
+    assert(hp_wmi_hwmon_is_visible(&priv, hwmon_pwm, hwmon_pwm_enable, CPU_FAN) == 0644);
+    assert(tachometer_reads == reads_before);
     return 0;
 }
 """

@@ -20,6 +20,12 @@ def hp_hwmon() -> Path | None:
     return find_hwmon_by_name("hp", "hp_wmi", "hp-wmi")
 
 
+def manual_fan_supported() -> bool:
+    """Use the driver's per-device manual PWM capability, not its board name."""
+    hwmon = hp_hwmon()
+    return hwmon is not None and (hwmon / "pwm1").exists()
+
+
 
 
 def write_sysfs(path: Path, value: int | str, quiet: bool = False) -> str:

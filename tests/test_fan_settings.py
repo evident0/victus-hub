@@ -27,6 +27,11 @@ class TestFanSettings(unittest.TestCase):
         config_path = patch.object(fan_config, "_config_path", return_value=self.path)
         config_path.start()
         self.addCleanup(config_path.stop)
+        # Saving a temporary config also pushes it to the daemon. Keep those
+        # requests inside the test instead of changing the machine's fan mode.
+        daemon_request = patch("victus_hub.api.daemon_client.request_fan_config")
+        self.request_fan_config = daemon_request.start()
+        self.addCleanup(daemon_request.stop)
 
     def make_page(self):
         page = FansPage()
@@ -41,6 +46,7 @@ class TestFanSettings(unittest.TestCase):
                 self.assertEqual(fan_config.load().curve_response, "smooth")
         api.set_fan_curve_response("unknown")
         self.assertEqual(fan_config.load().curve_response, "smooth")
+        self.assertEqual(self.request_fan_config.call_args.args[0], fan_config.load())
 
     def test_ui_changes_persist_and_survive_curve_and_mode_saves(self):
         page = self.make_page()
@@ -66,11 +72,14 @@ class TestFanSettings(unittest.TestCase):
         self.assertEqual(restored._min_fan_change._spin.value(), 4.5)
         restored._curve_response.setCurrentIndex(0)
         self.assertEqual(fan_config.load().curve_response, "smooth")
+        self.assertEqual(self.request_fan_config.call_args.args[0], fan_config.load())
 
     def test_loading_settings_does_not_write(self):
         api.set_fan_curve_response("aggressive")
+        self.request_fan_config.reset_mock()
         with patch.object(fan_config, "save_all") as save:
             page = self.make_page()
             page._load_config()
         save.assert_not_called()
+        self.request_fan_config.assert_not_called()
         self.assertEqual(page._curve_response.currentData(), "aggressive")

@@ -194,6 +194,17 @@ int main(void)
     profile_status = 0;
     assert(hp_wmi_restore_auto_fans(&priv) == 0 && generic_reads == 3);
 
+    /* 878A-style Max-only boards must not enter manual WMI or profile paths. */
+    priv.fan_control_available = false;
+    priv.fan_profile = NULL;
+    before = writes;
+    int old_profiles = profile_calls;
+    assert(hp_wmi_hwmon_write(&dev, hwmon_pwm, hwmon_pwm_enable, 0, 1) == -EOPNOTSUPP);
+    assert(hp_wmi_hwmon_write(&dev, hwmon_pwm, hwmon_pwm_enable, 0, 2) == 0);
+    assert(writes == before && profile_calls == old_profiles);
+    priv.fan_control_available = true;
+    priv.fan_profile = &fan_profile;
+
     /* MAX remains available when its optional trigger is unsupported. */
     trigger_status = -EOPNOTSUPP;
     assert(hp_wmi_hwmon_write(&dev, hwmon_pwm, hwmon_pwm_enable, 0, 0) == 0);
