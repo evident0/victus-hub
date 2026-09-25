@@ -568,59 +568,32 @@ class MainWindow(QMainWindow):
         elif mode == "custom":
             self._set_fan_custom()
 
+    def _fan_step(self, fn, arg, message: str) -> None:
+        try:
+            fn(arg)
+        except Exception:
+            logger.exception(message)
+
     def _set_fan_auto(self):
-        try:
-            api.set_smart_fan_enabled(False)
-        except Exception:
-            logger.exception("set smart fan enabled (auto) failed")
-        try:
-            api.set_manual_preset("auto")
-        except Exception:
-            logger.exception("set manual preset (auto) failed")
-        try:
-            api.set_custom_fan_enabled(False)
-        except Exception:
-            logger.exception("set custom fan enabled (auto) failed")
+        self._fan_step(api.set_smart_fan_enabled, False, "set smart fan enabled (auto) failed")
+        self._fan_step(api.set_manual_preset, "auto", "set manual preset (auto) failed")
+        self._fan_step(api.set_custom_fan_enabled, False, "set custom fan enabled (auto) failed")
 
     def _set_fan_max(self):
         """Engage BIOS/EC max-fan mode (hp-wmi: pwm1_enable=0)."""
-        try:
-            api.set_smart_fan_enabled(False)
-        except Exception:
-            logger.exception("set smart fan enabled (max) failed")
-        try:
-            api.set_manual_preset("max")
-        except Exception:
-            logger.exception("set manual preset (max) failed")
-        try:
-            api.set_custom_fan_enabled(False)
-        except Exception:
-            logger.exception("set custom fan enabled (max) failed")
+        self._fan_step(api.set_smart_fan_enabled, False, "set smart fan enabled (max) failed")
+        self._fan_step(api.set_manual_preset, "max", "set manual preset (max) failed")
+        self._fan_step(api.set_custom_fan_enabled, False, "set custom fan enabled (max) failed")
 
     def _set_fan_smart(self):
         """Software curve with the built-in Smart table and faster EWMA."""
-        try:
-            api.set_smart_fan_enabled(True)
-        except Exception:
-            logger.exception("set smart fan enabled failed")
-        try:
-            api.set_custom_fan_enabled(True)
-        except Exception:
-            logger.exception("set custom fan enabled (smart) failed")
+        self._fan_step(api.set_smart_fan_enabled, True, "set smart fan enabled failed")
+        self._fan_step(api.set_custom_fan_enabled, True, "set custom fan enabled (smart) failed")
 
     def _set_fan_custom(self):
-        try:
-            api.set_smart_fan_enabled(False)
-        except Exception:
-            logger.exception("set smart fan enabled (custom) failed")
-        try:
-            api.set_manual_preset(None)
-        except Exception:
-            logger.exception("set manual preset (custom) failed")
-        try:
-            api.set_custom_fan_enabled(True)
-        except Exception:
-            logger.exception("set custom fan enabled failed")
+        self._fan_step(api.set_smart_fan_enabled, False, "set smart fan enabled (custom) failed")
+        self._fan_step(api.set_manual_preset, None, "set manual preset (custom) failed")
+        self._fan_step(api.set_custom_fan_enabled, True, "set custom fan enabled failed")
     def _open_sensor_graph(self, key: str):
         """Open or focus a sensor graph window for the given sensor key."""
         existing = self._graph_windows.get(key)

@@ -44,22 +44,6 @@ def release_is_newer(tag: str, installed: str) -> bool:
     return parts(tag) > parts(installed)
 
 
-def make_settings_card() -> tuple[QWidget, QVBoxLayout]:
-    """Kept for Power page: a transparent stack, no card chrome."""
-    card = QWidget()
-    layout = QVBoxLayout(card)
-    layout.setContentsMargins(0, 0, 0, 0)
-    layout.setSpacing(0)
-    return card, layout
-
-
-def make_card_title(text: str) -> QLabel:
-    lbl = QLabel(text)
-    lbl.setFont(ui_font(14, 600))
-    lbl.setStyleSheet(f"color: {COLORS['text']}; background: transparent;")
-    return lbl
-
-
 def _style_action_btn(btn: QPushButton) -> None:
     btn.setCursor(Qt.PointingHandCursor)
     btn.setFixedHeight(34)

@@ -5,10 +5,6 @@ import subprocess
 from pathlib import Path
 
 
-def command_exists(command: str) -> bool:
-    return command_path(command) is not None
-
-
 def command_path(command: str) -> Path | None:
     if "/" in command:
         path = Path(command)

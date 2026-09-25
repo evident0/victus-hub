@@ -609,28 +609,29 @@ class KeyboardPage(QWidget):
         self._persist()
         self.speed_changed.emit(self._settings.speed)
 
+    def _choose_color(self, current: str, title: str) -> str | None:
+        color = QColorDialog.getColor(QColor(current), self, title)
+        return color.name() if color.isValid() else None
+
     def _pick_color(self):
         """Primary / single-zone color picker."""
-        current = QColor(self._settings.color)
-        color = QColorDialog.getColor(current, self, "Keyboard Color")
-        if color.isValid():
-            hex_str = color.name()
-            self._settings.color = hex_str
-            if self._zone_count <= 1:
-                self._zone_hexes = [hex_str]
-            elif self._zone_hexes:
-                self._zone_hexes[0] = hex_str
-            self._set_hex_chip(hex_str)
-            self._persist()
-            self._apply_visual_from_settings()
-            self.color_changed.emit(hex_str)
+        hex_str = self._choose_color(self._settings.color, "Keyboard Color")
+        if hex_str is None:
+            return
+        self._settings.color = hex_str
+        if self._zone_count <= 1:
+            self._zone_hexes = [hex_str]
+        elif self._zone_hexes:
+            self._zone_hexes[0] = hex_str
+        self._set_hex_chip(hex_str)
+        self._persist()
+        self._apply_visual_from_settings()
+        self.color_changed.emit(hex_str)
 
     def _pick_color2(self):
-        current = QColor(self._settings.color2)
-        color = QColorDialog.getColor(current, self, "Secondary Color")
-        if not color.isValid():
+        hex_str = self._choose_color(self._settings.color2, "Secondary Color")
+        if hex_str is None:
             return
-        hex_str = color.name()
         self._settings.color2 = hex_str
         if self._color2_btn is not None:
             self._color2_btn.setStyleSheet(_style_color_btn(hex_str))
@@ -642,12 +643,10 @@ class KeyboardPage(QWidget):
         """Multi-zone color picker for one zone."""
         if zone < 0 or zone >= len(self._zone_hexes):
             return
-        current = QColor(self._zone_hexes[zone])
         name = ZONE_NAMES[zone] if zone < len(ZONE_NAMES) else f"Zone {zone}"
-        color = QColorDialog.getColor(current, self, f"{name} Zone Color")
-        if not color.isValid():
+        hex_str = self._choose_color(self._zone_hexes[zone], f"{name} Zone Color")
+        if hex_str is None:
             return
-        hex_str = color.name()
         self._zone_hexes[zone] = hex_str
         if zone < len(self._zone_btns):
             self._zone_btns[zone].setStyleSheet(_style_color_btn(hex_str))

@@ -19,13 +19,6 @@ def format_stat(value: float, unit: str) -> str:
     return f"{formatted} {unit}" if unit else formatted
 
 
-def parse_reading_num(reading) -> float | None:
-    try:
-        return float(str(reading.value).split()[0])
-    except (ValueError, AttributeError):
-        return None
-
-
 def next_stats(snapshot, previous: dict) -> dict:
     """Accumulate min/max/avg per sensor."""
     changed = False

@@ -48,12 +48,6 @@ def load_icon(filename: str, size: int = 24) -> QIcon:
     return icon
 
 
-def load_pixmap(filename: str, size: int = 24) -> QPixmap:
-    """Return a pixmap scaled to *size*."""
-    size = max(1, int(size))
-    return _load_scaled(filename, size)
-
-
 def _load_scaled(filename: str, size: int) -> QPixmap:
     """Decode at *size* and cache. Avoids retaining full source resolution."""
     key = (filename, size)
@@ -120,9 +114,3 @@ def _render_svg(path: Path, size: int) -> QPixmap:
     renderer.render(p)
     p.end()
     return pm
-
-
-def clear_icon_caches() -> None:
-    """Drop cached icons/pixmaps (mainly for tests)."""
-    _pixmap_cache.clear()
-    _icon_cache.clear()

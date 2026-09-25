@@ -309,26 +309,33 @@ def _parse_int(body: str, name: str) -> int:
         raise RuntimeError(f"invalid {name}") from None
 
 
-def _parse_rgb(body: str) -> tuple[int, int, int]:
-    """Parse three tab-separated integers (r, g, b)."""
+def _parse_ints(body: str, count: int, expected: str) -> tuple[int, ...]:
+    """Parse exactly `count` tab-separated integers."""
     parts = body.split("\t")
-    if len(parts) != 3:
-        raise RuntimeError("expected 3 integers")
+    if len(parts) != count:
+        raise RuntimeError(expected)
     try:
-        return int(parts[0]), int(parts[1]), int(parts[2])
+        return tuple(int(part) for part in parts)
     except ValueError:
         raise RuntimeError("invalid integer") from None
+
+
+def _parse_pair(body: str, expected: str, left: str, right: str) -> tuple[int, int]:
+    parts = body.split("\t")
+    if len(parts) != 2:
+        raise RuntimeError(expected)
+    return _parse_int(parts[0], left), _parse_int(parts[1], right)
+
+
+def _parse_rgb(body: str) -> tuple[int, int, int]:
+    """Parse three tab-separated integers (r, g, b)."""
+    red, green, blue = _parse_ints(body, 3, "expected 3 integers")
+    return red, green, blue
 
 
 def _parse_zone_rgb(body: str) -> tuple[int, int, int, int]:
     """Parse four tab-separated integers (zone, r, g, b)."""
-    parts = body.split("\t")
-    if len(parts) != 4:
-        raise RuntimeError("expected 4 integers (zone, r, g, b)")
-    try:
-        zone, red, green, blue = (int(parts[0]), int(parts[1]), int(parts[2]), int(parts[3]))
-    except ValueError:
-        raise RuntimeError("invalid integer") from None
+    zone, red, green, blue = _parse_ints(body, 4, "expected 4 integers (zone, r, g, b)")
     if not (0 <= red <= 255 and 0 <= green <= 255 and 0 <= blue <= 255):
         raise RuntimeError("rgb components must be 0-255")
     return zone, red, green, blue
@@ -336,13 +343,14 @@ def _parse_zone_rgb(body: str) -> tuple[int, int, int, int]:
 
 def _parse_power_limits(body: str) -> tuple[int, int, int, int]:
     """Parse power-limit fields: stapm, fast, slow, tctl-temp (°C)."""
-    parts = body.split("\t")
-    if len(parts) != 4:
-        raise RuntimeError("expected 4 integers (stapm, fast, slow, tctl)")
-    try:
-        return int(parts[0]), int(parts[1]), int(parts[2]), int(parts[3])
-    except ValueError:
-        raise RuntimeError("invalid integer") from None
+    stapm, fast, slow, tctl = _parse_ints(
+        body, 4, "expected 4 integers (stapm, fast, slow, tctl)",
+    )
+    return stapm, fast, slow, tctl
+
+
+def _ok(message: str) -> str:
+    return protocol.format_status_response((True, message))
 
 
 def _parse_json_object(body: str, name: str) -> dict:
@@ -381,56 +389,40 @@ def _make_dispatch(
     returns the response line as a string. RuntimeError propagates to the
     caller as a structured `ERR` response.
     """
-    def _cpu_power(_body: str) -> str:
-        logger.info("[cpu-power] daemon request")
+    def _read_power_sample():
         if sampler_lock is not None:
             with sampler_lock:
-                sample = sampler.read()
-        else:
-            sample = sampler.read()
-        return protocol.format_cpu_power_response(sample)
+                return sampler.read()
+        return sampler.read()
+
+    def _cpu_power(_body: str) -> str:
+        logger.info("[cpu-power] daemon request")
+        return protocol.format_cpu_power_response(_read_power_sample())
 
     def _gpu_mux_mode(body: str) -> str:
         mode = _parse_int(body, "gpu-mux-mode")
         logger.info("[gpu-mux] daemon request: gpu-mux-mode %d", mode)
-        try:
-            result = sysfs.write_gpu_mux_mode(mode)
-            return protocol.format_status_response((True, result))
-        except RuntimeError as e:
-            return protocol.format_status_response((False, str(e)))
+        return _ok(sysfs.write_gpu_mux_mode(mode))
 
     def _fan_auto(_body: str) -> str:
         logger.info("[fan-control] daemon request: fan-auto")
-        try:
-            result = sysfs.write_pwm_enable(2)
-            return protocol.format_status_response((True, result))
-        except RuntimeError as e:
-            return protocol.format_status_response((False, str(e)))
+        return _ok(sysfs.write_pwm_enable(2))
 
     def _fan_max(_body: str) -> str:
         logger.info("[fan-control] daemon request: fan-max (pwm1_enable=0)")
-        try:
-            result = sysfs.write_pwm_max()
-            return protocol.format_status_response((True, result))
-        except RuntimeError as e:
-            return protocol.format_status_response((False, str(e)))
+        return _ok(sysfs.write_pwm_max())
 
     def _fan_manual(_body: str) -> str:
         logger.info("[fan-control] daemon request: fan-manual")
-        try:
-            result = sysfs.write_pwm_enable(1)
-            return protocol.format_status_response((True, result))
-        except RuntimeError as e:
-            return protocol.format_status_response((False, str(e)))
+        return _ok(sysfs.write_pwm_enable(1))
 
     def _fan_pwm(body: str) -> str:
         pwm = _parse_int(body, "pwm")
-        logger.info("[fan-control] daemon request: fan-pwm %d/255 (%d%%)", pwm, round(pwm / 255.0 * 100))
-        try:
-            result = sysfs.write_pwm(pwm)
-            return protocol.format_status_response((True, result))
-        except RuntimeError as e:
-            return protocol.format_status_response((False, str(e)))
+        logger.info(
+            "[fan-control] daemon request: fan-pwm %d/255 (%d%%)",
+            pwm, round(pwm / 255.0 * 100),
+        )
+        return _ok(sysfs.write_pwm(pwm))
 
     def _keyboard_color(body: str) -> str:
         # 3 fields: set all zones to the same RGB (single-zone / bulk path).
@@ -439,41 +431,25 @@ def _make_dispatch(
         if n == 3:
             r, g, b = _parse_rgb(body)
             logger.info("[keyboard-rgb] daemon request: color %d %d %d", r, g, b)
-            try:
-                result = sysfs.write_keyboard_color(r, g, b)
-            except RuntimeError as e:
-                return protocol.format_status_response((False, str(e)))
-            return protocol.format_status_response((True, result))
+            return _ok(sysfs.write_keyboard_color(r, g, b))
         if n == 4:
             zone, r, g, b = _parse_zone_rgb(body)
             logger.info(
                 "[keyboard-rgb] daemon request: zone %d color %d %d %d",
                 zone, r, g, b,
             )
-            try:
-                result = sysfs.write_keyboard_zone_color(zone, r, g, b)
-            except RuntimeError as e:
-                return protocol.format_status_response((False, str(e)))
-            return protocol.format_status_response((True, result))
+            return _ok(sysfs.write_keyboard_zone_color(zone, r, g, b))
         raise RuntimeError("expected 3 integers (r g b) or 4 (zone r g b)")
 
     def _keyboard_brightness(body: str) -> str:
         level = _parse_int(body, "brightness")
         logger.info("[keyboard-rgb] daemon request: brightness %d/255", level)
-        try:
-            result = sysfs.write_keyboard_brightness(level)
-            return protocol.format_status_response((True, result))
-        except RuntimeError as e:
-            return protocol.format_status_response((False, str(e)))
+        return _ok(sysfs.write_keyboard_brightness(level))
 
     def _keyboard_user_brightness(body: str) -> str:
         level = _parse_int(body, "user-brightness")
         logger.info("[keyboard-rgb] daemon request: user-brightness %d/255", level)
-        try:
-            result = sysfs.set_keyboard_user_brightness(level)
-            return protocol.format_status_response((True, result))
-        except RuntimeError as e:
-            return protocol.format_status_response((False, str(e)))
+        return _ok(sysfs.set_keyboard_user_brightness(level))
 
     def _power_limits(body: str) -> str:
         s, f, sl, tctl = _parse_power_limits(body)
@@ -481,35 +457,26 @@ def _make_dispatch(
             "[power-limits] daemon request: STAPM=%d fast=%d slow=%d tctl=%d",
             s, f, sl, tctl,
         )
-        result = ryzenadj.apply_power_limits(s, f, sl, tctl)
-        return protocol.format_status_response((True, result))
+        return _ok(ryzenadj.apply_power_limits(s, f, sl, tctl))
 
     def _intel_power_limits(body: str) -> str:
-        parts = body.split("\t")
-        if len(parts) != 2:
-            raise RuntimeError("expected 2 integers (PL1, PL2 in mW)")
-        result = intel.apply_power_limits(
-            _parse_int(parts[0], "PL1"), _parse_int(parts[1], "PL2"),
-        )
-        return protocol.format_status_response((True, result))
+        pl1, pl2 = _parse_pair(body, "expected 2 integers (PL1, PL2 in mW)", "PL1", "PL2")
+        return _ok(intel.apply_power_limits(pl1, pl2))
 
     def _intel_undervolt(body: str) -> str:
-        parts = body.split("\t")
-        if len(parts) != 2:
-            raise RuntimeError("expected 2 integers (core, cache in mV)")
-        result = intel.apply_undervolt(
-            _parse_int(parts[0], "core offset"), _parse_int(parts[1], "cache offset"),
+        core, cache = _parse_pair(
+            body, "expected 2 integers (core, cache in mV)", "core offset", "cache offset",
         )
-        return protocol.format_status_response((True, result))
+        return _ok(intel.apply_undervolt(core, cache))
 
     def _cpu_frequency_limits(body: str) -> str:
-        parts = body.split("\t")
-        if len(parts) != 2:
-            raise RuntimeError("expected 2 integers (minimum, maximum in kHz)")
-        minimum = _parse_int(parts[0], "minimum frequency")
-        maximum = _parse_int(parts[1], "maximum frequency")
-        result = cpufreq.apply_frequency_limits(minimum, maximum)
-        return protocol.format_status_response((True, result))
+        minimum, maximum = _parse_pair(
+            body,
+            "expected 2 integers (minimum, maximum in kHz)",
+            "minimum frequency",
+            "maximum frequency",
+        )
+        return _ok(cpufreq.apply_frequency_limits(minimum, maximum))
 
     def _keyboard_last_input(_body: str) -> str:
         logger.info("[keyboard-rgb] daemon request: keyboard-last-input")
@@ -524,48 +491,42 @@ def _make_dispatch(
     def _fan_config(body: str) -> str:
         config = config_from_dict(_parse_json_object(body, "fan-config"))
         logger.info("[fan-control] daemon request: fan-config")
-        result = _require_runtime().set_fan_config(config)
-        return protocol.format_status_response((True, result))
+        return _ok(_require_runtime().set_fan_config(config))
 
     def _lighting_config(body: str) -> str:
         settings = lighting_from_dict(_parse_json_object(body, "lighting-config"))
         logger.info("[keyboard-rgb] daemon request: lighting-config")
-        result = _require_runtime().set_lighting(settings)
-        return protocol.format_status_response((True, result))
+        return _ok(_require_runtime().set_lighting(settings))
 
     def _power_config(body: str) -> str:
         policy = power_from_dict(_parse_json_object(body, "power-config"))
         logger.info("[power-limits] daemon request: power-config enabled=%s", policy.enabled)
-        result = _require_runtime().set_power(policy)
-        return protocol.format_status_response((True, result))
+        return _ok(_require_runtime().set_power(policy))
 
     def _cpu_frequency_config(body: str) -> str:
         body = body.lstrip("\t").strip()
         if not body:
-            result = _require_runtime().set_cpu_frequency(None)
-            return protocol.format_status_response((True, result))
-        parts = body.split("\t")
-        if len(parts) != 2:
-            raise RuntimeError("expected 2 integers (minimum, maximum in kHz)")
-        minimum = _parse_int(parts[0], "minimum frequency")
-        maximum = _parse_int(parts[1], "maximum frequency")
+            return _ok(_require_runtime().set_cpu_frequency(None))
+        minimum, maximum = _parse_pair(
+            body,
+            "expected 2 integers (minimum, maximum in kHz)",
+            "minimum frequency",
+            "maximum frequency",
+        )
         if not (0 < minimum <= maximum):
             raise RuntimeError("invalid frequency range")
         logger.info("[cpu-frequency] daemon request: persist %d-%d kHz", minimum, maximum)
-        result = _require_runtime().set_cpu_frequency((minimum, maximum))
-        return protocol.format_status_response((True, result))
+        return _ok(_require_runtime().set_cpu_frequency((minimum, maximum)))
 
     def _battery_power_save(body: str) -> str:
         enabled = _parse_int(body, "battery-power-save") != 0
         logger.info("[power] daemon request: battery-power-save %s", enabled)
-        result = _require_runtime().set_battery_power_save(enabled)
-        return protocol.format_status_response((True, result))
+        return _ok(_require_runtime().set_battery_power_save(enabled))
 
     def _hardware_shortcuts(body: str) -> str:
         enabled = _parse_int(body, "hardware-shortcuts") != 0
         logger.info("[keyboard] daemon request: hardware-shortcuts %s", enabled)
-        result = _require_runtime().set_hardware_shortcuts(enabled)
-        return protocol.format_status_response((True, result))
+        return _ok(_require_runtime().set_hardware_shortcuts(enabled))
 
     def _program_shortcut(body: str) -> str:
         if peer is None:
@@ -573,21 +534,16 @@ def _make_dispatch(
         payload = _parse_json_object(body, "program-shortcut")
         mods, key = validate_shortcut(payload.get("mods"), payload.get("key"))
         _require_runtime().program_shortcuts.set(peer.uid, mods, key)
-        return protocol.format_status_response((True, "program-shortcut"))
+        return _ok("program-shortcut")
 
     def _disable_nvidia_queries(body: str) -> str:
         enabled = _parse_int(body, "disable-nvidia-queries") != 0
-        result = _require_runtime().set_disable_nvidia_queries(enabled)
-        return protocol.format_status_response((True, result))
+        return _ok(_require_runtime().set_disable_nvidia_queries(enabled))
 
     def _set_profile(body: str) -> str:
         index = _parse_int(body, "profile")
         logger.info("[profile] daemon request: set-profile %d", index)
-        try:
-            result = _require_runtime().set_profile(index)
-            return protocol.format_status_response((True, result))
-        except RuntimeError as e:
-            return protocol.format_status_response((False, str(e)))
+        return _ok(_require_runtime().set_profile(index))
 
     def _sensors(body: str) -> str:
         from victus_hub.backend.sensor_keys import GPU_QUERY_KEYS, REQUESTABLE_KEYS
@@ -606,16 +562,10 @@ def _make_dispatch(
         if runtime is None:
             raise RuntimeError("runtime is not running")
 
-        def read_power():
-            if sampler_lock is not None:
-                with sampler_lock:
-                    return sampler.read()
-            return sampler.read()
-
         with _sensor_lock:
             snap = _get_sensor_reader().read_requested(
                 wanted,
-                read_cpu_power=read_power,
+                read_cpu_power=_read_power_sample,
                 disable_nvidia=runtime.nvidia_queries_disabled(),
             )
         if not (wanted & GPU_QUERY_KEYS) and not runtime.fan_needs_gpu_temp():
@@ -636,12 +586,12 @@ def _make_dispatch(
     def _prepare_sleep(_body: str) -> str:
         logger.info("[power-state] daemon request: prepare-sleep")
         _require_runtime().prepare_sleep()
-        return protocol.format_status_response((True, "prepare-sleep"))
+        return _ok("prepare-sleep")
 
     def _resume(_body: str) -> str:
         logger.info("[power-state] daemon request: resume")
         _require_runtime().resume()
-        return protocol.format_status_response((True, "resume"))
+        return _ok("resume")
 
     return [
         ("cpu-power", _cpu_power),

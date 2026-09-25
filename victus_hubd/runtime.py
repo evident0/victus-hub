@@ -119,13 +119,7 @@ class Runtime:
         self._refresh_host(force=True)
         self._apply_fan_mode()
         self._invalidate_lighting()
-        with self._lock:
-            freq = self._state.cpu_frequency
-        if freq is not None:
-            try:
-                cpufreq.apply_frequency_limits(*freq)
-            except Exception:
-                logger.exception("startup: cpu frequency apply failed")
+        self._restore_cpu_frequency("startup: cpu frequency apply failed")
         self._light_wake.set()
         self._power_wake.set()
         logger.info("runtime: control loops started")
@@ -283,13 +277,17 @@ class Runtime:
         self._last_power_apply = 0.0
         self._light_wake.set()
         self._power_wake.set()
+        self._restore_cpu_frequency("resume: cpu frequency restore failed")
+
+    def _restore_cpu_frequency(self, failure: str) -> None:
         with self._lock:
             freq = self._state.cpu_frequency
-        if freq is not None:
-            try:
-                cpufreq.apply_frequency_limits(*freq)
-            except Exception:
-                logger.exception("resume: cpu frequency restore failed")
+        if freq is None:
+            return
+        try:
+            cpufreq.apply_frequency_limits(*freq)
+        except Exception:
+            logger.exception(failure)
 
     # ── Fan ──
 

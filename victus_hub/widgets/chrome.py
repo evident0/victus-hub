@@ -18,15 +18,6 @@ def hairline() -> QFrame:
     return line
 
 
-def section_label(text: str) -> QLabel:
-    """Letter-spaced mono section heading used in Settings."""
-    spaced = "  ".join(text)
-    lab = QLabel(spaced)
-    lab.setFont(mono_font(10, 500))
-    lab.setStyleSheet(f"color: {COLORS['section']}; background: transparent;")
-    return lab
-
-
 class PageHead(QWidget):
     """Title on the left, mono status on the right."""
 
