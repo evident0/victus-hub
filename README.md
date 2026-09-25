@@ -150,13 +150,18 @@ Both development scripts accept an optional terminal debug level:
 | `2` | Errors + fan control + power |
 | `3` | Errors + fan control + power + keyboard |
 
-```bash
-./scripts/dev-run 1
-./scripts/ui-test 3
+To log fan commands from the running daemon, set its environment variable through a systemd override:
 ```
-
-For a direct launch, use `VICTUS_HUB_DEBUG_LEVEL=2 victus-hub` (the same
-environment variable is supported by `python3 -m victus_hubd`).
+sudo systemctl edit victus-hubd
+```
+Add this in the editor:
+```
+[Service]
+Environment=VICTUS_HUB_DEBUG_LEVEL=1
+```
+Save, then apply it and follow the logs:
+sudo systemctl restart victus-hubd
+journalctl -u victus-hubd -f -o cat
 
 ## Project Structure
 
@@ -169,12 +174,6 @@ environment variable is supported by `python3 -m victus_hubd`).
   `/var/lib/victus-hubd/` so fans, lighting, and power limits keep working
   with the UI closed (a CLI can use the same socket later).
 - **`kernel/`** — All custom kernel modules.
-
-The bundled `hp-wmi` is based on `hp-wmi-ilpo-appliednew.c`, with an out-of-tree
-ACPI compatibility definition and a read-only `gpu_mux_supported_names` attribute
-for the app. MUX nodes live under `/sys/devices/platform/hp-wmi/`. Fan mode is
-shared through `pwm1_enable`; the app applies its combined fan target to both
-`pwm1` (CPU) and `pwm2` (GPU).
 
 ## Credits
 
