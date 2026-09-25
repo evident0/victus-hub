@@ -219,6 +219,7 @@ class MainWindow(QMainWindow):
     def _on_tab_changed(self, index: int):
         self._stack.setCurrentIndex(index)
         self._morph_to_page(index)
+        self._sync_sensor_request()
 
     def _on_current_page_changed(self, index: int) -> None:
         self._update_min_height(index)
@@ -268,6 +269,29 @@ class MainWindow(QMainWindow):
         if hasattr(self._fans_page, "refresh_accent"):
             self._fans_page.refresh_accent()
 
+    def _current_sensor_keys(self) -> frozenset[str]:
+        """Keys displayed by the current page, plus any visible sensor graph."""
+        from victus_hub.backend.sensor_keys import keys_for_page, request_key_for_graph
+
+        keys = set(keys_for_page(self._stack.currentIndex()))
+        for key, win in self._graph_windows.items():
+            try:
+                visible = win.isVisible()
+            except RuntimeError:
+                continue
+            if visible:
+                keys.add(request_key_for_graph(key))
+        return frozenset(keys)
+
+    def _sync_sensor_request(self) -> None:
+        """Ask the daemon only for sensors this screen is showing."""
+        if not self._ui_is_shown():
+            return
+        keys = self._current_sensor_keys()
+        api.set_requested_sensors(keys)
+        api.set_ui_active(True)
+        self._poll_sensors()
+
     def _update_ui_active(self) -> None:
         """Central visibility switch. Pauses UI-only work when the window is
         hidden to tray or minimized. Hardware control runs in the daemon."""
@@ -275,14 +299,13 @@ class MainWindow(QMainWindow):
         if active == self._ui_active:
             return
         self._ui_active = active
+        self._lighting.set_ui_active(active)
         if active:
             self._sensor_timer.start()
+            self._sync_sensor_request()
         else:
             self._sensor_timer.stop()
-        self._lighting.set_ui_active(active)
-        api.set_ui_active(active)
-        if active:
-            self._poll_sensors()  # immediate fresh refresh on restore
+            api.set_ui_active(False)
 
     def showEvent(self, event: QShowEvent):
         super().showEvent(event)
@@ -446,27 +469,29 @@ class MainWindow(QMainWindow):
     # ── Sensor polling ──
 
     def _poll_sensors(self):
-        self._home_page.refresh_power_status()
+        index = self._stack.currentIndex()
+        if index == 0:
+            self._home_page.refresh_power_status()
+        keys = self._current_sensor_keys() if self._ui_is_shown() else frozenset()
+        if keys and not api.sensors_ready(keys):
+            return
         try:
             snapshot = api.read_sensors()
         except Exception:
             logger.exception("sensor poll failed")
             return
 
-        # Update stats
-        self._stats_by_key = next_stats(snapshot, self._stats_by_key)
-
-        # Update live page readings
-        self._home_page.update_sensor_data(snapshot)
-        self._power_page.update_sensor_data(snapshot)
-        self._fans_page.update_sensor_data(snapshot)
-
-        # Update Sensors page rows
-        rows = build_rows(snapshot, self._stats_by_key)
-        self._sensors_page.update_rows(rows)
-
-        # Update footer hardware title
-        self._home_page.set_hardware_title(api.get_hardware_title())
+        if index == 0:
+            self._home_page.update_sensor_data(snapshot)
+            self._home_page.set_hardware_title(api.get_hardware_title())
+        elif index == 1:
+            self._power_page.update_sensor_data(snapshot)
+        elif index == 2:
+            self._fans_page.update_sensor_data(snapshot)
+        elif index == 4:
+            self._stats_by_key = next_stats(snapshot, self._stats_by_key)
+            rows = build_rows(snapshot, self._stats_by_key)
+            self._sensors_page.update_rows(rows)
 
     # ── Profile events ──
 
@@ -604,12 +629,15 @@ class MainWindow(QMainWindow):
                 existing.show()
             existing.raise_()
             existing.activateWindow()
+            self._sync_sensor_request()
             return
         win = SensorGraphWindow(key)
         win.setAttribute(Qt.WA_DeleteOnClose)
         # Clean up tracking when the window is closed by the user
         def _on_destroyed(obj=None, k=key):
             self._graph_windows.pop(k, None)
+            self._sync_sensor_request()
         win.destroyed.connect(_on_destroyed)
         self._graph_windows[key] = win
         win.show()
+        self._sync_sensor_request()

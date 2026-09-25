@@ -2,24 +2,17 @@
 
 Ports sensors.rs plus sub-modules:
 hwmon.rs, hp.rs, temperature.rs, cpu_usage.rs, nvidia, power.rs, lm.rs, profile.rs
-
-NVIDIA dGPU metrics follow g-helper-linux layering (see backend/nvidia.py)::
-
-  1. sysfs hwmon (nvidia)
-  2. in-process NVML
-  3. nvidia-smi
-
-A runtime-suspended dGPU is not woken for telemetry. There is no idle-disarm.
 """
 
 import json
 import subprocess
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from victus_hub.backend import daemon_client
-from victus_hub.backend.nvidia import NvidiaMetrics, NvidiaReader, nvidia_queries_disabled
+from victus_hub.backend import daemon_client, temps
 from victus_hub.backend.rapl import CpuPowerSample, RaplPowerSampler
+from victus_hub.backend.sensor_keys import GPU_QUERY_KEYS
 from victus_hub.backend.types import ExtraSensor, SensorReading, SensorSnapshot
 from victus_hub.backend.sysfs_read import find_hwmon_by_name, iter_hwmon_dirs, read_int, read_text
 from victus_hub.backend.util import command_path
@@ -107,7 +100,13 @@ class SensorReader:
         self._rapl_sampler = RaplPowerSampler()
         self._cpu_max_temp_c: float | None = None
         self._cpu_usage_reader = _CpuUsageReader()
-        self._nvidia = NvidiaReader()
+        self._nvidia = None
+
+    def _nvidia_reader(self):
+        if self._nvidia is None:
+            from victus_hub.backend.nvidia import NvidiaReader
+            self._nvidia = NvidiaReader()
+        return self._nvidia
 
     # ── HP fans / PWM (hp.rs) ──
 
@@ -201,7 +200,7 @@ class SensorReader:
 
     # ── GPU temp (temperature.rs) ──
 
-    def _read_gpu_temp(self, nvidia: NvidiaMetrics | None) -> tuple[SensorReading, float | None]:
+    def _read_gpu_temp(self, nvidia) -> tuple[SensorReading, float | None]:
         # NVIDIA path: NvidiaReader already layered hwmon → NVML → nvidia-smi.
         if nvidia is not None:
             try:
@@ -210,10 +209,11 @@ class SensorReader:
                 temp_c = None
             return reading(f"{nvidia.temperature} C", nvidia.source), temp_c
 
-        if self._nvidia.has_nvidia():
+        if self._nvidia_reader().has_nvidia():
+            from victus_hub.backend.nvidia import nvidia_queries_disabled
             if nvidia_queries_disabled():
                 return reading("Disabled", "NVIDIA queries disabled in Settings"), None
-            if self._nvidia.is_runtime_suspended():
+            if self._nvidia_reader().is_runtime_suspended():
                 return reading("Suspended", "dGPU runtime PM (not woken)"), None
             return reading("Unavailable", "no NVIDIA temp (hwmon/NVML/smi)"), None
 
@@ -308,14 +308,15 @@ class SensorReader:
 
     # ── GPU power (power.rs) ──
 
-    def _read_gpu_power(self, nvidia: NvidiaMetrics | None) -> SensorReading:
+    def _read_gpu_power(self, nvidia) -> SensorReading:
         if nvidia is not None and nvidia.power is not None:
             return reading(f"{nvidia.power:.1f} W", nvidia.source)
 
-        if self._nvidia.has_nvidia():
+        if self._nvidia_reader().has_nvidia():
+            from victus_hub.backend.nvidia import nvidia_queries_disabled
             if nvidia_queries_disabled():
                 return reading("Disabled", "NVIDIA queries disabled in Settings")
-            if self._nvidia.is_runtime_suspended():
+            if self._nvidia_reader().is_runtime_suspended():
                 return reading("Suspended", "dGPU runtime PM (not woken)")
             if nvidia is not None:
                 return reading("Unavailable", f"no power sensor ({nvidia.source})")
@@ -436,6 +437,163 @@ class SensorReader:
         used_gb = used_kb / (1024 * 1024)
         return reading(f"{used_gb:.1f} GB", "proc/meminfo"), usage_pct, used_gb, total_gb
 
+    def read_requested(
+        self,
+        keys,
+        *,
+        read_cpu_power: Callable[[], CpuPowerSample] | None = None,
+        disable_nvidia: bool = False,
+    ) -> SensorSnapshot:
+        """Read only the informational keys the GUI asked for.
+
+        An empty set performs no hardware reads. GPU power and utilization
+        are not queried unless those keys are present.
+        """
+        wanted = frozenset(keys)
+        snap = SensorSnapshot()
+        if not wanted:
+            return snap
+
+        if "cpu-temp" in wanted:
+            snap.cpu_temp, snap.cpu_temp_c = self._read_cpu_temp()
+
+        if "cpu-usage" in wanted:
+            pct = self._cpu_usage_reader.read()
+            snap.cpu_usage_pct = pct
+            snap.cpu_usage = (
+                reading(f"{pct:.1f} %", "proc/stat")
+                if pct is not None
+                else reading("N/A", "proc/stat")
+            )
+
+        if "cpu-power" in wanted:
+            if read_cpu_power is not None:
+                sample = read_cpu_power()
+                source = "victus-hubd"
+            else:
+                sample = self._rapl_sampler.read()
+                source = "direct RAPL"
+            snap.cpu_power = self._format_cpu_power_sample(sample, source)
+
+        if wanted & {"cpu-fan", "gpu-fan"}:
+            cpu_fan, gpu_fan = self._read_hp_fans(find_hwmon_by_name("hp", "hp_wmi", "hp-wmi"))
+            if "cpu-fan" in wanted:
+                snap.cpu_fan = cpu_fan
+            if "gpu-fan" in wanted:
+                snap.gpu_fan = gpu_fan
+
+        if wanted & {"pwm-value", "pwm-mode"}:
+            pwm_mode, pwm_value = self._read_hp_pwm(find_hwmon_by_name("hp", "hp_wmi", "hp-wmi"))
+            if "pwm-mode" in wanted:
+                snap.pwm_mode = pwm_mode
+            if "pwm-value" in wanted:
+                snap.pwm_value = pwm_value
+
+        if "ram-usage" in wanted:
+            snap.ram_usage, snap.ram_usage_pct, snap.ram_used_gb, snap.ram_total_gb = self._read_ram()
+
+        extras: list[ExtraSensor] = []
+        if "cpu-frequency" in wanted:
+            extras.extend(self._read_cpu_frequencies())
+        if "lm-sensors" in wanted:
+            extras.extend(self._read_lm_sensors())
+        snap.extra_sensors = extras
+
+        if wanted & GPU_QUERY_KEYS:
+            self._fill_gpu(snap, wanted, disable_nvidia=disable_nvidia)
+        return snap
+
+    def _fill_gpu(self, snap: SensorSnapshot, wanted: frozenset[str], *, disable_nvidia: bool) -> None:
+        present = temps._has_nvidia()
+        suspended = present and temps.dgpu_runtime_suspended()
+        if present and (disable_nvidia or suspended):
+            temps.query_nvidia_fields(temperature=True, disable_nvidia=disable_nvidia)
+            text = "Disabled" if disable_nvidia else "Suspended"
+            source = (
+                "NVIDIA queries disabled in Settings"
+                if disable_nvidia
+                else "dGPU runtime PM (not woken)"
+            )
+            if "gpu-temp" in wanted:
+                snap.gpu_temp = reading(text, source)
+            if "gpu-power" in wanted:
+                snap.gpu_power = reading(text, source)
+            if "gpu-usage" in wanted:
+                snap.gpu_usage = reading(text, source)
+            return
+
+        if not present:
+            if "gpu-temp" in wanted:
+                snap.gpu_temp, snap.gpu_temp_c = self._read_amd_gpu_temp()
+            if "gpu-power" in wanted:
+                snap.gpu_power = self._read_amd_gpu_power()
+            if "gpu-usage" in wanted:
+                snap.gpu_usage = reading("N/A", "dGPU off or unavailable")
+            return
+
+        fields = temps.query_nvidia_fields(
+            temperature="gpu-temp" in wanted,
+            power="gpu-power" in wanted,
+            utilization="gpu-usage" in wanted,
+        )
+        if "gpu-temp" in wanted:
+            if fields.temp_c is None:
+                snap.gpu_temp = reading("Unavailable", "no NVIDIA temp (hwmon/NVML/smi)")
+            else:
+                snap.gpu_temp_c = fields.temp_c
+                snap.gpu_temp = reading(f"{fields.temp_c:.0f} C", fields.temp_source or "nvml")
+        if "gpu-power" in wanted:
+            if fields.power_w is None:
+                snap.gpu_power = reading("Unavailable", "no NVIDIA power (hwmon/NVML/smi)")
+            else:
+                snap.gpu_power = reading(f"{fields.power_w:.1f} W", fields.power_source or "nvml")
+        if "gpu-usage" in wanted:
+            if fields.util_pct is None:
+                snap.gpu_usage = reading("Unavailable", "no NVIDIA utilization (NVML/smi)")
+            else:
+                snap.gpu_usage_pct = fields.util_pct
+                snap.gpu_usage = reading(f"{fields.util_pct:.0f} %", fields.util_source or "nvml")
+
+    def _read_amd_gpu_temp(self) -> tuple[SensorReading, float | None]:
+        for hwmon in iter_hwmon_dirs():
+            name = (read_text(hwmon / "name") or "").lower()
+            if name not in {"amdgpu", "nouveau"}:
+                continue
+            found = []
+            try:
+                entries = list(hwmon.iterdir())
+            except OSError:
+                continue
+            for path in entries:
+                fname = path.name
+                if not fname.startswith("temp") or not fname.endswith("_input"):
+                    continue
+                value = read_int(path)
+                if value is not None:
+                    label = read_text(path.with_name(fname.replace("_input", "_label"))) or name
+                    found.append((value, path, label))
+            if found:
+                value, source, label = max(found, key=lambda item: item[0])
+                temp_c = value / 1000.0
+                return reading(f"{temp_c:.1f} C", f"{label}: {source}"), temp_c
+        return reading("Unavailable", "no GPU temp sensor"), None
+
+    def _read_amd_gpu_power(self) -> SensorReading:
+        for hwmon in iter_hwmon_dirs():
+            if (read_text(hwmon / "name") or "").lower() not in {"amdgpu", "nouveau"}:
+                continue
+            try:
+                entries = list(hwmon.iterdir())
+            except OSError:
+                continue
+            for path in entries:
+                fname = path.name
+                if fname.startswith("power") and fname.endswith("_input"):
+                    value = read_int(path)
+                    if value is not None:
+                        return reading(f"{value / 1_000_000:.1f} W", str(path))
+        return reading("Unavailable", "no GPU power sensor")
+
     # ── read_all (sensors.rs) ──
 
     def read_all(self, *, full: bool = True) -> SensorSnapshot:
@@ -444,7 +602,8 @@ class SensorReader:
         # UI sensor thread uses full=True only while the window is shown.
         hp_hwmon = find_hwmon_by_name("hp", "hp_wmi", "hp-wmi")
         # hwmon → NVML → nvidia-smi; skipped while dGPU runtime-suspended.
-        nvidia = self._nvidia.read()
+        from victus_hub.backend.nvidia import nvidia_queries_disabled
+        nvidia = self._nvidia_reader().read()
 
         cpu_temp, cpu_temp_c = self._read_cpu_temp()
         gpu_temp, gpu_temp_c = self._read_gpu_temp(nvidia)
@@ -471,9 +630,9 @@ class SensorReader:
         gpu_usage_pct = nvidia.utilization if nvidia else None
         if gpu_usage_pct is not None:
             gpu_usage = reading(f"{gpu_usage_pct:.0f} %", nvidia.source)
-        elif nvidia_queries_disabled() and self._nvidia.has_nvidia():
+        elif nvidia_queries_disabled() and self._nvidia_reader().has_nvidia():
             gpu_usage = reading("Disabled", "NVIDIA queries disabled in Settings")
-        elif self._nvidia.has_nvidia() and self._nvidia.is_runtime_suspended():
+        elif self._nvidia_reader().has_nvidia() and self._nvidia_reader().is_runtime_suspended():
             gpu_usage = reading("Suspended", "dGPU runtime PM (not woken)")
         else:
             gpu_usage = reading("N/A", "dGPU off or unavailable")

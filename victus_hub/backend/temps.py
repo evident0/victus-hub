@@ -11,7 +11,9 @@ from __future__ import annotations
 import ctypes
 import shutil
 import subprocess
+import threading
 import time
+from dataclasses import dataclass
 from pathlib import Path
 
 from victus_hub.backend.sysfs_read import find_hwmon_by_name, iter_hwmon_dirs, read_int, read_text
@@ -29,8 +31,41 @@ _nvml_lib: ctypes.CDLL | None = None
 _nvml_handle = ctypes.c_void_p()
 _nvml_inited = False
 _nvml_unavailable = False
-_smi_retry_at = 0.0
+# Per-column backoff. A failed power or utilization query must not silence
+# the fan curve's temperature fallback.
+_smi_temp_retry_at = 0.0
+_smi_power_retry_at = 0.0
+_smi_util_retry_at = 0.0
 _smi_known_missing = False
+_nvml_lock = threading.RLock()
+_smi_lock = threading.Lock()
+_display_gpu_until = 0.0
+_DISPLAY_HOLD_S = 3.0
+
+
+@dataclass(frozen=True)
+class NvidiaFields:
+    """One shared NVML session's answer. Unrequested fields stay None."""
+
+    temp_c: float | None = None
+    power_w: float | None = None
+    util_pct: float | None = None
+    temp_source: str = ""
+    power_source: str = ""
+    util_source: str = ""
+
+
+def hold_display_gpu(active: bool) -> None:
+    """Remember that the GUI just asked for a GPU field, or that it stopped."""
+    global _display_gpu_until
+    with _nvml_lock:
+        _display_gpu_until = time.monotonic() + _DISPLAY_HOLD_S if active else 0.0
+
+
+def display_gpu_held() -> bool:
+    """True while a recent GUI request still wants GPU temperature, power, or use."""
+    with _nvml_lock:
+        return time.monotonic() < _display_gpu_until
 
 
 def _has_nvidia() -> bool:
@@ -138,8 +173,9 @@ def _nvml_shutdown() -> None:
 
 
 def close_nvidia() -> None:
-    """Release the fan thread's NVML session when temperature polling stops."""
-    _nvml_shutdown()
+    """Release the shared NVML session when nothing needs it."""
+    with _nvml_lock:
+        _nvml_shutdown()
 
 
 def _nvml_ensure() -> bool:
@@ -181,10 +217,16 @@ def _nvml_ensure() -> bool:
 
 
 def _nvml_temp_c() -> float | None:
-    if not _nvml_ensure():
-        return None
+    with _nvml_lock:
+        if not _nvml_ensure():
+            return None
+        return _nvml_read_temp()
+
+
+def _nvml_read_temp() -> float | None:
     lib = _nvml_lib
-    assert lib is not None
+    if lib is None:
+        return None
     temp = ctypes.c_uint()
     fn = lib.nvmlDeviceGetTemperature
     fn.argtypes = [ctypes.c_void_p, ctypes.c_uint, ctypes.POINTER(ctypes.c_uint)]
@@ -194,43 +236,54 @@ def _nvml_temp_c() -> float | None:
     return float(temp.value)
 
 
+def _nvml_power_w() -> float | None:
+    if not _nvml_ensure():
+        return None
+    lib = _nvml_lib
+    if lib is None:
+        return None
+    mw = ctypes.c_uint()
+    fn = lib.nvmlDeviceGetPowerUsage
+    fn.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_uint)]
+    fn.restype = ctypes.c_int
+    if fn(_nvml_handle, ctypes.byref(mw)) != _NVML_SUCCESS or mw.value > 200_000:
+        return None
+    return mw.value / 1000.0
+
+
+def _nvml_util_pct() -> float | None:
+    if not _nvml_ensure():
+        return None
+    lib = _nvml_lib
+    if lib is None:
+        return None
+
+    class _Util(ctypes.Structure):
+        _fields_ = [("gpu", ctypes.c_uint), ("memory", ctypes.c_uint)]
+
+    util = _Util()
+    fn = lib.nvmlDeviceGetUtilizationRates
+    fn.argtypes = [ctypes.c_void_p, ctypes.POINTER(_Util)]
+    fn.restype = ctypes.c_int
+    if fn(_nvml_handle, ctypes.byref(util)) != _NVML_SUCCESS:
+        return None
+    return float(util.gpu)
+
+
+def _smi_backoff(now: float, *, temperature: bool, power: bool, utilization: bool) -> None:
+    global _smi_temp_retry_at, _smi_power_retry_at, _smi_util_retry_at
+    until = now + _SMI_FAIL_BACKOFF_S
+    if temperature:
+        _smi_temp_retry_at = until
+    if power:
+        _smi_power_retry_at = until
+    if utilization:
+        _smi_util_retry_at = until
+
+
 def _smi_temp_c() -> float | None:
-    global _smi_retry_at, _smi_known_missing
-    if _smi_known_missing:
-        return None
-    now = time.monotonic()
-    if now < _smi_retry_at:
-        return None
-    smi = shutil.which("nvidia-smi")
-    if smi is None:
-        _smi_known_missing = True
-        return None
-    try:
-        result = subprocess.run(
-            [smi, "--query-gpu=temperature.gpu", "--format=csv,noheader,nounits"],
-            capture_output=True,
-            text=True,
-            timeout=_SMI_TIMEOUT_S,
-        )
-    except (OSError, subprocess.TimeoutExpired):
-        _smi_retry_at = now + _SMI_FAIL_BACKOFF_S
-        return None
-    if result.returncode != 0:
-        _smi_retry_at = now + _SMI_FAIL_BACKOFF_S
-        return None
-    raw = (result.stdout or "").strip().splitlines()
-    if not raw:
-        _smi_retry_at = now + _SMI_FAIL_BACKOFF_S
-        return None
-    text = raw[0].strip()
-    if not text or text.upper() in {"N/A", "[N/A]"}:
-        _smi_retry_at = now + _SMI_FAIL_BACKOFF_S
-        return None
-    try:
-        return float(text)
-    except ValueError:
-        _smi_retry_at = now + _SMI_FAIL_BACKOFF_S
-        return None
+    temp, _power, _util = _smi_selected(temperature=True, power=False, utilization=False)
+    return temp
 
 
 def _amd_or_nouveau_temp_c() -> float | None:
@@ -257,6 +310,159 @@ def _amd_or_nouveau_temp_c() -> float | None:
     return best / 1000.0
 
 
+def _smi_selected(
+    *, temperature: bool, power: bool, utilization: bool,
+) -> tuple[float | None, float | None, float | None]:
+    """Last-resort nvidia-smi for only the requested columns.
+
+    Each column has its own backoff. A miss on power or utilization does not
+    suppress a later temperature read.
+    """
+    global _smi_known_missing
+    missing = (None, None, None)
+    if not (temperature or power or utilization):
+        return missing
+    with _smi_lock:
+        if _smi_known_missing:
+            return missing
+        now = time.monotonic()
+        want_temp = temperature and now >= _smi_temp_retry_at
+        want_util = utilization and now >= _smi_util_retry_at
+        want_power = power and now >= _smi_power_retry_at
+        if not (want_temp or want_util or want_power):
+            return missing
+        columns: list[str] = []
+        if want_temp:
+            columns.append("temperature.gpu")
+        if want_util:
+            columns.append("utilization.gpu")
+        if want_power:
+            columns.append("power.draw")
+        smi = shutil.which("nvidia-smi")
+        if smi is None:
+            _smi_known_missing = True
+            return missing
+    try:
+        result = subprocess.run(
+            [smi, f"--query-gpu={','.join(columns)}", "--format=csv,noheader,nounits"],
+            capture_output=True,
+            text=True,
+            timeout=_SMI_TIMEOUT_S,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        with _smi_lock:
+            _smi_backoff(now, temperature=want_temp, power=want_power, utilization=want_util)
+        return missing
+    if result.returncode != 0:
+        with _smi_lock:
+            _smi_backoff(now, temperature=want_temp, power=want_power, utilization=want_util)
+        return missing
+    raw = (result.stdout or "").strip().splitlines()
+    if not raw:
+        with _smi_lock:
+            _smi_backoff(now, temperature=want_temp, power=want_power, utilization=want_util)
+        return missing
+    parts = [part.strip() for part in raw[0].split(",")]
+
+    def _at(index: int) -> float | None:
+        if index >= len(parts):
+            return None
+        text = parts[index]
+        if not text or text.upper() in {"N/A", "[N/A]"}:
+            return None
+        try:
+            return float(text)
+        except ValueError:
+            return None
+
+    cursor = 0
+    temp = power_w = util = None
+    if want_temp:
+        temp = _at(cursor)
+        cursor += 1
+    if want_util:
+        util = _at(cursor)
+        cursor += 1
+    if want_power:
+        power_w = _at(cursor)
+    with _smi_lock:
+        _smi_backoff(
+            now,
+            temperature=want_temp and temp is None,
+            power=want_power and power_w is None,
+            utilization=want_util and util is None,
+        )
+    return temp, power_w, util
+
+
+def query_nvidia_fields(
+    *,
+    temperature: bool = False,
+    power: bool = False,
+    utilization: bool = False,
+    disable_nvidia: bool = False,
+) -> NvidiaFields:
+    """Read only the requested NVIDIA fields on the fan loop's NVML session.
+
+    Temperature alone uses hwmon or ``nvmlDeviceGetTemperature``. Power and
+    utilization are not asked unless the caller set those flags.
+    """
+    if not (temperature or power or utilization):
+        return NvidiaFields()
+    with _nvml_lock:
+        if not _has_nvidia():
+            return NvidiaFields()
+        if disable_nvidia or dgpu_runtime_suspended():
+            _nvml_shutdown()
+            return NvidiaFields()
+        temp = _nvidia_hwmon_temp_c() if temperature else None
+        temp_source = "hwmon:nvidia" if temp is not None else ""
+        if temperature and temp is not None and not power and not utilization:
+            return NvidiaFields(temp_c=temp, temp_source=temp_source)
+        power_w = None
+        util = None
+        power_source = ""
+        util_source = ""
+        if _nvml_ensure():
+            if power:
+                power_w = _nvml_power_w()
+                power_source = "nvml" if power_w is not None else ""
+            if utilization:
+                util = _nvml_util_pct()
+                util_source = "nvml" if util is not None else ""
+            if temperature and temp is None:
+                temp = _nvml_read_temp()
+                temp_source = "nvml" if temp is not None else ""
+        missing_temp = temperature and temp is None
+        missing_power = power and power_w is None
+        missing_util = utilization and util is None
+    # nvidia-smi stays outside the NVML lock so a 1.2 s fallback cannot stall
+    # the fan tick or close_nvidia.
+    if missing_temp or missing_power or missing_util:
+        smi_temp, smi_power, smi_util = _smi_selected(
+            temperature=missing_temp,
+            power=missing_power,
+            utilization=missing_util,
+        )
+        if missing_temp and smi_temp is not None:
+            temp = smi_temp
+            temp_source = "nvidia-smi"
+        if missing_power and smi_power is not None:
+            power_w = smi_power
+            power_source = "nvidia-smi"
+        if missing_util and smi_util is not None:
+            util = smi_util
+            util_source = "nvidia-smi"
+    return NvidiaFields(
+        temp_c=temp,
+        power_w=power_w,
+        util_pct=util,
+        temp_source=temp_source,
+        power_source=power_source,
+        util_source=util_source,
+    )
+
+
 def read_gpu_temp_c(*, disable_nvidia: bool = False) -> float | None:
     """Return GPU temperature in °C.
 
@@ -264,15 +470,16 @@ def read_gpu_temp_c(*, disable_nvidia: bool = False) -> float | None:
     then hwmon → NVML → nvidia-smi. AMD/Nouveau use hwmon only.
     """
     if _has_nvidia():
-        if disable_nvidia or dgpu_runtime_suspended():
-            _nvml_shutdown()
-            return None
-        hwmon = _nvidia_hwmon_temp_c()
-        if hwmon is not None:
-            return hwmon
-        nvml = _nvml_temp_c()
-        if nvml is not None:
-            return nvml
+        with _nvml_lock:
+            if disable_nvidia or dgpu_runtime_suspended():
+                _nvml_shutdown()
+                return None
+            hwmon = _nvidia_hwmon_temp_c()
+            if hwmon is not None:
+                return hwmon
+            nvml = _nvml_temp_c()
+            if nvml is not None:
+                return nvml
         return _smi_temp_c()
     return _amd_or_nouveau_temp_c()
 

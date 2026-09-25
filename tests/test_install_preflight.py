@@ -305,6 +305,7 @@ python.chmod(0o755)
         self.assertIn("systemctl restart victus-hubd.service", log)
         service = (self.root / "etc/systemd/system/victus-hubd.service").read_text()
         self.assertIn("/current/bin/python -I -m victus_hubd", service)
+        self.assertIn("DeviceAllow=char-nvidia* rw", service)
         self.assertNotIn("PYTHONPATH", service)
         self.assertNotIn("@ROOT_DIR@", service)
         launcher = self.root / "usr/local/bin/victus-hub"

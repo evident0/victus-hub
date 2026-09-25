@@ -172,53 +172,34 @@ def _smi(query: str) -> str | None:
     return raw
 
 
+_NVIDIA_PROC_GPUS = Path("/proc/driver/nvidia/gpus")
+
+
 @_query_allowed
 def get_gpu_name() -> str | None:
-    """GPU product name from NVML or nvidia-smi, or None if unavailable."""
-    # Try NVML first
-    for libname in ("libnvidia-ml.so.1", "libnvidia-ml.so"):
+    """GPU product name from the driver's proc file, without NVML.
+
+    ``nvmlInit`` maps libcuda into this process and does not unmap it.
+    The Model line is already published by the kernel module.
+    """
+    root = _NVIDIA_PROC_GPUS
+    if not root.is_dir():
+        return None
+    try:
+        entries = sorted(root.iterdir())
+    except OSError:
+        return None
+    for entry in entries:
+        info = entry / "information"
         try:
-            lib = ctypes.CDLL(libname)
+            text = info.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
-        try:
-            init = getattr(lib, "nvmlInit_v2", None) or getattr(lib, "nvmlInit", None)
-            get_handle = getattr(
-                lib, "nvmlDeviceGetHandleByIndex_v2", None,
-            ) or getattr(lib, "nvmlDeviceGetHandleByIndex", None)
-            get_name = lib.nvmlDeviceGetName
-            shutdown = getattr(lib, "nvmlShutdown", None)
-            if init is None or get_handle is None or get_name is None:
-                continue
-            init.restype = ctypes.c_int
-            if init() != _NVML_SUCCESS:
-                continue
-            get_handle.argtypes = [ctypes.c_uint, ctypes.POINTER(ctypes.c_void_p)]
-            get_handle.restype = ctypes.c_int
-            handle = ctypes.c_void_p()
-            if get_handle(0, ctypes.byref(handle)) != _NVML_SUCCESS or not handle:
-                if shutdown:
-                    shutdown()
-                continue
-            buf = ctypes.create_string_buffer(64)
-            get_name.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_uint]
-            get_name.restype = ctypes.c_int
-            if get_name(handle, buf, 64) == _NVML_SUCCESS:
-                name = buf.value.decode("utf-8", errors="replace").strip("\x00").strip()
-                if shutdown:
-                    shutdown()
+        for line in text.splitlines():
+            if line.startswith("Model:"):
+                name = line.split(":", 1)[1].strip()
                 if name:
                     return name
-            if shutdown:
-                shutdown()
-        except Exception:
-            continue
-
-    # Fallback: nvidia-smi
-    raw = _smi("name")
-    if raw:
-        return raw
-
     return None
 
 

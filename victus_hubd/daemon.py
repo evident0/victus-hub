@@ -13,7 +13,7 @@ import socket
 import threading
 import time
 
-from victus_hub.backend import protocol
+from victus_hub.backend import protocol, temps
 from victus_hub.backend.shortcut_policy import validate_shortcut
 from victus_hub.backend.fan_config import config_from_dict
 from victus_hub.backend.rapl import RaplPowerSampler
@@ -356,6 +356,18 @@ def _parse_json_object(body: str, name: str) -> dict:
     return payload
 
 
+_sensor_reader = None
+_sensor_lock = threading.Lock()
+
+
+def _get_sensor_reader():
+    global _sensor_reader
+    if _sensor_reader is None:
+        from victus_hub.backend.sensors import SensorReader
+        _sensor_reader = SensorReader()
+    return _sensor_reader
+
+
 def _make_dispatch(
     sampler: RaplPowerSampler,
     sampler_lock: threading.Lock | None,
@@ -576,6 +588,39 @@ def _make_dispatch(
         except RuntimeError as e:
             return protocol.format_status_response((False, str(e)))
 
+    def _sensors(body: str) -> str:
+        from victus_hub.backend.sensor_keys import GPU_QUERY_KEYS, REQUESTABLE_KEYS
+
+        raw = body.strip().strip("\t")
+        keys = [part.strip() for part in raw.split(",") if part.strip()] if raw else []
+        unknown = [key for key in keys if key not in REQUESTABLE_KEYS]
+        if unknown:
+            raise RuntimeError("unknown sensors: " + ", ".join(unknown))
+        wanted = frozenset(keys)
+        temps.hold_display_gpu(bool(wanted & GPU_QUERY_KEYS))
+        if not wanted:
+            if runtime is not None and not runtime.fan_needs_gpu_temp():
+                temps.close_nvidia()
+            return protocol.format_sensors_response(protocol.snapshot_from_payload({}))
+        if runtime is None:
+            raise RuntimeError("runtime is not running")
+
+        def read_power():
+            if sampler_lock is not None:
+                with sampler_lock:
+                    return sampler.read()
+            return sampler.read()
+
+        with _sensor_lock:
+            snap = _get_sensor_reader().read_requested(
+                wanted,
+                read_cpu_power=read_power,
+                disable_nvidia=runtime.nvidia_queries_disabled(),
+            )
+        if not (wanted & GPU_QUERY_KEYS) and not runtime.fan_needs_gpu_temp():
+            temps.close_nvidia()
+        return protocol.format_sensors_response(snap)
+
     def _get_state(_body: str) -> str:
         from victus_hub.backend.hardware_capabilities import detect_capabilities
 
@@ -618,6 +663,7 @@ def _make_dispatch(
         ("program-shortcut\t", _program_shortcut),
         ("disable-nvidia-queries\t", _disable_nvidia_queries),
         ("set-profile\t", _set_profile),
+        ("sensors", _sensors),
         ("get-state", _get_state),
         ("prepare-sleep", _prepare_sleep),
         ("resume", _resume),
@@ -671,7 +717,7 @@ def _handle_request(stream, sampler, sampler_lock, runtime, peer):
     handler = None
     for prefix, h in dispatch:
         if (prefix.endswith("\t") and request.startswith(prefix)) or request == prefix or (
-            prefix == "cpu-frequency-config" and request.startswith(prefix + "\t")
+            prefix in {"cpu-frequency-config", "sensors"} and request.startswith(prefix + "\t")
         ):
             matched_prefix = prefix
             handler = h

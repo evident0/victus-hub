@@ -21,6 +21,9 @@ RestrictAddressFamilies=AF_UNIX
 DeviceAllow=/dev/mem r
 DeviceAllow=char-input r
 DeviceAllow=char-202 rw
+# NVML opens the nvidia, nvidiactl, and nvidia-caps device groups. The closed
+# device policy otherwise makes GPU temperature, power, and utilization fail.
+DeviceAllow=char-nvidia* rw
 
 [Install]
 WantedBy=multi-user.target

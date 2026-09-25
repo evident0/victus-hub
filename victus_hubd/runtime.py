@@ -89,10 +89,21 @@ class Runtime:
             if not self._suspend.is_set():
                 return write(*args)
 
-    def _read_temps(self):
+    def nvidia_queries_disabled(self) -> bool:
         with self._lock:
-            disabled = self._state.disable_nvidia_queries and self._profile == 0
-        return temps.read_cpu_gpu_temps(disable_nvidia=disabled)
+            return self._state.disable_nvidia_queries and self._profile == 0
+
+    def fan_needs_gpu_temp(self) -> bool:
+        """Custom/smart curve is driving PWM, so the fan loop must read GPU temp."""
+        config = self.fan_config()
+        return (
+            config.custom_enabled
+            and config.manual_preset is None
+            and sysfs.manual_fan_supported()
+        )
+
+    def _read_temps(self):
+        return temps.read_cpu_gpu_temps(disable_nvidia=self.nvidia_queries_disabled())
 
     def start(self) -> None:
         """Start control threads and apply persisted policy."""
@@ -309,10 +320,12 @@ class Runtime:
             try:
                 config = self.fan_config()
                 if self._suspend.is_set() or not config.custom_enabled or config.manual_preset is not None:
-                    temps.close_nvidia()
+                    if not temps.display_gpu_held():
+                        temps.close_nvidia()
                 if config.custom_enabled and config.manual_preset is None and not sysfs.manual_fan_supported():
                     self._fan._st.on_leave_custom()
-                    temps.close_nvidia()
+                    if not temps.display_gpu_held():
+                        temps.close_nvidia()
                 else:
                     self._fan._poll_once()
             except Exception:

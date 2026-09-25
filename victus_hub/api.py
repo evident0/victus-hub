@@ -12,7 +12,6 @@ from dataclasses import replace
 
 from victus_hub.backend import hardware, profiles, fan_config, daemon_client
 from victus_hub.backend.hardware_capabilities import HardwareCapabilities, detect_capabilities
-from victus_hub.backend.sensors import SensorReader
 from victus_hub.backend.types import (
     SensorReading,
     ExtraSensor,
@@ -63,55 +62,124 @@ __all__ = [
 
 # ── Background sensor reader ──
 
-_reader = SensorReader()
 _snapshot: SensorSnapshot | None = None
+_snapshot_keys: frozenset[str] = frozenset()
 _profile_cache: int | None = None
 _profile_reading_cache: SensorReading | None = None
-_snapshot_lock = threading.Lock()
+_state = threading.Condition()
 _profile_lock = threading.Lock()
+_sensor_cv = threading.Condition()
 _snapshot_running = True
-# When False, the sensor-poll thread sleeps. Fan/lighting/power loops live
-# in the daemon, so hidden UI does not need temps. Flipped by the GUI on
-# visibility changes (api.set_ui_active).
-_ui_active = True
-_ui_gate = threading.Event()
-_ui_gate.set()
+# The window turns this on when it is actually on screen. A hidden or
+# tray-minimized UI does not ask the daemon for informational sensors.
+_ui_active = False
+_requested_keys: frozenset[str] = frozenset()
+_release_needed = False
+
+_bg_logger = logging.getLogger("sensor-bg")
+
+
+def set_requested_sensors(keys) -> None:
+    """Replace the informational sensors the visible page is allowed to see.
+
+    An empty set schedules a release on the sensor thread. The caller does
+    not wait on the daemon.
+    """
+    global _requested_keys, _release_needed
+    new = frozenset(keys)
+    with _sensor_cv:
+        if not new and _requested_keys:
+            _release_needed = True
+        _requested_keys = new
+        _sensor_cv.notify_all()
 
 
 def set_ui_active(active: bool) -> None:
     """Tell the background sensor loop whether the UI is being looked at."""
     global _ui_active
-    _ui_active = active
-    if active:
-        _ui_gate.set()
-    else:
-        _ui_gate.clear()
+    with _sensor_cv:
+        _ui_active = active
+        _sensor_cv.notify_all()
+    if not active:
+        set_requested_sensors(frozenset())
 
-_bg_logger = logging.getLogger("sensor-bg")
+
+def sensors_ready(keys) -> bool:
+    """True when the cache was filled for exactly this key set."""
+    wanted = frozenset(keys)
+    with _state:
+        return _snapshot is not None and _snapshot_keys == wanted
+
+
+def wait_for_sensors(keys, timeout: float = 0.4) -> bool:
+    """Block until the cache matches ``keys`` or the timeout expires."""
+    wanted = frozenset(keys)
+    if not wanted:
+        return True
+    deadline = time.monotonic() + timeout
+    with _state:
+        while _snapshot_keys != wanted:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return False
+            _state.wait(remaining)
+        return True
+
+
+def _wait_for_sensor_change(keys, *, active: bool, timeout: float) -> None:
+    """Sleep until the poll interval ends or the visible request changes."""
+    with _sensor_cv:
+        if (
+            _snapshot_running
+            and not _release_needed
+            and _requested_keys == keys
+            and _ui_active == active
+        ):
+            _sensor_cv.wait(timeout)
 
 
 def _sensor_loop():
-    """Background thread: read sensors every 1 s and cache results."""
-    global _snapshot
-    while _snapshot_running:
-        _ui_gate.wait()
-        if not _snapshot_running:
-            break
-        if not _ui_active:
+    """Ask the daemon for the current page's sensors about once a second."""
+    global _snapshot, _snapshot_keys, _release_needed
+    while True:
+        with _sensor_cv:
+            while _snapshot_running and not _release_needed and not (_ui_active and _requested_keys):
+                _sensor_cv.wait()
+            if not _snapshot_running:
+                return
+            # A hide or an empty page releases before the next read, so that
+            # command is not stuck behind the 1 s poll.
+            release = _release_needed
+            if release:
+                _release_needed = False
+            keys = _requested_keys
+            active = _ui_active
+        if release:
+            try:
+                daemon_client.request_sensors(frozenset(), timeout=1.0)
+            except Exception:
+                _bg_logger.debug("sensor release failed", exc_info=True)
+            continue
+        if not active or not keys:
             continue
         try:
-            snap = _reader.read_all(full=True)
+            snap = daemon_client.request_sensors(keys)
         except Exception as e:
-            _bg_logger.warning("read_all failed: %s", e)
-            time.sleep(1.0)
+            _bg_logger.warning("sensor request failed: %s", e)
+            _wait_for_sensor_change(keys, active=True, timeout=1.0)
             continue
+        with _sensor_cv:
+            if not _snapshot_running or _requested_keys != keys or not _ui_active:
+                continue
         with _profile_lock:
             profile_reading = _profile_reading_cache
         if profile_reading is not None:
             snap.profile = profile_reading
-        with _snapshot_lock:
+        with _state:
             _snapshot = snap
-        time.sleep(1.0)
+            _snapshot_keys = keys
+            _state.notify_all()
+        _wait_for_sensor_change(keys, active=True, timeout=1.0)
 _sensor_thread: threading.Thread | None = None
 
 
@@ -136,7 +204,7 @@ def get_hardware_title() -> str:
 
 
 def read_sensors() -> SensorSnapshot:
-    with _snapshot_lock:
+    with _state:
         snap = _snapshot
     if snap is not None:
         return snap
@@ -159,7 +227,7 @@ def update_profile_cache(index: int, name: str, source: str) -> None:
     with _profile_lock:
         _profile_cache = index
         _profile_reading_cache = reading
-    with _snapshot_lock:
+    with _state:
         if _snapshot is not None:
             _snapshot = replace(_snapshot, profile=reading)
 

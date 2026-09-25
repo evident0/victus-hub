@@ -9,6 +9,7 @@ import socket
 
 from victus_hub.backend import protocol
 from victus_hub.backend.rapl import CpuPowerSample
+from victus_hub.backend.types import SensorSnapshot
 from victus_hub.logging_config import message_debug_level
 
 SOCKET_PATH = "/run/victus-hubd/victus-hub.sock"
@@ -20,11 +21,17 @@ _RESET = "\033[0m"
 logger = logging.getLogger(__name__)
 
 
-def _request_daemon(request: str, quiet: bool = False, *, missing_ok: bool = False) -> str:
+def _request_daemon(
+    request: str,
+    quiet: bool = False,
+    *,
+    missing_ok: bool = False,
+    timeout: float = 1.0,
+) -> str:
     """Send one line to the daemon and read one line back."""
     sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     try:
-        sock.settimeout(1.0)
+        sock.settimeout(timeout)
         sock.connect(SOCKET_PATH)
         sock.sendall(request.encode())
         response = b""
@@ -49,6 +56,15 @@ def _request_daemon(request: str, quiet: bool = False, *, missing_ok: bool = Fal
         raise RuntimeError(str(e))
     finally:
         sock.close()
+
+def request_sensors(keys, *, timeout: float = 6.0) -> SensorSnapshot:
+    """Ask the daemon to read exactly these informational sensors."""
+    body = ",".join(sorted(frozenset(keys)))
+    request = "sensors\n" if not body else f"sensors\t{body}\n"
+    # lm-sensors on the Sensors page can take a few seconds. Other pages do not ask for it.
+    response = _request_daemon(request, quiet=True, timeout=timeout)
+    return protocol.parse_sensors_response(response)
+
 
 def request_cpu_power() -> CpuPowerSample:
     response = _request_daemon("cpu-power\n", quiet=True)
