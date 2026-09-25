@@ -60,6 +60,30 @@ def format_status_response(result: tuple[bool, str]) -> str:
         return f"ERR\t{message}\n"
 
 
+# Profile is filled in by the GUI after the reply. cpu_max_temp is not requested.
+_SNAPSHOT_FIELDS = (
+    ("cpu_fan", "reading"),
+    ("gpu_fan", "reading"),
+    ("cpu_temp", "reading"),
+    ("cpu_temp_c", "number"),
+    ("cpu_usage", "reading"),
+    ("cpu_usage_pct", "number"),
+    ("gpu_temp", "reading"),
+    ("gpu_temp_c", "number"),
+    ("gpu_usage", "reading"),
+    ("gpu_usage_pct", "number"),
+    ("cpu_power", "reading"),
+    ("gpu_power", "reading"),
+    ("pwm_mode", "reading"),
+    ("pwm_value", "reading"),
+    ("ram_usage", "reading"),
+    ("ram_usage_pct", "number"),
+    ("ram_used_gb", "number"),
+    ("ram_total_gb", "number"),
+)
+_EXTRA_FIELDS = ("key", "group", "name", "unit", "value_min", "value_max", "numeric_value")
+
+
 def _reading_json(reading: SensorReading) -> list[str]:
     return [reading.value, reading.source]
 
@@ -72,44 +96,35 @@ def _reading_from_json(value, default: SensorReading) -> SensorReading:
     return SensorReading(text, source)
 
 
+def _optional_float(value):
+    if isinstance(value, bool) or value is None or not isinstance(value, (int, float)):
+        return None
+    return float(value)
+
+
 def snapshot_to_payload(snap: SensorSnapshot) -> dict:
-    return {
-        "cpu_fan": _reading_json(snap.cpu_fan),
-        "gpu_fan": _reading_json(snap.gpu_fan),
-        "cpu_temp": _reading_json(snap.cpu_temp),
-        "cpu_temp_c": snap.cpu_temp_c,
-        "cpu_usage": _reading_json(snap.cpu_usage),
-        "cpu_usage_pct": snap.cpu_usage_pct,
-        "gpu_temp": _reading_json(snap.gpu_temp),
-        "gpu_temp_c": snap.gpu_temp_c,
-        "gpu_usage": _reading_json(snap.gpu_usage),
-        "gpu_usage_pct": snap.gpu_usage_pct,
-        "cpu_power": _reading_json(snap.cpu_power),
-        "gpu_power": _reading_json(snap.gpu_power),
-        "pwm_mode": _reading_json(snap.pwm_mode),
-        "pwm_value": _reading_json(snap.pwm_value),
-        "ram_usage": _reading_json(snap.ram_usage),
-        "ram_usage_pct": snap.ram_usage_pct,
-        "ram_used_gb": snap.ram_used_gb,
-        "ram_total_gb": snap.ram_total_gb,
-        "extra_sensors": [
-            {
-                "key": item.key,
-                "group": item.group,
-                "name": item.name,
-                "unit": item.unit,
-                "value_min": item.value_min,
-                "value_max": item.value_max,
-                "numeric_value": item.numeric_value,
-                "reading": _reading_json(item.reading),
-            }
-            for item in snap.extra_sensors
-        ],
-    }
+    payload = {}
+    for name, kind in _SNAPSHOT_FIELDS:
+        value = getattr(snap, name)
+        payload[name] = _reading_json(value) if kind == "reading" else value
+    payload["extra_sensors"] = [
+        {
+            **{name: getattr(item, name) for name in _EXTRA_FIELDS},
+            "reading": _reading_json(item.reading),
+        }
+        for item in snap.extra_sensors
+    ]
+    return payload
 
 
 def snapshot_from_payload(data: dict) -> SensorSnapshot:
     blank = SensorSnapshot()
+    fields = {}
+    for name, kind in _SNAPSHOT_FIELDS:
+        if kind == "reading":
+            fields[name] = _reading_from_json(data.get(name), getattr(blank, name))
+        else:
+            fields[name] = _optional_float(data.get(name))
     extras = []
     for item in data.get("extra_sensors") or []:
         if not isinstance(item, dict) or not isinstance(item.get("key"), str):
@@ -124,36 +139,8 @@ def snapshot_from_payload(data: dict) -> SensorSnapshot:
             numeric_value=float(item.get("numeric_value") or 0),
             reading=_reading_from_json(item.get("reading"), SensorReading("Unavailable")),
         ))
-
-    def num(name: str):
-        value = data.get(name)
-        if isinstance(value, bool) or value is None:
-            return None
-        if isinstance(value, (int, float)):
-            return float(value)
-        return None
-
-    return SensorSnapshot(
-        cpu_fan=_reading_from_json(data.get("cpu_fan"), blank.cpu_fan),
-        gpu_fan=_reading_from_json(data.get("gpu_fan"), blank.gpu_fan),
-        cpu_temp=_reading_from_json(data.get("cpu_temp"), blank.cpu_temp),
-        cpu_temp_c=num("cpu_temp_c"),
-        cpu_usage=_reading_from_json(data.get("cpu_usage"), blank.cpu_usage),
-        cpu_usage_pct=num("cpu_usage_pct"),
-        gpu_temp=_reading_from_json(data.get("gpu_temp"), blank.gpu_temp),
-        gpu_temp_c=num("gpu_temp_c"),
-        gpu_usage=_reading_from_json(data.get("gpu_usage"), blank.gpu_usage),
-        gpu_usage_pct=num("gpu_usage_pct"),
-        cpu_power=_reading_from_json(data.get("cpu_power"), blank.cpu_power),
-        gpu_power=_reading_from_json(data.get("gpu_power"), blank.gpu_power),
-        pwm_mode=_reading_from_json(data.get("pwm_mode"), blank.pwm_mode),
-        pwm_value=_reading_from_json(data.get("pwm_value"), blank.pwm_value),
-        ram_usage=_reading_from_json(data.get("ram_usage"), blank.ram_usage),
-        ram_usage_pct=num("ram_usage_pct"),
-        ram_used_gb=num("ram_used_gb"),
-        ram_total_gb=num("ram_total_gb"),
-        extra_sensors=extras,
-    )
+    fields["extra_sensors"] = extras
+    return SensorSnapshot(**fields)
 
 
 def format_sensors_response(snap: SensorSnapshot) -> str:

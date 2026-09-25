@@ -7,7 +7,6 @@ so existing UI imports (``from victus_hub.api import FanPoint, ...``) keep worki
 
 import logging
 import threading
-import time
 from dataclasses import replace
 
 from victus_hub.backend import hardware, profiles, fan_config, daemon_client
@@ -109,21 +108,6 @@ def sensors_ready(keys) -> bool:
     wanted = frozenset(keys)
     with _state:
         return _snapshot is not None and _snapshot_keys == wanted
-
-
-def wait_for_sensors(keys, timeout: float = 0.4) -> bool:
-    """Block until the cache matches ``keys`` or the timeout expires."""
-    wanted = frozenset(keys)
-    if not wanted:
-        return True
-    deadline = time.monotonic() + timeout
-    with _state:
-        while _snapshot_keys != wanted:
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                return False
-            _state.wait(remaining)
-        return True
 
 
 def _wait_for_sensor_change(keys, *, active: bool, timeout: float) -> None:

@@ -32,19 +32,9 @@ FANS_PAGE_KEYS = frozenset({
 
 KEYBOARD_PAGE_KEYS: frozenset[str] = frozenset()
 
-SENSORS_PAGE_KEYS = frozenset({
-    "cpu-temp",
-    "cpu-usage",
-    "cpu-power",
-    "gpu-temp",
-    "gpu-usage",
-    "gpu-power",
-    "cpu-fan",
-    "gpu-fan",
+SENSORS_PAGE_KEYS = HOME_PAGE_KEYS | POWER_PAGE_KEYS | frozenset({
     "pwm-value",
     "pwm-mode",
-    "ram-usage",
-    "cpu-frequency",
     "lm-sensors",
 })
 

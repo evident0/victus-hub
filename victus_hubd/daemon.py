@@ -14,6 +14,7 @@ import threading
 import time
 
 from victus_hub.backend import protocol, temps
+from victus_hub.backend.types import SensorSnapshot
 from victus_hub.backend.shortcut_policy import validate_shortcut
 from victus_hub.backend.fan_config import config_from_dict
 from victus_hub.backend.rapl import RaplPowerSampler
@@ -601,7 +602,7 @@ def _make_dispatch(
         if not wanted:
             if runtime is not None and not runtime.fan_needs_gpu_temp():
                 temps.close_nvidia()
-            return protocol.format_sensors_response(protocol.snapshot_from_payload({}))
+            return protocol.format_sensors_response(SensorSnapshot())
         if runtime is None:
             raise RuntimeError("runtime is not running")
 

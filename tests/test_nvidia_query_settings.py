@@ -5,7 +5,7 @@ import os
 import subprocess
 import sys
 from threading import Event, Thread
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 
 from victus_hub.backend import nvidia
 
@@ -24,67 +24,38 @@ class NvidiaQuerySettingsTests(unittest.TestCase):
         self.addCleanup(self.power_save_patch.stop)
 
     def test_saved_preference_only_blocks_in_power_save(self):
-        reader = nvidia.NvidiaReader()
-        metrics = nvidia.NvidiaMetrics("42", 5.0, 0.0, "nvml")
-        with patch.object(reader, "has_nvidia", return_value=True), \
-                patch.object(reader, "is_runtime_suspended", return_value=False), \
-                patch.object(reader, "_query_nvml", return_value=metrics), \
-                patch.object(nvidia, "_hwmon_nvidia_temp_c", return_value=None):
+        with patch.object(nvidia.Path, "is_dir") as listed:
             for profile in (1, 2, 0, 1):
                 nvidia.set_nvidia_power_profile(profile)
                 self.assertTrue(nvidia.nvidia_query_disable_enabled())
-                self.assertEqual(reader.read(), None if profile == 0 else metrics)
+                blocked = profile == 0
+                self.assertEqual(nvidia.nvidia_queries_disabled(), blocked)
+                if blocked:
+                    self.assertIsNone(nvidia.get_gpu_name())
+        listed.assert_not_called()
         self.settings.setValue.assert_not_called()
 
-    def test_enabling_outside_power_save_keeps_session_open(self):
+    def test_preference_outside_power_save_does_not_block(self):
         nvidia.set_nvidia_power_profile(1)
-        reader = nvidia.NvidiaReader()
-        reader._lib = Mock()
-        reader._inited = True
         nvidia.set_nvidia_queries_disabled(True)
-        nvidia._close_disabled_readers()
-        reader._lib.nvmlShutdown.assert_not_called()
+        self.assertFalse(nvidia.nvidia_queries_disabled())
         nvidia.set_nvidia_power_profile(0)
-        nvidia._close_disabled_readers()
-        reader._lib.nvmlShutdown.assert_called_once()
+        self.assertTrue(nvidia.nvidia_queries_disabled())
+        self.assertIsNone(nvidia.get_gpu_name())
 
-    def test_saved_disable_blocks_all_entry_points_without_polling(self):
-        reader = nvidia.NvidiaReader()
-        with patch.object(nvidia.ctypes, "CDLL") as library, \
-                patch.object(nvidia.subprocess, "run") as process, \
-                patch.object(nvidia, "_hwmon_nvidia_temp_c") as hwmon, \
-                patch.object(reader, "has_nvidia") as detect:
+    def test_saved_disable_blocks_name_reads_without_io(self):
+        with patch.object(nvidia.Path, "is_dir") as listed:
             for _ in range(100):
-                self.assertIsNone(reader.read())
-                self.assertIsNone(reader._query_nvml())
-                self.assertIsNone(reader._query_smi())
                 self.assertIsNone(nvidia.get_gpu_name())
-            library.assert_not_called()
-            process.assert_not_called()
-            hwmon.assert_not_called()
-            detect.assert_not_called()
+        listed.assert_not_called()
         self.settings.value.assert_called_once()
 
-    def test_toggle_releases_session_once_and_can_resume(self):
-        reader = nvidia.NvidiaReader()
-        reader._lib = Mock()
-        reader._inited = True
+    def test_toggle_persists_and_can_resume(self):
         nvidia.set_nvidia_queries_disabled(True)
-        nvidia._close_disabled_readers()  # Wait for cleanup only in the test.
-        self.assertFalse(reader._inited)
-        reader._lib.nvmlShutdown.assert_called_once()
-        for _ in range(10):
-            self.assertIsNone(reader.read())
-        reader._lib.nvmlShutdown.assert_called_once()
+        self.assertIsNone(nvidia.get_gpu_name())
         self.settings.setValue.assert_called_with(nvidia.DISABLE_NVIDIA_QUERIES_KEY, True)
-
         nvidia.set_nvidia_queries_disabled(False)
-        metrics = nvidia.NvidiaMetrics("42", 5.0, 0.0, "nvml")
-        with patch.object(reader, "has_nvidia", return_value=True), \
-                patch.object(reader, "is_runtime_suspended", return_value=False), \
-                patch.object(reader, "_query_nvml", return_value=metrics), \
-                patch.object(nvidia, "_hwmon_nvidia_temp_c", return_value=None):
-            self.assertEqual(reader.read(), metrics)
+        self.assertFalse(nvidia.nvidia_queries_disabled())
         self.settings.setValue.assert_called_with(nvidia.DISABLE_NVIDIA_QUERIES_KEY, False)
 
     def test_disable_does_not_wait_for_inflight_query(self):
@@ -105,7 +76,6 @@ class NvidiaQuerySettingsTests(unittest.TestCase):
 
         def toggle():
             nvidia.set_nvidia_queries_disabled(True)
-            # A disabled name read also must not wait for the lock.
             self.assertIsNone(nvidia.get_gpu_name())
             toggled.set()
 
@@ -117,7 +87,6 @@ class NvidiaQuerySettingsTests(unittest.TestCase):
             release.set()
             worker.join()
             caller.join()
-            nvidia._close_disabled_readers()
 
     def test_api_import_does_not_start_worker_before_qapplication(self):
         result = subprocess.run(

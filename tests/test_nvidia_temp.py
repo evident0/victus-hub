@@ -10,7 +10,7 @@ import subprocess
 import unittest
 from pathlib import Path
 
-from victus_hub.backend.nvidia import NVML_TEMPERATURE_GPU, NvidiaReader
+from victus_hub.backend import temps
 
 
 def _has_nvidia() -> bool:
@@ -26,7 +26,7 @@ def _smi_temp() -> float | None:
     if not smi:
         return None
     try:
-        r = subprocess.run(
+        result = subprocess.run(
             [smi, "--query-gpu=temperature.gpu", "--format=csv,noheader,nounits"],
             capture_output=True,
             text=True,
@@ -34,40 +34,27 @@ def _smi_temp() -> float | None:
         )
     except (OSError, subprocess.TimeoutExpired):
         return None
-    if r.returncode != 0:
+    if result.returncode != 0:
         return None
     try:
-        return float(r.stdout.strip().splitlines()[0])
+        return float(result.stdout.strip().splitlines()[0])
     except (ValueError, IndexError):
         return None
 
 
 @unittest.skipUnless(_has_nvidia() and shutil.which("nvidia-smi"), "NVIDIA required")
 class TestNvidiaTemp(unittest.TestCase):
-    def test_sensor_id(self):
-        self.assertEqual(NVML_TEMPERATURE_GPU, 0)
-
-    def test_reader_matches_smi(self):
-        reader = NvidiaReader()
-        try:
-            if reader.is_runtime_suspended():
-                self.skipTest("dGPU suspended")
-            m = reader.read()
-            if m is None:
-                self.skipTest("no metrics")
-            smi = _smi_temp()
-            if smi is None:
-                self.skipTest("nvidia-smi failed")
-            self.assertLessEqual(abs(float(m.temperature) - smi), 1.0)
-            # no idle-disarm: second read still works
-            self.assertIsNotNone(reader.read())
-        finally:
-            reader.close()
-
-    def test_no_idle_disarm_state(self):
-        r = NvidiaReader()
-        self.assertFalse(hasattr(r, "_armed"))
-        self.assertFalse(hasattr(r, "_idle_streak"))
+    def test_daemon_temp_matches_smi(self):
+        if temps.dgpu_runtime_suspended():
+            self.skipTest("dGPU suspended")
+        smi = _smi_temp()
+        if smi is None:
+            self.skipTest("nvidia-smi failed")
+        first = temps.read_gpu_temp_c()
+        if first is None:
+            self.skipTest("no metrics")
+        self.assertLessEqual(abs(first - smi), 1.0)
+        self.assertIsNotNone(temps.read_gpu_temp_c())
 
 
 if __name__ == "__main__":

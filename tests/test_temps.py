@@ -32,8 +32,8 @@ class TestGpuTempRespectsRuntimeSuspend(unittest.TestCase):
         with patch("victus_hub.backend.temps._has_nvidia", return_value=True), \
                 patch("victus_hub.backend.temps.dgpu_runtime_suspended", return_value=False), \
                 patch("victus_hub.backend.temps._nvidia_hwmon_temp_c") as hwmon, \
-                patch("victus_hub.backend.temps._nvml_temp_c") as nvml, \
-                patch("victus_hub.backend.temps._smi_temp_c") as smi, \
+                patch("victus_hub.backend.temps._nvml_ensure") as nvml, \
+                patch("victus_hub.backend.temps._smi_selected") as smi, \
                 patch("victus_hub.backend.temps._nvml_shutdown") as shutdown:
             self.assertIsNone(read_gpu_temp_c(disable_nvidia=True))
             hwmon.assert_not_called()
@@ -45,8 +45,8 @@ class TestGpuTempRespectsRuntimeSuspend(unittest.TestCase):
         with patch("victus_hub.backend.temps._has_nvidia", return_value=True), \
                 patch("victus_hub.backend.temps.dgpu_runtime_suspended", return_value=True), \
                 patch("victus_hub.backend.temps._nvidia_hwmon_temp_c") as hwmon, \
-                patch("victus_hub.backend.temps._nvml_temp_c") as nvml, \
-                patch("victus_hub.backend.temps._smi_temp_c") as smi, \
+                patch("victus_hub.backend.temps._nvml_ensure") as nvml, \
+                patch("victus_hub.backend.temps._smi_selected") as smi, \
                 patch("victus_hub.backend.temps._nvml_shutdown") as shutdown:
             self.assertIsNone(read_gpu_temp_c())
             hwmon.assert_not_called()
@@ -58,8 +58,9 @@ class TestGpuTempRespectsRuntimeSuspend(unittest.TestCase):
         with patch("victus_hub.backend.temps._has_nvidia", return_value=True), \
                 patch("victus_hub.backend.temps.dgpu_runtime_suspended", return_value=False), \
                 patch("victus_hub.backend.temps._nvidia_hwmon_temp_c", return_value=None), \
-                patch("victus_hub.backend.temps._nvml_temp_c", return_value=71.0) as nvml, \
-                patch("victus_hub.backend.temps._smi_temp_c") as smi:
+                patch("victus_hub.backend.temps._nvml_ensure", return_value=True), \
+                patch("victus_hub.backend.temps._nvml_read_temp", return_value=71.0) as nvml, \
+                patch("victus_hub.backend.temps._smi_selected") as smi:
             self.assertEqual(read_gpu_temp_c(), 71.0)
             nvml.assert_called_once()
             smi.assert_not_called()
@@ -68,7 +69,7 @@ class TestGpuTempRespectsRuntimeSuspend(unittest.TestCase):
         with patch("victus_hub.backend.temps._has_nvidia", return_value=True), \
                 patch("victus_hub.backend.temps.dgpu_runtime_suspended", return_value=False), \
                 patch("victus_hub.backend.temps._nvidia_hwmon_temp_c", return_value=None), \
-                patch("victus_hub.backend.temps._nvml_temp_c", return_value=None), \
-                patch("victus_hub.backend.temps._smi_temp_c", return_value=66.0) as smi:
+                patch("victus_hub.backend.temps._nvml_ensure", return_value=False), \
+                patch("victus_hub.backend.temps._smi_selected", return_value=(66.0, None, None)) as smi:
             self.assertEqual(read_gpu_temp_c(), 66.0)
             smi.assert_called_once()

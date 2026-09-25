@@ -216,13 +216,6 @@ def _nvml_ensure() -> bool:
     return True
 
 
-def _nvml_temp_c() -> float | None:
-    with _nvml_lock:
-        if not _nvml_ensure():
-            return None
-        return _nvml_read_temp()
-
-
 def _nvml_read_temp() -> float | None:
     lib = _nvml_lib
     if lib is None:
@@ -310,89 +303,93 @@ def _amd_or_nouveau_temp_c() -> float | None:
     return best / 1000.0
 
 
+# Column order is the nvidia-smi query order. Temperature stays first so a
+# power or utilization miss can be skipped without shifting the temp value.
+_SMI_COLUMNS = (
+    ("temperature", "temperature.gpu"),
+    ("utilization", "utilization.gpu"),
+    ("power", "power.draw"),
+)
+
+
+def _smi_due(now: float, requested: dict[str, bool]) -> list[tuple[str, str]]:
+    retry_at = {
+        "temperature": _smi_temp_retry_at,
+        "utilization": _smi_util_retry_at,
+        "power": _smi_power_retry_at,
+    }
+    return [
+        (field, column)
+        for field, column in _SMI_COLUMNS
+        if requested[field] and now >= retry_at[field]
+    ]
+
+
+def _smi_float(parts: list[str], index: int) -> float | None:
+    if index >= len(parts):
+        return None
+    text = parts[index]
+    if not text or text.upper() in {"N/A", "[N/A]"}:
+        return None
+    try:
+        return float(text)
+    except ValueError:
+        return None
+
+
 def _smi_selected(
     *, temperature: bool, power: bool, utilization: bool,
 ) -> tuple[float | None, float | None, float | None]:
     """Last-resort nvidia-smi for only the requested columns.
 
     Each column has its own backoff. A miss on power or utilization does not
-    suppress a later temperature read.
+    suppress a later temperature read. The subprocess stays outside the lock.
     """
     global _smi_known_missing
     missing = (None, None, None)
-    if not (temperature or power or utilization):
+    requested = {
+        "temperature": temperature,
+        "utilization": utilization,
+        "power": power,
+    }
+    if not any(requested.values()):
         return missing
     with _smi_lock:
         if _smi_known_missing:
             return missing
         now = time.monotonic()
-        want_temp = temperature and now >= _smi_temp_retry_at
-        want_util = utilization and now >= _smi_util_retry_at
-        want_power = power and now >= _smi_power_retry_at
-        if not (want_temp or want_util or want_power):
+        due = _smi_due(now, requested)
+        if not due:
             return missing
-        columns: list[str] = []
-        if want_temp:
-            columns.append("temperature.gpu")
-        if want_util:
-            columns.append("utilization.gpu")
-        if want_power:
-            columns.append("power.draw")
         smi = shutil.which("nvidia-smi")
         if smi is None:
             _smi_known_missing = True
             return missing
     try:
+        query = ",".join(column for _field, column in due)
         result = subprocess.run(
-            [smi, f"--query-gpu={','.join(columns)}", "--format=csv,noheader,nounits"],
+            [smi, f"--query-gpu={query}", "--format=csv,noheader,nounits"],
             capture_output=True,
             text=True,
             timeout=_SMI_TIMEOUT_S,
         )
+        raw = (result.stdout or "").strip().splitlines() if result.returncode == 0 else []
     except (OSError, subprocess.TimeoutExpired):
-        with _smi_lock:
-            _smi_backoff(now, temperature=want_temp, power=want_power, utilization=want_util)
-        return missing
-    if result.returncode != 0:
-        with _smi_lock:
-            _smi_backoff(now, temperature=want_temp, power=want_power, utilization=want_util)
-        return missing
-    raw = (result.stdout or "").strip().splitlines()
-    if not raw:
-        with _smi_lock:
-            _smi_backoff(now, temperature=want_temp, power=want_power, utilization=want_util)
-        return missing
-    parts = [part.strip() for part in raw[0].split(",")]
-
-    def _at(index: int) -> float | None:
-        if index >= len(parts):
-            return None
-        text = parts[index]
-        if not text or text.upper() in {"N/A", "[N/A]"}:
-            return None
-        try:
-            return float(text)
-        except ValueError:
-            return None
-
-    cursor = 0
-    temp = power_w = util = None
-    if want_temp:
-        temp = _at(cursor)
-        cursor += 1
-    if want_util:
-        util = _at(cursor)
-        cursor += 1
-    if want_power:
-        power_w = _at(cursor)
+        raw = []
+    parts = [part.strip() for part in raw[0].split(",")] if raw else []
+    parsed = {
+        field: _smi_float(parts, index) if parts else None
+        for index, (field, _column) in enumerate(due)
+    }
+    failed = {field for field, _column in due if parsed[field] is None}
     with _smi_lock:
         _smi_backoff(
             now,
-            temperature=want_temp and temp is None,
-            power=want_power and power_w is None,
-            utilization=want_util and util is None,
+            temperature="temperature" in failed,
+            power="power" in failed,
+            utilization="utilization" in failed,
         )
-    return temp, power_w, util
+    return parsed.get("temperature"), parsed.get("power"), parsed.get("utilization")
 
 
 def query_nvidia_fields(
@@ -464,23 +461,9 @@ def query_nvidia_fields(
 
 
 def read_gpu_temp_c(*, disable_nvidia: bool = False) -> float | None:
-    """Return GPU temperature in °C.
-
-    NVIDIA: refuse to touch sensors while the dGPU is runtime-suspended,
-    then hwmon → NVML → nvidia-smi. AMD/Nouveau use hwmon only.
-    """
+    """GPU temperature in °C. NVIDIA goes through the shared field query."""
     if _has_nvidia():
-        with _nvml_lock:
-            if disable_nvidia or dgpu_runtime_suspended():
-                _nvml_shutdown()
-                return None
-            hwmon = _nvidia_hwmon_temp_c()
-            if hwmon is not None:
-                return hwmon
-            nvml = _nvml_temp_c()
-            if nvml is not None:
-                return nvml
-        return _smi_temp_c()
+        return query_nvidia_fields(temperature=True, disable_nvidia=disable_nvidia).temp_c
     return _amd_or_nouveau_temp_c()
 
 

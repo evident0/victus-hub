@@ -68,7 +68,6 @@ class RequestedReadTests(unittest.TestCase):
             snap = reader.read_requested(frozenset())
         query.assert_not_called()
         self.assertIsNone(snap.gpu_temp_c)
-        self.assertIsNone(reader._nvidia)
 
     def test_cpu_power_does_not_query_gpu(self):
         reader = SensorReader()
@@ -313,8 +312,9 @@ class DaemonSensorRequestTests(unittest.TestCase):
 
 class GpuNameProcTests(unittest.TestCase):
     def test_model_line_does_not_load_nvml(self):
-        from pathlib import Path
+        import ctypes
         import tempfile
+        from pathlib import Path
 
         from victus_hub.backend import nvidia
 
@@ -328,8 +328,8 @@ class GpuNameProcTests(unittest.TestCase):
                 encoding="utf-8",
             )
             with patch.object(nvidia, "_NVIDIA_PROC_GPUS", Path(directory)), \
-                    patch.object(nvidia.ctypes, "CDLL") as library, \
-                    patch.object(nvidia.subprocess, "run") as process:
+                    patch.object(ctypes, "CDLL") as library, \
+                    patch.object(subprocess, "run") as process:
                 self.assertEqual(
                     nvidia.get_gpu_name(),
                     "NVIDIA GeForce RTX 4070 Laptop GPU",
