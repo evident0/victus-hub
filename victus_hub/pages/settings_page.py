@@ -1,14 +1,18 @@
 """Program settings page — shortcut and diagnostics."""
 
+import json
+import re
+
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QSpinBox, QDoubleSpinBox, QMessageBox, QScrollArea, QSizePolicy,
 )
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtCore import Qt, QUrl, QSettings, Signal
+from PySide6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
 
 from victus_hub.app.theme import COLORS, mono_font, ui_font
-from victus_hub.backend.diagnostics import write_diagnostics_report
+from victus_hub.backend.diagnostics import program_version, write_diagnostics_report
 from victus_hub.backend.hardware import board_title
 from victus_hub.backend.nvidia import (
     nvidia_query_disable_enabled,
@@ -24,6 +28,20 @@ from victus_hub import api
 from victus_hub.widgets.chrome import PageHead, SettingsRow, footer_label, hairline
 from victus_hub.widgets.toggle_switch import ToggleSwitch
 from victus_hub.services.battery_power import BATTERY_POWER_SAVE_KEY
+
+_LATEST_RELEASE_URL = QUrl("https://api.github.com/repos/evident0/victus-hub/releases/latest")
+_VERSION_RE = re.compile(r"v?(\d+)\.(\d+)\.(\d+)", re.IGNORECASE)
+
+
+def release_is_newer(tag: str, installed: str) -> bool:
+    """Compare stable release tags such as 1.0.2 and v1.0.2 numerically."""
+    def parts(value: str) -> tuple[int, int, int]:
+        match = _VERSION_RE.fullmatch(value.strip())
+        if match is None:
+            raise ValueError(f"Invalid release version: {value!r}")
+        return tuple(map(int, match.groups()))
+
+    return parts(tag) > parts(installed)
 
 
 def make_settings_card() -> tuple[QWidget, QVBoxLayout]:
@@ -230,6 +248,22 @@ class SettingsPage(QWidget):
             "Ctrl/Alt/Super + key, or a function/OMEN key; capture with this window focused",
             kb_ctrl,
         ))
+        layout.addWidget(hairline())
+
+        self._update_btn = QPushButton("Check for updates")
+        _style_action_btn(self._update_btn)
+        self._update_btn.clicked.connect(self._check_for_updates)
+        layout.addWidget(SettingsRow(
+            "Updates",
+            "Check GitHub releases for a newer version",
+            self._update_btn,
+        ))
+        self._update_status = QLabel("")
+        self._update_status.setFont(ui_font(12))
+        self._update_status.setWordWrap(True)
+        self._update_status.setVisible(False)
+        layout.addWidget(self._update_status)
+        self._update_manager = None
 
         layout.addStretch()
         scroll.setWidget(body)
@@ -254,8 +288,45 @@ class SettingsPage(QWidget):
         )
         fl.addWidget(self._diag_btn)
         fl.addStretch()
-        fl.addWidget(footer_label("v1.0.1"))
+        fl.addWidget(footer_label(f"v{program_version()}"))
         outer.addWidget(foot)
+
+    def _set_update_status(self, text: str, color: str) -> None:
+        self._update_status.setText(text)
+        self._update_status.setStyleSheet(f"color: {color}; background: transparent;")
+        self._update_status.setVisible(True)
+
+    def _check_for_updates(self) -> None:
+        self._update_btn.setEnabled(False)
+        self._set_update_status("Checking for updates…", COLORS["sub"])
+        if self._update_manager is None:
+            self._update_manager = QNetworkAccessManager(self)
+        request = QNetworkRequest(_LATEST_RELEASE_URL)
+        request.setRawHeader(b"Accept", b"application/vnd.github+json")
+        request.setRawHeader(b"User-Agent", b"victus-hub")
+        request.setTransferTimeout(10000)
+        reply = self._update_manager.get(request)
+        reply.finished.connect(lambda: self._on_update_reply(reply))
+
+    def _on_update_reply(self, reply: QNetworkReply) -> None:
+        try:
+            if reply.error() != QNetworkReply.NetworkError.NoError:
+                raise ValueError("Release request failed")
+            release = json.loads(bytes(reply.readAll()))
+            if not isinstance(release, dict) or not isinstance(release.get("tag_name"), str):
+                raise ValueError("Invalid release response")
+            if release_is_newer(release["tag_name"], program_version()):
+                self._set_update_status(
+                    "Update available please uninstall and install the new version.",
+                    COLORS["warn"],
+                )
+            else:
+                self._set_update_status("Program is up to date.", COLORS["ok"])
+        except (ValueError, TypeError):
+            self._set_update_status("Could not check for updates.", COLORS["sub"])
+        finally:
+            self._update_btn.setEnabled(True)
+            reply.deleteLater()
 
     def set_shortcut_controller(self, ctrl) -> None:
         """Wire the shared ShortcutController (owned by MainWindow)."""

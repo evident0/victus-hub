@@ -231,12 +231,12 @@ class MainWindow(QMainWindow):
             self._stack.setMinimumHeight(page.minimumSizeHint().height())
 
     _PAGE_WIDTH = {
-        0: 460,
-        1: 460,
+        0: 480,
+        1: 480,
         2: 700,
         3: 700,
         4: 700,
-        5: 460,
+        5: 480,
     }
     # A manual drag may make the window taller. That size lasts only until
     # the next tab change, which returns to this height.
