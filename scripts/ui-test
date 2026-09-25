@@ -57,4 +57,4 @@ python3 -m pip install -e . --quiet 2>/dev/null || true
 # hp-kbd-rgb or the daemon. Hardware writes are no-ops.
 printf '\033[1;34m── Starting Victus Hub (UI-only, 4-zone RGB emulated) ──\033[0m\n'
 cd "$ROOT_DIR"
-exec env QT_QPA_PLATFORM=xcb VICTUS_HUB_EMULATE_ZONES=4 python3 -m victus_hub
+exec env QT_QPA_PLATFORM=wayland VICTUS_HUB_EMULATE_ZONES=4 python3 -m victus_hub
