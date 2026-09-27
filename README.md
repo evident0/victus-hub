@@ -112,6 +112,21 @@ main installer for DKMS-managed distribution installs.
 Your settings under `~/.config/victus-hub/` and Secure Boot signing keys under
 `/var/lib/victus-hub/mok/` are left in place.
 
+## Updating
+
+In Settings, select **Check for updates**. When GitHub has a newer release,
+choose **Update**. Victus Hub closes and runs the standard installer in a
+terminal:
+
+```bash
+curl -sL https://raw.githubusercontent.com/evident0/victus-hub/master/install.sh | sudo bash
+```
+
+The installer stops the open app and installs current master. The terminal
+stays open so progress and errors remain visible. The in-app Update button
+opens Victus Hub again after that installer exits. The command can also be
+run directly.
+
 ## Running
 
 From the application menu (look for "Victus Hub"), or:
