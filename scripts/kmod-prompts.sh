@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Shared kernel-module / tool installation helpers; dev-run uses prompts.
+# Shared kernel-module / tool installation helpers.
 # Caller must set ROOT_DIR to the repository root before sourcing.
 
 : "${ROOT_DIR:?ROOT_DIR must be set before sourcing kmod-prompts.sh}"

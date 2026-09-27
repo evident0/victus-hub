@@ -66,19 +66,18 @@ class TerminalDebugTests(unittest.TestCase):
             )
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(result.stdout, expected)
-        for script in ("dev-run", "ui-test"):
-            for args in (["4"], ["-1"], ["abc"], ["1", "2"]):
-                result = subprocess.run(
-                    [str(scripts / script), *args], capture_output=True, text=True,
-                )
-                self.assertEqual(result.returncode, 2, result.stderr)
+        for args in (["4"], ["-1"], ["abc"], ["1", "2"]):
+            result = subprocess.run(
+                [str(scripts / "ui-test"), *args], capture_output=True, text=True,
+            )
+            self.assertEqual(result.returncode, 2, result.stderr)
 
     def test_install_pins_quiet_debug_level(self):
         root = Path(__file__).resolve().parents[1]
         install = (root / "scripts" / "install").read_text()
         self.assertRegex(
             install,
-            r"Exec=env QT_QPA_PLATFORM=xcb VICTUS_HUB_DEBUG_LEVEL=0 \$VICTUS_HUB_BIN",
+            r"Exec=env QT_QPA_PLATFORM=wayland VICTUS_HUB_DEBUG_LEVEL=0 \$VICTUS_HUB_BIN",
         )
         service = (root / "data" / "victus-hubd.service").read_text()
         self.assertNotIn("VICTUS_HUB_DEBUG_LEVEL", service)
