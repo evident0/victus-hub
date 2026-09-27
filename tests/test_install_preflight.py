@@ -249,6 +249,7 @@ class TestAppInstaller(unittest.TestCase):
             text = text.replace(prefix, str(self.root) + prefix)
         text = text.replace("/usr/bin/python3", str(self.bin / "python3"))
         (scripts / "install").write_text(text)
+        (scripts / "stop-gui").write_text("# test stub\n")
         (scripts / "kmod-prompts.sh").write_text("")
         (scripts / "preflight.sh").write_text('preflight() { return "${TEST_PREFLIGHT_EXIT:-0}"; }\n')
         (self.root / "data").mkdir()
@@ -270,6 +271,10 @@ class TestAppInstaller(unittest.TestCase):
         python.write_text(f"#!{sys.executable}\n" + '''
 import pathlib, sys
 args = sys.argv[1:]
+if len(args) == 1 and args[0].endswith('/scripts/stop-gui'):
+    with open(__import__('os').environ['TEST_LOG'], 'a') as log:
+        log.write('stop-gui\\n')
+    sys.exit(0)
 assert args[:3] == ['-I', '-m', 'venv'], args
 target = pathlib.Path(args[3]) / 'bin'
 target.mkdir()
@@ -301,6 +306,7 @@ python.chmod(0o755)
         self.assertTrue((app / "current/bin/python").is_file())
         log = self.log.read_text()
         self.assertIn("python -I -m pip install --upgrade", log)
+        self.assertLess(log.index("stop-gui"), log.index("python -I -m pip install"))
         self.assertIn("--disable-pip-version-check", log)
         self.assertIn("systemctl restart victus-hubd.service", log)
         service = (self.root / "etc/systemd/system/victus-hubd.service").read_text()
@@ -312,6 +318,32 @@ python.chmod(0o755)
         self.assertTrue(os.access(launcher, os.X_OK))
         self.assertIn(" -I -m victus_hub", launcher.read_text())
 
+    def _seed_old_releases(self):
+        releases = self.root / "opt/victus-hub-app/releases"
+        older = releases / "older"
+        old = releases / "old"
+        older.mkdir(parents=True)
+        old.mkdir()
+        os.utime(older, (1, 1))
+        os.utime(old, (2, 2))
+        return releases
+
+    def test_default_keeps_only_the_release_current_points_at(self):
+        releases = self._seed_old_releases()
+        result = self.install()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        current = (releases.parent / "current").resolve()
+        self.assertEqual({path.name for path in releases.iterdir()}, {current.name})
+        self.assertNotIn(current.name, {"old", "older"})
+
+    def test_keep_releases_leaves_the_newest_previous_install(self):
+        releases = self._seed_old_releases()
+        self.env["VICTUS_HUB_KEEP_RELEASES"] = "2"
+        result = self.install()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        current = (releases.parent / "current").resolve()
+        self.assertEqual({path.name for path in releases.iterdir()}, {current.name, "old"})
+
     def test_preflight_failure_makes_no_installation_changes(self):
         self.env['TEST_PREFLIGHT_EXIT'] = '1'
         result = self.install()
@@ -322,7 +354,8 @@ python.chmod(0o755)
     def test_icons_prefer_magick_and_support_legacy_convert(self):
         # Hide any host ImageMagick binaries so the legacy case is real.
         for name in ("dirname", "id", "install", "mktemp", "chmod", "rm", "ln",
-                     "mv", "tee", "cp", "cmp", "seq", "readlink", "touch"):
+                     "mv", "tee", "cp", "cmp", "seq", "readlink", "touch",
+                     "find", "sort", "cut"):
             (self.bin / name).symlink_to(shutil.which(name))
         self.env["PATH"] = str(self.bin)
         icon = self.root / "victus_hub/resources/icons/logoV.png"
