@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import tempfile
 import unittest
 from datetime import datetime
@@ -99,6 +100,21 @@ class TestWriteReport(unittest.TestCase):
             self.assertTrue(path.exists())
             self.assertTrue(path.name.startswith("victus-hub-diagnostics-"))
             self.assertTrue(path.name.endswith(".md"))
+            self.assertEqual(path.read_text(encoding="utf-8"), "# test\n")
+
+    def test_flatpak_writes_under_xdg_data_home(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            data = Path(tmp)
+            env = {
+                "FLATPAK_ID": "io.github.evident0.VictusHub",
+                "XDG_DATA_HOME": str(data),
+            }
+            with patch.dict(os.environ, env, clear=False), patch(
+                "victus_hub.backend.diagnostics.build_report",
+                return_value="# test\n",
+            ):
+                path = write_diagnostics_report()
+            self.assertEqual(path.parent, data / "victus-hub")
             self.assertEqual(path.read_text(encoding="utf-8"), "# test\n")
 
 

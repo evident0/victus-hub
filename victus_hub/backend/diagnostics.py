@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import platform
 import re
 from collections.abc import Callable
@@ -79,9 +80,24 @@ def documents_dir() -> Path:
     return Path.home() / "Documents"
 
 
+def diagnostics_dir() -> Path:
+    """Folder for a saved report.
+
+    Flatpak cannot write the host Documents folder. Its private data
+    directory is on the host and a host file manager can open it.
+    """
+    flatpak_id = os.environ.get("FLATPAK_ID")
+    if flatpak_id:
+        data_home = os.environ.get("XDG_DATA_HOME")
+        if data_home:
+            return Path(data_home) / "victus-hub"
+        return Path.home() / ".var" / "app" / flatpak_id / "data" / "victus-hub"
+    return documents_dir()
+
+
 def write_diagnostics_report(dest_dir: Path | None = None) -> Path:
     """Write a timestamped markdown report and return its path."""
-    folder = dest_dir if dest_dir is not None else documents_dir()
+    folder = dest_dir if dest_dir is not None else diagnostics_dir()
     folder.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     path = folder / f"victus-hub-diagnostics-{stamp}.md"

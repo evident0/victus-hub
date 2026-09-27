@@ -15,6 +15,11 @@ finish-args:
   - --env=QT_QPA_PLATFORM=wayland
   - --env=VICTUS_HUB_DEBUG_LEVEL=0
   - --own-name=io.github.evident0.VictusHub
+  # Qt's tray icon owns org.kde.StatusNotifierItem-<pid>-<n> and registers it with
+  # the GNOME AppIndicator watcher. Without these, the icon stays missing until
+  # that extension is restarted.
+  - --talk-name=org.kde.StatusNotifierWatcher
+  - --own-name=org.kde.*
   # Profile changes still call powerprofilesctl. The /app/bin wrapper uses the host binary.
   - --talk-name=org.freedesktop.Flatpak
   - --system-talk-name=org.freedesktop.login1

@@ -1,7 +1,9 @@
 """Program settings page — shortcut and diagnostics."""
 
 import json
+import os
 import re
+import subprocess
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
@@ -28,6 +30,23 @@ from victus_hub import api
 from victus_hub.widgets.chrome import PageHead, SettingsRow, footer_label, hairline
 from victus_hub.widgets.toggle_switch import ToggleSwitch
 from victus_hub.services.battery_power import BATTERY_POWER_SAVE_KEY
+
+
+def _open_diagnostics(path) -> None:
+    """Show the report in the host file manager.
+
+    QDesktopServices inside a Flatpak asks the sandbox for a handler.
+    The host xdg-open can open the private data path.
+    """
+    if os.environ.get("FLATPAK_ID"):
+        subprocess.Popen(
+            ["flatpak-spawn", "--host", "xdg-open", str(path)],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        return
+    QDesktopServices.openUrl(QUrl.fromLocalFile(str(path)))
+
 
 _LATEST_RELEASE_URL = QUrl("https://api.github.com/repos/evident0/victus-hub/releases/latest")
 _VERSION_RE = re.compile(r"v?(\d+)\.(\d+)\.(\d+)", re.IGNORECASE)
@@ -408,4 +427,4 @@ class SettingsPage(QWidget):
         box.addButton("OK", QMessageBox.RejectRole)
         box.exec()
         if box.clickedButton() is open_btn:
-            QDesktopServices.openUrl(QUrl.fromLocalFile(str(path)))
+            _open_diagnostics(path)
