@@ -114,9 +114,9 @@ Your settings under `~/.config/victus-hub/` and Secure Boot signing keys under
 
 ## Updating
 
-In Settings, select **Check for updates**, then **Update**. The same release can
-be installed again while that flow is being tested. Victus Hub closes and runs
-the standard installer in a terminal:
+In Settings, select **Check for updates**. When GitHub has a newer release,
+choose **Update**. Victus Hub closes and runs the standard installer in a
+terminal:
 
 ```bash
 curl -sL https://raw.githubusercontent.com/evident0/victus-hub/master/install.sh | sudo bash

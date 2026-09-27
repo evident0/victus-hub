@@ -143,12 +143,16 @@ class TestUpdateCheck(unittest.TestCase):
         self.assertGreater(label.width(), 300)
         box.hide()
 
-    def test_current_release_can_be_reinstalled(self):
-        self.page._update_btn.click()
-        with patch.object(QMessageBox, "exec", return_value=0) as dialog:
-            self.finish({"tag_name": "1.0.1"})
-        dialog.assert_called_once()
-        self.assertEqual(self.page._update_status.text(), "Release found: 1.0.1")
+    def test_current_or_older_release_is_up_to_date(self):
+        for tag in ("1.0.1", "v1.0.0"):
+            with self.subTest(tag=tag):
+                self.page._update_btn.click()
+                with patch.object(QMessageBox, "exec", return_value=0) as dialog:
+                    self.finish({"tag_name": tag})
+                dialog.assert_not_called()
+                self.assertEqual(self.page._update_status.text(), "Program is up to date.")
+                self.assertIn(COLORS["ok"], self.page._update_status.styleSheet())
+                self.assertTrue(self.page._update_btn.isEnabled())
 
     def test_network_and_invalid_release_failures_are_not_up_to_date(self):
         self.page._update_btn.click()

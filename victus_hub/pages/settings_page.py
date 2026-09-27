@@ -302,8 +302,9 @@ class SettingsPage(QWidget):
                 raise ValueError("Invalid release response")
             if _VERSION_RE.fullmatch(release["tag_name"].strip()) is None:
                 raise ValueError("Invalid release version")
-            # Temporarily allow reinstalling the same release to test the update flow.
-            # if release_is_newer(release["tag_name"], program_version()):
+            if not release_is_newer(release["tag_name"], program_version()):
+                self._set_update_status("Program is up to date.", COLORS["ok"])
+                return
             tag = release["tag_name"]
             self._set_update_status(f"Release found: {tag}", COLORS["warn"])
             box = QMessageBox(self)

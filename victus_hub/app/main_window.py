@@ -32,8 +32,8 @@ from victus_hub.features.sensors.stats import next_stats, build_rows
 
 logger = logging.getLogger(__name__)
 
-# The in-app updater always reinstalls current master. The release tag is only
-# shown in the confirmation prompt (including the same version, while testing).
+# The in-app updater installs current master. The release tag is only
+# shown in the confirmation prompt.
 GITHUB_INSTALL_COMMAND = (
     "curl -sL https://raw.githubusercontent.com/evident0/victus-hub/master/install.sh | sudo bash"
 )
