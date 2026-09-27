@@ -1,0 +1,3 @@
+#!/bin/sh
+# Sandbox stand-in for the host powerprofilesctl the window already calls.
+exec flatpak-spawn --host powerprofilesctl "$@"

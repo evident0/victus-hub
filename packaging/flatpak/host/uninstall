@@ -1,0 +1,24 @@
+#!/bin/bash
+# Remove the Flatpak host daemon unit. Leaves Flatpak, /var/lib/victus-hubd, and ~/.config alone.
+set -euo pipefail
+
+UNIT_DST=/etc/systemd/system/victus-hubd.service
+TMPFILES_DST=/etc/tmpfiles.d/victus-hubd.conf
+WRAPPER_DST=/usr/local/libexec/victus-hub/flatpak-daemon
+DEPLOY_DST=/etc/victus-hub/flatpak-deploy-dir
+
+if [ "$(id -u)" -ne 0 ]; then
+	printf 'Run as root: sudo %s\n' "$0" >&2
+	exit 1
+fi
+if [ -f "$UNIT_DST" ] && ! grep -q 'libexec/victus-hub/flatpak-daemon' "$UNIT_DST"; then
+	printf '%s is not the Flatpak host unit. Leaving it in place.\n' "$UNIT_DST" >&2
+	exit 1
+fi
+
+systemctl disable --now victus-hubd.service >/dev/null 2>&1 || true
+rm -f "$UNIT_DST" "$TMPFILES_DST" "$WRAPPER_DST" "$DEPLOY_DST"
+rmdir /etc/victus-hub 2>/dev/null || true
+rmdir /usr/local/libexec/victus-hub 2>/dev/null || true
+systemctl daemon-reload
+printf 'Flatpak host daemon removed.\n'

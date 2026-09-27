@@ -1,0 +1,7 @@
+#!/bin/sh
+# The pip wheel ships its own Qt. Load those plugins, not the KDE runtime's.
+plugins=$(python3 -c 'import pathlib, PySide6; print(pathlib.Path(PySide6.__file__).resolve().parent / "Qt" / "plugins")')
+export QT_PLUGIN_PATH="$plugins"
+export QT_QPA_PLATFORM_PLUGIN_PATH="$plugins/platforms"
+export QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-wayland}"
+exec python3 -m victus_hub "$@"

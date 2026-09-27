@@ -1,0 +1,95 @@
+#!/bin/bash
+# Install the host half of the Flatpak: root victus-hubd for a system Flatpak.
+# Does not install kernel modules, ryzenadj, or a /usr sleep hook.
+set -euo pipefail
+
+APP_ID=io.github.evident0.VictusHub
+HOST_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+UNIT_DST=/etc/systemd/system/victus-hubd.service
+TMPFILES_DST=/etc/tmpfiles.d/victus-hubd.conf
+WRAPPER_DST=/usr/local/libexec/victus-hub/flatpak-daemon
+DEPLOY_DST=/etc/victus-hub/flatpak-deploy-dir
+
+if [ "$(id -u)" -ne 0 ]; then
+	printf 'Run as root: sudo %s\n' "$0" >&2
+	exit 1
+fi
+if ! command -v flatpak >/dev/null 2>&1; then
+	printf 'flatpak is not installed.\n' >&2
+	exit 1
+fi
+if [ ! -x /usr/bin/python3 ]; then
+	printf 'Host /usr/bin/python3 is required.\n' >&2
+	exit 1
+fi
+/usr/bin/python3 -I -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)' || {
+	printf 'Host /usr/bin/python3 must be 3.10 or newer.\n' >&2
+	exit 1
+}
+/usr/bin/python3 -I -c 'import ctypes; ctypes.CDLL("libsystemd.so.0")' || {
+	printf 'Host Python cannot load libsystemd.so.0.\n' >&2
+	exit 1
+}
+if [ ! -x /usr/bin/loginctl ]; then
+	printf '/usr/bin/loginctl is required.\n' >&2
+	exit 1
+fi
+if ! command -v busctl >/dev/null 2>&1; then
+	printf 'busctl is required.\n' >&2
+	exit 1
+fi
+if ! command -v systemctl >/dev/null 2>&1; then
+	printf 'systemctl is required.\n' >&2
+	exit 1
+fi
+
+if ! deploy=$(flatpak info --system --show-location "$APP_ID" 2>/dev/null); then
+	printf 'No system install of %s.\n' "$APP_ID" >&2
+	printf 'Install the Flatpak with sudo flatpak install --system, then rerun this.\n' >&2
+	printf 'A per-user Flatpak is not used.\n' >&2
+	exit 1
+fi
+deploy=${deploy%%$'\n'*}
+# --show-location prints the commit checkout (.../master/<commit>), which has
+# files/ directly. The branch directory holds active -> <commit> and follows updates.
+if [ -d "$deploy/files" ] && [ -d "$(dirname "$deploy")/active/files" ]; then
+	deploy=$(dirname "$deploy")
+fi
+if [ -d "$deploy/active/files" ]; then
+	files=$(readlink -f "$deploy/active/files")
+elif [ -d "$deploy/files" ]; then
+	files=$(readlink -f "$deploy/files")
+else
+	printf 'Flatpak files not found under %s\n' "$deploy" >&2
+	exit 1
+fi
+found=0
+while IFS= read -r candidate; do
+	if [ -d "$candidate/victus_hub" ] && [ -d "$candidate/victus_hubd" ]; then
+		found=1
+		break
+	fi
+done < <(find -H "$files" -type d -name site-packages)
+if [ "$found" -ne 1 ]; then
+	printf 'victus_hubd is not inside %s\n' "$files" >&2
+	exit 1
+fi
+if [ -f "$UNIT_DST" ] && ! grep -q 'libexec/victus-hub/flatpak-daemon' "$UNIT_DST"; then
+	printf 'Replacing existing %s with the Flatpak host unit.\n' "$UNIT_DST"
+fi
+
+install -d -m755 /etc/victus-hub
+printf '%s\n' "$deploy" >"$DEPLOY_DST"
+chmod 644 "$DEPLOY_DST"
+install -Dm755 "$HOST_DIR/flatpak-daemon" "$WRAPPER_DST"
+install -Dm644 "$HOST_DIR/victus-hubd.service" "$UNIT_DST"
+install -Dm644 "$HOST_DIR/tmpfiles.conf" "$TMPFILES_DST"
+systemd-tmpfiles --create "$TMPFILES_DST"
+systemctl daemon-reload
+systemctl enable victus-hubd.service
+systemctl restart victus-hubd.service
+printf 'Daemon restarted from %s\n' "$deploy"
+if ! command -v powerprofilesctl >/dev/null 2>&1; then
+	printf 'powerprofilesctl was not found. Platform profiles will fail until it is on the host.\n' >&2
+fi
+printf 'Open Victus Hub from the app menu.\n'

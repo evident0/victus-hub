@@ -1,0 +1,45 @@
+#!/bin/bash
+# Run victus_hubd with host Python against the system Flatpak's pure-Python tree.
+# python -I ignores PYTHONPATH, so the module path is inserted in-process.
+set -euo pipefail
+
+deploy_file=/etc/victus-hub/flatpak-deploy-dir
+if [ ! -f "$deploy_file" ]; then
+	printf 'Missing %s. Run packaging/flatpak/host/install.\n' "$deploy_file" >&2
+	exit 1
+fi
+deploy=$(head -n1 "$deploy_file")
+if [ -d "$deploy/active/files" ]; then
+	files=$(readlink -f "$deploy/active/files")
+elif [ -d "$deploy/files" ]; then
+	files=$(readlink -f "$deploy/files")
+else
+	printf 'Flatpak files not found under %s\n' "$deploy" >&2
+	exit 1
+fi
+
+site=
+while IFS= read -r candidate; do
+	if [ -d "$candidate/victus_hub" ] && [ -d "$candidate/victus_hubd" ]; then
+		site=$candidate
+		break
+	fi
+done < <(find -H "$files" -type d -name site-packages)
+if [ -z "$site" ]; then
+	printf 'victus_hubd is not installed inside %s\n' "$files" >&2
+	exit 1
+fi
+
+linkdir=/run/victus-hubd/python
+rm -rf "$linkdir"
+mkdir -p "$linkdir"
+ln -s "$site/victus_hub" "$linkdir/victus_hub"
+ln -s "$site/victus_hubd" "$linkdir/victus_hubd"
+
+exec /usr/bin/python3 -I -c '
+import runpy
+import sys
+sys.dont_write_bytecode = True
+sys.path.insert(0, sys.argv.pop(1))
+runpy.run_module("victus_hubd", run_name="__main__")
+' "$linkdir"

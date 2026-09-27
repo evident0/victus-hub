@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Victus Hub
+Comment=HP Laptop Control Panel
+Exec=victus-hub
+Icon=io.github.evident0.VictusHub
+Terminal=false
+Categories=System;Utility;
+StartupNotify=true
+DBusActivatable=true

@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.evident0.VictusHub</id>
+  <name>Victus Hub</name>
+  <summary>HP Victus and Omen control panel</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-only</project_license>
+  <url type="homepage">https://github.com/evident0/victus-hub</url>
+  <launchable type="desktop-id">io.github.evident0.VictusHub.desktop</launchable>
+  <content_rating type="oars-1.1"/>
+  <description>
+    <p>
+      Control panel for HP Victus and Omen laptops. The Flatpak is the window.
+      Fan, power, and profile changes go through the host victus-hubd service.
+    </p>
+  </description>
+</component>

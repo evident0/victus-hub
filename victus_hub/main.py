@@ -1,5 +1,6 @@
 """Entry point for Victus Hub Qt application."""
 
+import os
 import sys
 
 from PySide6.QtDBus import QDBusConnection
@@ -23,8 +24,9 @@ def main():
     app = QApplication(sys.argv)
     app.setApplicationName("victus-hub")
     app.setOrganizationName("victus-hub")
-    # Wayland app id. Must match victus-hub.desktop; otherwise GNOME uses the python binary name.
-    app.setDesktopFileName("victus-hub")
+    # Wayland app id. Must match the desktop file; otherwise GNOME uses the python binary name.
+    # Flatpak exports io.github.evident0.VictusHub.desktop and sets FLATPAK_ID.
+    app.setDesktopFileName(os.environ.get("FLATPAK_ID", "victus-hub"))
     # App-wide icon for the main window and sensor graphs.
     from victus_hub.app.icon_utils import load_icon
     app_icon = load_icon("logoV.png", size=48)

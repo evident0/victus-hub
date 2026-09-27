@@ -1,0 +1,95 @@
+id: io.github.evident0.VictusHub
+runtime: org.kde.Platform
+runtime-version: "6.11"
+sdk: org.kde.Sdk
+command: victus-hub
+build-options:
+  build-args:
+    - --share=network
+finish-args:
+  - --share=ipc
+  - --share=network
+  - --socket=fallback-x11
+  - --socket=wayland
+  - --device=dri
+  - --env=QT_QPA_PLATFORM=wayland
+  - --env=VICTUS_HUB_DEBUG_LEVEL=0
+  - --own-name=io.github.evident0.VictusHub
+  # Profile changes still call powerprofilesctl. The /app/bin wrapper uses the host binary.
+  - --talk-name=org.freedesktop.Flatpak
+  - --system-talk-name=org.freedesktop.login1
+  - --system-talk-name=org.freedesktop.UPower
+  - --system-talk-name=org.freedesktop.UPower.PowerProfiles
+  - --system-talk-name=net.hadess.PowerProfiles
+  - --system-talk-name=com.redhat.tuned
+  - --filesystem=/run/victus-hubd
+  - --filesystem=/sys
+  - --filesystem=xdg-config/victus-hub:create
+modules:
+  # Qt Network in the PySide6 wheel loads libgssapi_krb5.so.2. The KDE runtime does not ship it.
+  - name: krb5
+    buildsystem: autotools
+    subdir: src
+    # GCC 15 defaults to C23, which rejects this release's empty parameter lists.
+    build-options:
+      cflags: -std=gnu17
+      cxxflags: -std=gnu++17
+    config-opts:
+      - --disable-rpath
+      - --disable-static
+      - --localstatedir=/var/lib
+    cleanup:
+      - /bin
+      - /include
+      - /share/examples
+      - /share/man
+      - /lib/pkgconfig
+      - "*.a"
+      - "*.la"
+    sources:
+      - type: archive
+        url: https://kerberos.org/dist/krb5/1.21/krb5-1.21.3.tar.gz
+        sha256: b7a4cd5ead67fb08b980b21abd150ff7217e85ea320c9ed0c6dadd304840ad35
+  - name: victus-hub
+    buildsystem: simple
+    build-commands:
+      - find victus_hub victus_hubd -depth -type d -name __pycache__ -exec rm -rf {} +
+      - "pip3 install --prefix=${FLATPAK_DEST} --only-binary=:all: 'pyside6-essentials>=6.8,<6.12'"
+      - pip3 install --no-deps --no-build-isolation --prefix=${FLATPAK_DEST} .
+      - install -Dm755 victus-hub-launch ${FLATPAK_DEST}/bin/victus-hub
+      - install -Dm644 io.github.evident0.VictusHub.desktop ${FLATPAK_DEST}/share/applications/io.github.evident0.VictusHub.desktop
+      - install -Dm644 io.github.evident0.VictusHub.service ${FLATPAK_DEST}/share/dbus-1/services/io.github.evident0.VictusHub.service
+      - install -Dm644 io.github.evident0.VictusHub.metainfo.xml ${FLATPAK_DEST}/share/metainfo/io.github.evident0.VictusHub.metainfo.xml
+      - install -Dm644 icon-64.png ${FLATPAK_DEST}/share/icons/hicolor/64x64/apps/io.github.evident0.VictusHub.png
+      - install -Dm644 icon-128.png ${FLATPAK_DEST}/share/icons/hicolor/128x128/apps/io.github.evident0.VictusHub.png
+      - install -Dm755 powerprofilesctl-host ${FLATPAK_DEST}/bin/powerprofilesctl
+      - install -Dm644 LICENSE ${FLATPAK_DEST}/share/licenses/io.github.evident0.VictusHub/LICENSE
+    sources:
+      - type: dir
+        path: ../../victus_hub
+        dest: victus_hub
+      - type: dir
+        path: ../../victus_hubd
+        dest: victus_hubd
+      - type: file
+        path: ../../pyproject.toml
+      - type: file
+        path: ../../LICENSE
+      - type: file
+        path: io.github.evident0.VictusHub.desktop
+      - type: file
+        path: io.github.evident0.VictusHub.service
+      - type: file
+        path: io.github.evident0.VictusHub.metainfo.xml
+      - type: file
+        path: powerprofilesctl-host
+        dest-filename: powerprofilesctl-host
+      - type: file
+        path: victus-hub-launch
+        dest-filename: victus-hub-launch
+      - type: file
+        path: icons/64.png
+        dest-filename: icon-64.png
+      - type: file
+        path: icons/128.png
+        dest-filename: icon-128.png
