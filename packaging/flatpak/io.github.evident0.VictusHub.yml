@@ -20,7 +20,7 @@ finish-args:
   # that extension is restarted.
   - --talk-name=org.kde.StatusNotifierWatcher
   - --own-name=org.kde.*
-  # Profile changes still call powerprofilesctl. The /app/bin wrapper uses the host binary.
+  # Profile changes call tuned-adm, then powerprofilesctl. The /app/bin wrappers use the host binaries.
   - --talk-name=org.freedesktop.Flatpak
   - --system-talk-name=org.freedesktop.login1
   - --system-talk-name=org.freedesktop.UPower
@@ -68,6 +68,7 @@ modules:
       - install -Dm644 icon-64.png ${FLATPAK_DEST}/share/icons/hicolor/64x64/apps/io.github.evident0.VictusHub.png
       - install -Dm644 icon-128.png ${FLATPAK_DEST}/share/icons/hicolor/128x128/apps/io.github.evident0.VictusHub.png
       - install -Dm755 powerprofilesctl-host ${FLATPAK_DEST}/bin/powerprofilesctl
+      - install -Dm755 tuned-adm-host ${FLATPAK_DEST}/bin/tuned-adm
       - install -Dm644 LICENSE ${FLATPAK_DEST}/share/licenses/io.github.evident0.VictusHub/LICENSE
     sources:
       - type: dir
@@ -89,6 +90,9 @@ modules:
       - type: file
         path: powerprofilesctl-host
         dest-filename: powerprofilesctl-host
+      - type: file
+        path: tuned-adm-host
+        dest-filename: tuned-adm-host
       - type: file
         path: victus-hub-launch
         dest-filename: victus-hub-launch

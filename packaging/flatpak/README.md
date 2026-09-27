@@ -8,7 +8,7 @@ Stock in-tree `hp_wmi` is enough. Kernel modules, DKMS, Secure Boot signing, and
 
 With the host daemon running:
 
-- Platform profiles through the host `powerprofilesctl` (or tuned, if the daemon is the one applying them).
+- Platform profiles through host `tuned-adm` or `powerprofilesctl`. The window calls those through `/app/bin` wrappers.
 - CPU frequency limits.
 - Intel RAPL power limits.
 - Fan speed and temperature reads when the stock hwmon nodes exist.

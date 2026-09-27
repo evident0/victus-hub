@@ -90,6 +90,10 @@ systemctl enable victus-hubd.service
 systemctl restart victus-hubd.service
 printf 'Daemon restarted from %s\n' "$deploy"
 if ! command -v powerprofilesctl >/dev/null 2>&1; then
-	printf 'powerprofilesctl was not found. Platform profiles will fail until it is on the host.\n' >&2
+	if command -v tuned-adm >/dev/null 2>&1 || [ -x /usr/bin/tuned-adm ] || [ -x /usr/sbin/tuned-adm ]; then
+		printf 'powerprofilesctl was not found. Platform profiles will use tuned-adm.\n'
+	else
+		printf 'powerprofilesctl and tuned-adm were not found. Platform profiles will fail until one is on the host.\n' >&2
+	fi
 fi
 printf 'Open Victus Hub from the app menu.\n'

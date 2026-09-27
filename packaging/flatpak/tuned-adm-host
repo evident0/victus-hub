@@ -1,0 +1,9 @@
+#!/bin/sh
+# Sandbox stand-in for the host tuned-adm the window already calls.
+for bin in /usr/bin/tuned-adm /usr/sbin/tuned-adm; do
+	if flatpak-spawn --host test -x "$bin"; then
+		exec flatpak-spawn --host "$bin" "$@"
+	fi
+done
+printf 'tuned-adm was not found on the host\n' >&2
+exit 127
