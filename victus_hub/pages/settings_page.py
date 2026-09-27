@@ -134,6 +134,7 @@ class SettingsPage(QWidget):
 
     battery_power_save_changed = Signal(bool)
     hardware_shortcuts_changed = Signal(bool)
+    update_requested = Signal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -239,7 +240,7 @@ class SettingsPage(QWidget):
         self._update_btn.clicked.connect(self._check_for_updates)
         layout.addWidget(SettingsRow(
             "Updates",
-            "Check GitHub releases for a newer version",
+            "Check GitHub releases and reinstall Victus Hub",
             self._update_btn,
         ))
         self._update_status = QLabel("")
@@ -299,13 +300,24 @@ class SettingsPage(QWidget):
             release = json.loads(bytes(reply.readAll()))
             if not isinstance(release, dict) or not isinstance(release.get("tag_name"), str):
                 raise ValueError("Invalid release response")
-            if release_is_newer(release["tag_name"], program_version()):
-                self._set_update_status(
-                    "Update available please uninstall and install the new version.",
-                    COLORS["warn"],
-                )
-            else:
-                self._set_update_status("Program is up to date.", COLORS["ok"])
+            if _VERSION_RE.fullmatch(release["tag_name"].strip()) is None:
+                raise ValueError("Invalid release version")
+            # Temporarily allow reinstalling the same release to test the update flow.
+            # if release_is_newer(release["tag_name"], program_version()):
+            tag = release["tag_name"]
+            self._set_update_status(f"Release found: {tag}", COLORS["warn"])
+            box = QMessageBox(self)
+            box.setWindowTitle("Update available")
+            # Main text sets the dialog width, the same way the diagnostics path does.
+            box.setText(
+                f"Install Victus Hub {tag}?\n\n"
+                "The app will close during installation and reopen when it finishes."
+            )
+            box.addButton("Cancel", QMessageBox.RejectRole)
+            update_btn = box.addButton("Update", QMessageBox.AcceptRole)
+            box.exec()
+            if box.clickedButton() is update_btn:
+                self.update_requested.emit(tag)
         except (ValueError, TypeError):
             self._set_update_status("Could not check for updates.", COLORS["sub"])
         finally:

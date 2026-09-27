@@ -30,6 +30,8 @@ git clone --depth 1 "$REPO_URL" "$STAGING/source"
 # Check requirements before replacing a legacy editable checkout.
 source "$STAGING/source/scripts/preflight.sh"
 preflight 0
+# The old checkout can back an editable running GUI; stop it before deleting it.
+python3 "$STAGING/source/scripts/stop-gui"
 rm -rf "$INSTALL_DIR"
 mv "$STAGING/source" "$INSTALL_DIR"
 

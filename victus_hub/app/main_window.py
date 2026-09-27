@@ -1,6 +1,8 @@
 """Main application window with sidebar, stacked pages, and system tray."""
 
 import logging
+import shutil
+import subprocess
 
 from PySide6.QtCore import Qt, QSettings, QTimer, QEvent
 from PySide6.QtGui import QAction, QActionGroup, QCloseEvent, QHideEvent, QShowEvent
@@ -29,6 +31,45 @@ from victus_hub.services.shortcut_controller import ShortcutController
 from victus_hub.features.sensors.stats import next_stats, build_rows
 
 logger = logging.getLogger(__name__)
+
+# The in-app updater always reinstalls current master. The release tag is only
+# shown in the confirmation prompt (including the same version, while testing).
+GITHUB_INSTALL_COMMAND = (
+    "curl -sL https://raw.githubusercontent.com/evident0/victus-hub/master/install.sh | sudo bash"
+)
+
+
+def _update_terminal(script: str) -> list[str]:
+    """Keep installer output on screen after the command exits."""
+    if terminal := shutil.which("gnome-terminal"):
+        return [terminal, "--", "/bin/bash", "-c", script]
+    if terminal := shutil.which("konsole"):
+        return [terminal, "--separate", "--hold", "-e", "/bin/bash", "-c", script]
+    if terminal := shutil.which("xterm"):
+        return [terminal, "-hold", "-T", "Victus Hub Update", "-e", "/bin/bash", "-c", script]
+    raise OSError("Updating requires a terminal emulator (GNOME Terminal, Konsole, or xterm).")
+
+
+def start_update(_tag: str) -> None:
+    """Open the GitHub installer in a terminal before the GUI quits."""
+    if shutil.which("curl") is None or shutil.which("sudo") is None:
+        raise OSError("Updating requires curl and sudo.")
+    # install.sh does not open the GUI. This shell already belongs to the
+    # desktop user, so it starts Victus Hub after sudo returns. sleep keeps
+    # the terminal open until the window is closed.
+    script = (
+        "set -o pipefail; "
+        f"{GITHUB_INSTALL_COMMAND}; "
+        "status=$?; "
+        "if [ -x /usr/local/bin/victus-hub ]; then "
+        "setsid env QT_QPA_PLATFORM=wayland VICTUS_HUB_DEBUG_LEVEL=0 "
+        "/usr/local/bin/victus-hub </dev/null >/dev/null 2>&1 & "
+        "fi; "
+        "printf '\\nUpdate finished (exit %s). You can close this window.\\n' \"$status\"; "
+        "sleep infinity"
+    )
+    subprocess.Popen(_update_terminal(script), start_new_session=True, close_fds=True)
+
 
 class MainWindow(QMainWindow):
     """Main application window with tray icon and close-to-tray behavior."""
@@ -85,6 +126,7 @@ class MainWindow(QMainWindow):
         self._sensors_page = SensorsPage()
         self._keyboard_page = KeyboardPage()
         self._settings_page = SettingsPage()
+        self._settings_page.update_requested.connect(self._start_update)
         self._ui_active = False
 
         self._pages = [
@@ -426,6 +468,15 @@ class MainWindow(QMainWindow):
         self._tray.hide()
         self._quitting = True
         QApplication.instance().quit()
+
+    def _start_update(self, tag: str) -> None:
+        try:
+            start_update(tag)
+        except OSError as exc:
+            from PySide6.QtWidgets import QMessageBox
+            QMessageBox.warning(self, "Update", f"Could not start the update:\n{exc}")
+            return
+        self._quit_app()
     def closeEvent(self, event: QCloseEvent):
         """Hide all windows to tray instead of quitting, unless actually quitting."""
         if getattr(self, "_quitting", False):

@@ -58,6 +58,9 @@ else
 	SUDO=(sudo)
 fi
 
+# Quit the tray app before removing its launcher, environment, or service.
+"${SUDO[@]}" python3 "$ROOT_DIR/scripts/stop-gui"
+
 if [ "$(id -u)" -eq 0 ] && [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != root ]; then
 	USER_HOME=$(getent passwd "$SUDO_USER" | cut -d: -f6)
 	REAL_USER="$SUDO_USER"

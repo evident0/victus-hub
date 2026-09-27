@@ -60,7 +60,8 @@ class TestUninstallCleanup(unittest.TestCase):
 
     def test_all_icon_sizes_removed_before_cache_refresh(self):
         script = self.script("scripts/uninstall", ("/usr/local", "/usr/lib", "/usr/share",
-                                                    "/etc/", "/opt/", "/var/", "/run/"))
+                                                     "/etc/", "/opt/", "/var/", "/run/"))
+        self.script("scripts/stop-gui", ("/run/user",))
         icons = self.root / "usr/share/icons/hicolor"
         for size in (16, 22, 24, 32, 48, 64, 128, 256, 512, 1024):
             icon = icons / f"{size}x{size}/apps/victus-hub.png"
@@ -69,7 +70,7 @@ class TestUninstallCleanup(unittest.TestCase):
         other_icon = icons / "16x16/apps/another-app.png"
         other_icon.touch()
         self.command("systemctl", "exit 1")
-        self.command("python3", "exit 1")
+        self.command("python3", 'if [[ "$1" == */scripts/stop-gui ]]; then exec /usr/bin/python3 "$@"; fi; exit 1')
         self.command("gtk-update-icon-cache",
                      f'for icon in "{icons}"/*/apps/victus-hub.png; do\n'
                      '  [ ! -e "$icon" ] || { printf "stale icon\\n" >> "$TEST_LOG"; exit 1; }\n'
