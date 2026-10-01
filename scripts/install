@@ -131,16 +131,12 @@ printf '#!/bin/sh\nexec /opt/victus-hub-app/current/bin/python -I -m victus_hub 
 	"${SUDO[@]}" tee /usr/local/bin/victus-hub >/dev/null
 "${SUDO[@]}" chmod 755 /usr/local/bin/victus-hub
 
-TMP_UNIT=$(mktemp)
-cp "$SERVICE_SRC" "$TMP_UNIT"
-
 NEEDS_RELOAD=0
-if [ ! -f "$SERVICE_DST" ] || ! cmp -s "$TMP_UNIT" "$SERVICE_DST"; then
+if [ ! -f "$SERVICE_DST" ] || ! cmp -s "$SERVICE_SRC" "$SERVICE_DST"; then
 	printf 'Installing systemd service to %s\n' "$SERVICE_DST"
-	"${SUDO[@]}" install -Dm644 "$TMP_UNIT" "$SERVICE_DST"
+	"${SUDO[@]}" install -Dm644 "$SERVICE_SRC" "$SERVICE_DST"
 	NEEDS_RELOAD=1
 fi
-rm -f "$TMP_UNIT"
 
 if [ "$NEEDS_RELOAD" -eq 1 ]; then
 	"${SUDO[@]}" systemctl daemon-reload
@@ -208,13 +204,13 @@ VICTUS_HUB_BIN="$(readlink -f "$VICTUS_HUB_BIN")"
 printf 'Resolved victus-hub to %s\n' "$VICTUS_HUB_BIN"
 
 printf 'Installing desktop entry to %s\n' "$DESKTOP_DST"
-"${SUDO[@]}" install -d -m755 "$(dirname "$DBUS_SERVICE_DST")"
+"${SUDO[@]}" install -d -m755 "$(dirname "$DBUS_SERVICE_DST")" "$(dirname "$DESKTOP_DST")"
 "${SUDO[@]}" tee "$DESKTOP_DST" >/dev/null <<DESKTOP
 [Desktop Entry]
 Type=Application
 Name=Victus Hub
 Comment=HP Laptop Control Panel
-Exec=env QT_QPA_PLATFORM=wayland VICTUS_HUB_DEBUG_LEVEL=0 $VICTUS_HUB_BIN
+Exec=env "QT_QPA_PLATFORM=wayland;xcb" VICTUS_HUB_DEBUG_LEVEL=0 $VICTUS_HUB_BIN
 Icon=victus-hub
 Terminal=false
 Categories=System;Utility;
@@ -223,7 +219,7 @@ DESKTOP
 "${SUDO[@]}" tee "$DBUS_SERVICE_DST" >/dev/null <<DBUS
 [D-BUS Service]
 Name=io.github.evident0.VictusHub
-Exec=env QT_QPA_PLATFORM=wayland VICTUS_HUB_DEBUG_LEVEL=0 $VICTUS_HUB_BIN
+Exec=env "QT_QPA_PLATFORM=wayland;xcb" VICTUS_HUB_DEBUG_LEVEL=0 $VICTUS_HUB_BIN
 DBUS
 "${SUDO[@]}" chmod 644 "$DBUS_SERVICE_DST"
 

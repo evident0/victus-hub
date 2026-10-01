@@ -30,7 +30,7 @@ class TestPreflight(unittest.TestCase):
         (self.root / "proc/cpuinfo").write_text("GenuineIntel\n")
         text = (REPO / "scripts/preflight.sh").read_text()
         text = text.replace("/usr/bin/python3", str(self.bin / "python3"))
-        for prefix in ("/run/systemd", "/lib/modules", "/sys/firmware", "/proc/cpuinfo"):
+        for prefix in ("/run/systemd", "/lib/modules", "/usr/src", "/sys/firmware", "/proc/cpuinfo"):
             text = text.replace(prefix, str(self.root) + prefix)
         self.script = self.root / "preflight"
         self.script.write_text(text + '\npreflight "${1:-0}"\n')
@@ -65,6 +65,16 @@ class TestPreflight(unittest.TestCase):
         result = self.run_check(1)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("venv/ensurepip", result.stderr)
+
+    def test_split_ubuntu_mint_headers_reject_unsupported_kernel(self):
+        self.command("uname", "printf '6.8.0-100-generic\\n'")
+        header = self.root / "usr/src/linux-headers-6.8.0-100/include/linux/platform_profile.h"
+        header.parent.mkdir(parents=True)
+        header.write_text("/* Older platform_profile API */\n")
+        result = self.run_check()
+        self.assertIn("lacks devm_platform_profile_register", result.stderr)
+        header.write_text("devm_platform_profile_register\n")
+        self.assertNotIn("lacks devm_platform_profile_register", self.run_check().stderr)
 
     def test_missing_rgb_does_not_abort_installation(self):
         self.command("modprobe", 'printf "No such device\\n" >&2; exit 1')
@@ -464,7 +474,6 @@ class TestAppInstaller(unittest.TestCase):
         (self.root / "data").mkdir()
         for name in ("victus-hubd.service", "victus-hub-sleep"):
             shutil.copyfile(REPO / "data" / name, self.root / "data" / name)
-        (self.root / "usr/share/applications").mkdir(parents=True)
         self.log = self.root / "log"
         self.env = dict(os.environ, PATH=f"{self.bin}:{os.environ['PATH']}", TEST_LOG=str(self.log))
         for name, body in {
@@ -526,6 +535,9 @@ python.chmod(0o755)
         launcher = self.root / "usr/local/bin/victus-hub"
         self.assertTrue(os.access(launcher, os.X_OK))
         self.assertIn(" -I -m victus_hub", launcher.read_text())
+        for path in ("usr/share/applications/victus-hub.desktop",
+                     "usr/share/dbus-1/services/io.github.evident0.VictusHub.service"):
+            self.assertIn('"QT_QPA_PLATFORM=wayland;xcb"', (self.root / path).read_text())
 
     def _seed_old_releases(self):
         releases = self.root / "opt/victus-hub-app/releases"

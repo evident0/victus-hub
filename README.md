@@ -60,6 +60,28 @@ To check requirements without installing anything:
 bash scripts/install --check
 ```
 
+### Distribution requirements
+
+The scripts support conventional systemd-based Ubuntu, Linux Mint, Fedora,
+and Arch installations. Desktop launchers prefer Wayland and fall back to X11
+(including Mint Cinnamon). The installer reports missing packages; install
+them with your distribution's package manager before rerunning it.
+
+| Distribution | Kernel build package | Initramfs tool |
+| --- | --- | --- |
+| Ubuntu / Linux Mint | `linux-headers-$(uname -r)` | `update-initramfs` |
+| Fedora | `kernel-devel-$(uname -r)` | `dracut` |
+| Arch | `linux-headers`, or matching flavour such as `linux-lts-headers` | `mkinitcpio` or `dracut` |
+
+**The kernel API matters as well as the distribution.** The current driver
+requires `devm_platform_profile_register`; older kernels such as the 6.8
+base kernel in Ubuntu 24.04 / Mint 22 do not provide it. Use a newer supported
+kernel (for example an appropriate Ubuntu HWE / Mint Update Manager kernel),
+boot it, and install its matching headers. Installing more headers for an
+older kernel does not add the missing API. Secure Boot automatic signing
+also requires DKMS 3 or newer and a shim/MOK-capable boot chain; Arch systems
+using only custom firmware keys need their own key-enrollment setup.
+
 RGB is optional: if `hp-kbd-rgb` cannot load (for example on a keyboard without
 supported RGB), installation continues with a message and disables its boot
 autoload entry. Fan control and the rest of the app can still be installed.
@@ -144,22 +166,25 @@ To refresh the app and daemon after editing this checkout, run from your
 desktop session **without sudo**:
 
 ```bash
-./scripts/reload
+./scripts/install --app-only
+VICTUS_HUB_DEBUG_LEVEL=3 victus-hub
 ```
 
 This refreshes the app-only installation, restarts `victus-hubd`, and restarts
-your UI using the current checkout. It requests sudo for system changes and
+your UI from the updated installation. It requests sudo for system changes and
 leaves kernel modules and the RyzenAdj installation in place. The UI runs in
 the terminal; the daemon stays running after it closes.
 
-`scripts/reload` also accepts the debug levels below (for example,
-`./scripts/reload 3`).
+For UI-only development, `./scripts/ui-test 3` installs the checkout into
+`.venv` and emulates RGB without hardware writes. This helper uninstalls the
+daemon; use `./scripts/install --app-only` to restore it afterward.
 
 The app logs to the terminal it was launched from (so run it from a
 terminal or check the desktop entry's output). The daemon logs via
 `journalctl -u victus-hubd`.
 
-Both development scripts accept an optional terminal debug level:
+`scripts/ui-test` accepts an optional terminal debug level; for the installed
+app, set `VICTUS_HUB_DEBUG_LEVEL`:
 
 | Level | Terminal messages |
 | --- | --- |

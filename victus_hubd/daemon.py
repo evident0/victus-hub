@@ -12,6 +12,7 @@ import struct
 import socket
 import threading
 import time
+from _thread import LockType
 
 from victus_hub.backend import protocol, temps
 from victus_hub.backend.types import SensorSnapshot
@@ -379,7 +380,7 @@ def _get_sensor_reader():
 
 def _make_dispatch(
     sampler: RaplPowerSampler,
-    sampler_lock: threading.Lock | None,
+    sampler_lock: LockType | None,
     runtime: Runtime | None = None,
     peer: Peer | None = None,
 ):
@@ -629,7 +630,7 @@ def _make_dispatch(
 def handle_client(
     stream: socket.socket,
     sampler: RaplPowerSampler,
-    sampler_lock: threading.Lock | None = None,
+    sampler_lock: LockType | None = None,
     runtime: Runtime | None = None,
 ) -> None:
     """Handle one client connection. Runs in its own thread."""

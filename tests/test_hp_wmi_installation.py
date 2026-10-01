@@ -57,6 +57,11 @@ class TestHpWmiInstallation(unittest.TestCase):
             helper,
         )
         (helpers / "secure-boot.sh").write_text(helper)
+        for name in ("dkms-post-install", "dkms-post-remove"):
+            hook = (REPO / "kernel" / name).read_text()
+            hook = re.sub(r"/lib/modules|/etc/", lambda match: str(self.root) + match.group(), hook)
+            (self.root / "kernel" / name).write_text(hook)
+        self.write_command("update-initramfs", 'printf "%s\\n" "$*" >> "$TEST_ROOT/initramfs-log"')
         for name in ("install", "uninstall"):
             text = (REPO / "kernel/hp-wmi/scripts" / name).read_text()
             text = re.sub(
@@ -132,6 +137,7 @@ class TestHpWmiInstallation(unittest.TestCase):
         self.assertIn("/extra/hp-wmi.ko", self.run_command("modinfo", "-n", "hp-wmi").stdout)
         result = self.run_command("bash", str(self.scripts / "uninstall"))
         self.assertIn("Restored in-tree hp-wmi", result.stdout)
+        self.assertEqual((self.root / "initramfs-log").read_text(), f"-u -k {self.release}\n" * 2)
         self.assertEqual(self.run_command("modinfo", "-n", "hp-wmi").stdout.strip(), str(self.stock))
         self.assertEqual(self.stock.read_bytes(), self.stock_bytes)
         self.assertFalse(list((self.root / "etc/depmod.d").glob("victus-hub-*.conf")))

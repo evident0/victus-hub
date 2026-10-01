@@ -41,13 +41,19 @@ GITHUB_INSTALL_COMMAND = (
 
 def _update_terminal(script: str) -> list[str]:
     """Keep installer output on screen after the command exits."""
-    if terminal := shutil.which("gnome-terminal"):
-        return [terminal, "--", "/bin/bash", "-c", script]
-    if terminal := shutil.which("konsole"):
-        return [terminal, "--separate", "--hold", "-e", "/bin/bash", "-c", script]
-    if terminal := shutil.which("xterm"):
-        return [terminal, "-hold", "-T", "Victus Hub Update", "-e", "/bin/bash", "-c", script]
-    raise OSError("Updating requires a terminal emulator (GNOME Terminal, Konsole, or xterm).")
+    for name, args in (
+        ("gnome-terminal", ["--"]),
+        ("konsole", ["--separate", "--hold", "-e"]),
+        ("ptyxis", ["--new-window", "--"]),
+        ("kgx", ["--"]),
+        ("xfce4-terminal", ["--disable-server", "-x"]),
+        ("mate-terminal", ["-x"]),
+        ("x-terminal-emulator", ["-e"]),
+        ("xterm", ["-hold", "-T", "Victus Hub Update", "-e"]),
+    ):
+        if terminal := shutil.which(name):
+            return [terminal, *args, "/bin/bash", "-c", script]
+    raise OSError("Updating requires a terminal emulator, such as GNOME Terminal, Ptyxis, Konsole, or xterm.")
 
 
 def start_update(_tag: str) -> None:
@@ -62,7 +68,7 @@ def start_update(_tag: str) -> None:
         f"{GITHUB_INSTALL_COMMAND}; "
         "status=$?; "
         "if [ -x /usr/local/bin/victus-hub ]; then "
-        "setsid env QT_QPA_PLATFORM=wayland VICTUS_HUB_DEBUG_LEVEL=0 "
+        "setsid env 'QT_QPA_PLATFORM=wayland;xcb' VICTUS_HUB_DEBUG_LEVEL=0 "
         "/usr/local/bin/victus-hub </dev/null >/dev/null 2>&1 & "
         "fi; "
         "printf '\\nUpdate finished (exit %s). You can close this window.\\n' \"$status\"; "
