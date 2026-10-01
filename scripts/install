@@ -231,7 +231,7 @@ DBUS
 
 printf '\033[32m── Install complete ──\033[0m\n'
 if [ "$APP_ONLY" -eq 0 ]; then
-	printf '  • Kernel modules: rebuilt only when driver files change. RGB depends on the keyboard. RyzenAdj: AMD only.\n'
+	printf '  • Kernel modules: reused when current; built or repaired as needed. RGB depends on the keyboard. RyzenAdj: AMD only.\n'
 else
 	printf '  • Kernel modules and RyzenAdj left in place.\n'
 fi
