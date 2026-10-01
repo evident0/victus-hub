@@ -20,13 +20,137 @@ if [ "$SECURE_BOOT" -eq 1 ]; then
 		"${SUDO[@]}" tee /etc/dkms/framework.conf.d/victus-hub.conf >/dev/null
 fi
 
+# Skip rebuild and reload when this source digest is already the installed
+# DKMS build for the running kernel and that build is the loaded module.
+# Program and daemon updates then leave fan control and RGB running.
+dkms_version_installed() {
+	local package=$1
+	local version=$2
+	local status line found=0
+	status=$("${SUDO[@]}" dkms status -m "$package" -v "$version" -k "$KERNEL_RELEASE" 2>/dev/null || true)
+	[ -n "$status" ] || return 1
+	while IFS= read -r line; do
+		[ -n "$line" ] || continue
+		# "Original modules exist" is the archived in-tree module, not a mismatch.
+		# installed-weak is a Fedora/RHEL alias of the same install.
+		if printf '%s\n' "$line" | grep -Eq ': installed( \(Original modules exist\))?$'; then
+			found=1
+			continue
+		fi
+		if printf '%s\n' "$line" | grep -Eq ': installed-weak '; then
+			continue
+		fi
+		return 1
+	done <<< "$status"
+	[ "$found" -eq 1 ]
+}
+
+# Write the on-disk module's GNU build-id note. srcversion is missing for some
+# in-tree modules, while the build-id note is present for the loaded module.
+module_build_id_note() {
+	local ko=$1
+	local note=$2
+	local raw
+	raw=$(mktemp)
+	case "$ko" in
+		*.xz) xz -dc -- "$ko" > "$raw" ;;
+		*.gz) gzip -dc -- "$ko" > "$raw" ;;
+		*.zst) zstd -dc -- "$ko" > "$raw" ;;
+		*) cp -- "$ko" "$raw" ;;
+	esac || { rm -f "$raw"; return 1; }
+	if ! objcopy --dump-section .note.gnu.build-id="$note" "$raw" /dev/null; then
+		rm -f "$raw"
+		return 1
+	fi
+	rm -f "$raw"
+	[ -s "$note" ]
+}
+
+# 0 when the loaded module's build-id matches the selected on-disk module.
+loaded_module_matches() {
+	local sys_name=$1
+	local selected=$2
+	local note
+	[ -d "/sys/module/$sys_name" ] || return 1
+	[ -f "/sys/module/$sys_name/notes/.note.gnu.build-id" ] || return 1
+	[ -n "$selected" ] && [ -f "$selected" ] || return 1
+	note=$(mktemp)
+	if ! module_build_id_note "$selected" "$note"; then
+		rm -f "$note"
+		return 1
+	fi
+	if cmp -s "$note" "/sys/module/$sys_name/notes/.note.gnu.build-id"; then
+		rm -f "$note"
+		return 0
+	fi
+	rm -f "$note"
+	return 1
+}
+
+mark_module_reload() {
+	case "$1" in
+		hp-wmi) reload_hp_wmi=1 ;;
+		hp-kbd-rgb) reload_hp_kbd_rgb=1 ;;
+	esac
+}
+
+reload_hp_wmi=0
+reload_hp_kbd_rgb=0
+
 for module in hp-wmi hp-kbd-rgb; do
 	package="victus-hub-$module"
+	sys_name=${module//-/_}
 	# Source identity makes development reinstalls and upgrades distinct DKMS
 	# versions, even when the application's marketing version is unchanged.
 	digest=$(sha256sum "$ROOT_DIR/kernel/$module/$module.c" "$ROOT_DIR/kernel/$module/Makefile" "$ROOT_DIR/kernel/dkms-post-install" "$ROOT_DIR/kernel/dkms-post-remove" "$ROOT_DIR/scripts/dkms-install" | cut -d ' ' -f1 | sha256sum)
 	version="1.0.${digest:0:12}"
 	source_dir="/usr/src/$package-$version"
+	needs_install=1
+	if dkms_version_installed "$package" "$version"; then
+		needs_install=0
+		if [ "$SECURE_BOOT" -eq 1 ]; then
+			signer=$(modinfo -k "$KERNEL_RELEASE" -F signer "$module" 2>/dev/null || true)
+			if [ "$signer" != Victus-Hub ]; then
+				printf 'Installed %s is signed by "%s", not Victus-Hub; reinstalling.\n' "$module" "${signer:-unknown}"
+				needs_install=1
+			fi
+		fi
+	fi
+	if [ "$needs_install" -eq 0 ]; then
+		# extra/ and updates/ are the DKMS destinations. kernel/ is the in-tree module.
+		selected=$(modinfo -k "$KERNEL_RELEASE" -n "$module" 2>/dev/null || true)
+		case "$selected" in
+			/lib/modules/"$KERNEL_RELEASE"/extra/*|/lib/modules/"$KERNEL_RELEASE"/updates/*)
+				[ -f "$selected" ] || selected=
+				;;
+			*)
+				selected=
+				;;
+		esac
+		if [ -z "$selected" ]; then
+			printf 'Custom %s is not the selected module; reinstalling.\n' "$module"
+			needs_install=1
+		fi
+	fi
+	if [ "$needs_install" -eq 0 ]; then
+		if loaded_module_matches "$sys_name" "$selected"; then
+			printf 'Kernel module %s is unchanged; skipping rebuild and reload.\n' "$module"
+			continue
+		fi
+		# No autoload entry and nothing loaded: a previous run left this module
+		# unused (hp-kbd-rgb does this when the keyboard has no RGB).
+		if [ ! -d "/sys/module/$sys_name" ] && [ ! -f "/etc/modules-load.d/$module.conf" ]; then
+			printf 'Kernel module %s is unchanged and not in use; skipping rebuild and reload.\n' "$module"
+			continue
+		fi
+		if [ -d "/sys/module/$sys_name" ]; then
+			printf 'Kernel module %s source is unchanged but the loaded module differs; reloading.\n' "$module"
+		else
+			printf 'Kernel module %s is already installed; loading it without rebuilding.\n' "$module"
+		fi
+		mark_module_reload "$module"
+		continue
+	fi
 	"${SUDO[@]}" install -d -m755 "$source_dir"
 	"${SUDO[@]}" install -m644 "$ROOT_DIR/kernel/$module/$module.c" "$ROOT_DIR/kernel/$module/Makefile" "$source_dir/"
 	"${SUDO[@]}" install -m755 "$ROOT_DIR/kernel/dkms-post-install" "$source_dir/dkms-post-install"
@@ -72,20 +196,31 @@ CONF
 	fi
 	"${SUDO[@]}" install -d /etc/modules-load.d
 	printf '%s\n' "$module" | "${SUDO[@]}" tee "/etc/modules-load.d/$module.conf" >/dev/null
+	mark_module_reload "$module"
 done
 
 if [ "$MOK_PENDING" -eq 1 ]; then
-	printf 'DKMS drivers installed; hardware detection/loading deferred until MOK enrollment and reboot.\n'
+	if [ "$reload_hp_wmi" -eq 1 ] || [ "$reload_hp_kbd_rgb" -eq 1 ]; then
+		printf 'DKMS drivers installed; hardware detection/loading deferred until MOK enrollment and reboot.\n'
+	fi
 	exit 0
 fi
-if [ -d /sys/module/hp_wmi ]; then "${SUDO[@]}" modprobe -r hp-wmi; fi
-if [ -d /sys/module/hp_bioscfg ]; then "${SUDO[@]}" modprobe -r hp-bioscfg; fi
-"${SUDO[@]}" modprobe hp-wmi
-if [ ! -e /sys/devices/platform/hp-wmi/gpu_mux_supported_names ]; then
-	printf 'Custom hp-wmi interfaces are missing after loading; inspect journalctl -k -b.\n' >&2
-	exit 1
+if [ "$reload_hp_wmi" -eq 1 ]; then
+	if [ -d /sys/module/hp_wmi ]; then "${SUDO[@]}" modprobe -r hp-wmi; fi
+	if [ -d /sys/module/hp_bioscfg ]; then "${SUDO[@]}" modprobe -r hp-bioscfg; fi
+	"${SUDO[@]}" modprobe hp-wmi
+	if [ ! -e /sys/devices/platform/hp-wmi/gpu_mux_supported_names ]; then
+		printf 'Custom hp-wmi interfaces are missing after loading; inspect journalctl -k -b.\n' >&2
+		exit 1
+	fi
 fi
-if [ -d /sys/module/hp_kbd_rgb ]; then "${SUDO[@]}" modprobe -r hp-kbd-rgb; fi
-source "$ROOT_DIR/scripts/optional-rgb.sh"
-load_optional_rgb
-printf 'DKMS will rebuild the drivers when matching kernel headers are installed.\n'
+if [ "$reload_hp_kbd_rgb" -eq 1 ]; then
+	if [ -d /sys/module/hp_kbd_rgb ]; then "${SUDO[@]}" modprobe -r hp-kbd-rgb; fi
+	source "$ROOT_DIR/scripts/optional-rgb.sh"
+	load_optional_rgb
+fi
+if [ "$reload_hp_wmi" -eq 0 ] && [ "$reload_hp_kbd_rgb" -eq 0 ]; then
+	printf 'Kernel modules unchanged; skipped rebuild and reload.\n'
+else
+	printf 'DKMS will rebuild the drivers when matching kernel headers are installed.\n'
+fi

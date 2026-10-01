@@ -122,10 +122,13 @@ terminal:
 curl -sL https://raw.githubusercontent.com/evident0/victus-hub/master/install.sh | sudo bash
 ```
 
-The installer stops the open app and installs current master. The terminal
-stays open so progress and errors remain visible. The in-app Update button
-opens Victus Hub again after that installer exits. The command can also be
-run directly.
+The installer stops the open app and installs current master. When the
+`hp-wmi` and `hp-kbd-rgb` sources match the DKMS modules already installed
+for this kernel, and those builds are the ones currently loaded, the
+installer leaves the modules in place. It still replaces the program and
+daemon and restarts `victus-hubd`. The terminal stays open so progress and
+errors remain visible. The in-app Update button opens Victus Hub again after
+that installer exits. The command can also be run directly.
 
 ## Running
 

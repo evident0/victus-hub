@@ -165,7 +165,36 @@ class TestDkmsInstaller(unittest.TestCase):
         self.env = dict(os.environ, PATH=f"{self.bin}:{os.environ['PATH']}", TEST_ROOT=str(self.root), TEST_LOG=str(self.log))
         self.command("sudo", 'exec "$@"')
         self.command("uname", "printf 'test-kernel\\n'")
-        self.command("modprobe", '[ "$1" != hp-kbd-rgb ] || { printf "No such device\\n" >&2; exit 1; }')
+        self.command(
+            "modprobe",
+            'printf "modprobe %s\\n" "$*" >> "$TEST_LOG"\n'
+            '[ "$1" != hp-kbd-rgb ] || { printf "No such device\\n" >&2; exit 1; }',
+        )
+        self.command(
+            "modinfo",
+            'printf "modinfo %s\\n" "$*" >> "$TEST_LOG"\n'
+            'case " $* " in\n'
+            '  *" -n "*)\n'
+            '    module=${@: -1}\n'
+            '    if [ "${TEST_MODINFO_KIND:-extra}" = stock ]; then\n'
+            '      printf "%s/lib/modules/test-kernel/kernel/drivers/%s.ko\\n" "$TEST_ROOT" "$module"\n'
+            '    else\n'
+            '      printf "%s/lib/modules/test-kernel/extra/%s.ko\\n" "$TEST_ROOT" "$module"\n'
+            '    fi\n'
+            '    ;;\n'
+            '  *) printf "%s\\n" "${TEST_SRCVERSION:-deadbeef}" ;;\n'
+            'esac',
+        )
+        self.command(
+            "objcopy",
+            'dest=\nprev=\n'
+            'for arg in "$@"; do\n'
+            '  if [ "$prev" = "--dump-section" ]; then dest=${arg#*=}; fi\n'
+            '  prev=$arg\n'
+            'done\n'
+            '[ -n "$dest" ] || exit 1\n'
+            'printf "%s" "${TEST_BUILD_NOTE:-same-build}" > "$dest"',
+        )
         dkms = self.bin / "dkms"
         dkms.write_text(f"#!{sys.executable}\n" + '''
 import os, pathlib, sys
@@ -177,22 +206,27 @@ action = args[0]
 package = args[args.index('-m') + 1]
 version = args[args.index('-v') + 1]
 state = root / (package + '-state')
-current = state.read_text() if state.exists() else ''
+stored_version, current = '', ''
+if state.exists():
+    parts = state.read_text().splitlines()
+    if len(parts) >= 2:
+        stored_version, current = parts[0], parts[1]
 if action == 'status':
-    if current:
-        print(f'{package}/{version}, test-kernel, x86_64: {current}')
+    if current and stored_version == version:
+        suffix = os.environ.get('TEST_STATUS_SUFFIX', '') if current == 'installed' else ''
+        print(f'{package}/{version}, test-kernel, x86_64: {current}{suffix}')
 elif action == 'add':
-    state.write_text('added')
+    state.write_text(f'{version}\\nadded\\n')
 elif action == 'build':
     if os.environ.get('TEST_BUILD_FAIL'):
         sys.exit(10)
-    state.write_text('built')
+    state.write_text(f'{version}\\nbuilt\\n')
 elif action == 'install':
     module = package.removeprefix('victus-hub-')
     path = root / 'lib/modules/test-kernel/extra' / (module + '.ko')
     path.parent.mkdir(parents=True, exist_ok=True)
     path.touch()
-    state.write_text('installed')
+    state.write_text(f'{version}\\ninstalled\\n')
 elif action == 'remove':
     state.unlink(missing_ok=True)
 ''')
@@ -223,16 +257,125 @@ elif action == 'remove':
             self.assertIn("yes\nmake KDIR=", result.stdout)
             self.assertIn("/future-kernel/build", result.stdout)
             self.assertIn("dkms-post-install future-kernel", result.stdout)
-        before = self.log.read_text().count("build -m")
+        before_build = self.log.read_text().count("build -m")
+        before_install = self.log.read_text().count("install -m")
         result = self.install()
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(self.log.read_text().count("build -m"), before)
+        self.assertEqual(self.log.read_text().count("build -m"), before_build)
+        self.assertEqual(self.log.read_text().count("install -m"), before_install)
+        self.assertIn("hp-wmi is already installed; loading it without rebuilding", result.stdout)
+        self.assertIn("hp-kbd-rgb is unchanged and not in use; skipping rebuild and reload", result.stdout)
 
     def test_build_failure_is_not_hidden_as_optional_rgb(self):
         self.env['TEST_BUILD_FAIL'] = '1'
         result = self.install()
         self.assertNotEqual(result.returncode, 0)
         self.assertNotIn("install -m", self.log.read_text())
+
+    def load_module(self, sys_name, build_note="same-build"):
+        notes = self.root / "sys/module" / sys_name / "notes"
+        notes.mkdir(parents=True)
+        (notes / ".note.gnu.build-id").write_text(build_note)
+        module = sys_name.replace("_", "-")
+        ko = self.root / "lib/modules/test-kernel/extra" / f"{module}.ko"
+        ko.parent.mkdir(parents=True, exist_ok=True)
+        ko.touch()
+
+    def test_unchanged_loaded_module_skips_rebuild_and_reload(self):
+        result = self.install()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.load_module("hp_wmi")
+        self.load_module("hp_kbd_rgb")
+        self.log.write_text("")
+        result = self.install()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Kernel module hp-wmi is unchanged; skipping rebuild and reload.", result.stdout)
+        self.assertIn("Kernel module hp-kbd-rgb is unchanged; skipping rebuild and reload.", result.stdout)
+        self.assertIn("Kernel modules unchanged; skipped rebuild and reload.", result.stdout)
+        log = self.log.read_text()
+        self.assertNotIn("build -m", log)
+        self.assertNotIn("install -m", log)
+        self.assertNotIn("modprobe", log)
+
+    def test_loaded_module_reloads_without_rebuild_when_build_id_differs(self):
+        result = self.install()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.load_module("hp_wmi", "old-build")
+        self.load_module("hp_kbd_rgb", "old-build")
+        self.log.write_text("")
+        result = self.install()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("loaded module differs; reloading", result.stdout)
+        log = self.log.read_text()
+        self.assertNotIn("build -m", log)
+        self.assertNotIn("install -m", log)
+        self.assertIn("modprobe -r hp-wmi", log)
+        self.assertIn("modprobe hp-wmi", log)
+        self.assertIn("modprobe -r hp-kbd-rgb", log)
+
+    def test_changed_source_rebuilds_and_reloads_only_that_module(self):
+        result = self.install()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.load_module("hp_wmi")
+        self.load_module("hp_kbd_rgb")
+        (self.root / "kernel/hp-wmi/hp-wmi.c").write_text("/* changed */\n")
+        self.log.write_text("")
+        result = self.install()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Kernel module hp-kbd-rgb is unchanged; skipping rebuild and reload.", result.stdout)
+        log = self.log.read_text()
+        self.assertIn("build -m victus-hub-hp-wmi", log)
+        self.assertIn("install -m victus-hub-hp-wmi", log)
+        self.assertIn("modprobe -r hp-wmi", log)
+        self.assertIn("modprobe hp-wmi", log)
+        self.assertNotIn("build -m victus-hub-hp-kbd-rgb", log)
+        self.assertNotIn("install -m victus-hub-hp-kbd-rgb", log)
+        self.assertNotIn("modprobe hp-kbd-rgb", log)
+        self.assertNotIn("modprobe -r hp-kbd-rgb", log)
+
+    def test_archived_original_module_still_counts_as_installed(self):
+        result = self.install()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.load_module("hp_wmi")
+        self.load_module("hp_kbd_rgb")
+        self.env["TEST_STATUS_SUFFIX"] = " (Original modules exist)"
+        self.log.write_text("")
+        result = self.install()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        log = self.log.read_text()
+        self.assertNotIn("build -m", log)
+        self.assertNotIn("install -m", log)
+        self.assertNotIn("modprobe", log)
+
+    def test_stock_module_selection_is_reinstalled(self):
+        result = self.install()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.load_module("hp_wmi")
+        self.load_module("hp_kbd_rgb")
+        self.env["TEST_MODINFO_KIND"] = "stock"
+        self.log.write_text("")
+        result = self.install()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Custom hp-wmi is not the selected module; reinstalling.", result.stdout)
+        self.assertIn("Custom hp-kbd-rgb is not the selected module; reinstalling.", result.stdout)
+        log = self.log.read_text()
+        self.assertIn("install -m victus-hub-hp-wmi", log)
+        self.assertIn("install -m victus-hub-hp-kbd-rgb", log)
+
+    def test_installed_module_mismatch_is_reinstalled(self):
+        result = self.install()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.load_module("hp_wmi")
+        self.load_module("hp_kbd_rgb")
+        self.env["TEST_STATUS_SUFFIX"] = " (Differences between built and installed modules)"
+        self.log.write_text("")
+        result = self.install()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        log = self.log.read_text()
+        self.assertNotIn("build -m", log)
+        self.assertIn("install -m victus-hub-hp-wmi", log)
+        self.assertIn("install -m victus-hub-hp-kbd-rgb", log)
+        self.assertIn("modprobe -r hp-wmi", log)
 
 
 class TestAppInstaller(unittest.TestCase):
