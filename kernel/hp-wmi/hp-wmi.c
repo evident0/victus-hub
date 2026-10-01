@@ -219,7 +219,7 @@ static const char * const omen_thermal_profile_boards[] = {
 	"886B", "886C", "88C8", "88CB", "88D1", "88D2", "88F4", "88F5", "88F6",
 	"88F7", "88FD", "88FE", "88FF",
 	"8900", "8901", "8902", "8912", "8917", "8918", "8949", "894A", "89EB",
-	"8A15", "8A42", "8A43",
+	"8A15", "8A18",
 	"8BAD",
 	"8C58",
 	"8E41",
@@ -239,7 +239,7 @@ static const char * const omen_thermal_profile_force_v0_boards[] = {
  * "balanced" when reaching zero.
  */
 static const char * const omen_timed_thermal_profile_boards[] = {
-	"8A15", "8A42",
+	"8A15",
 	"8BAD",
 };
 
@@ -258,6 +258,19 @@ static const struct dmi_system_id hp_wmi_feature_boards[] __initconst = {
 	{
 		.matches = { DMI_MATCH(DMI_BOARD_NAME, "8902") },
 		.driver_data = (void *)&omen_v1_legacy_board_params,
+	},
+	{
+		/* 8A13: OMEN by HP Laptop 16-b1xxx */
+		.matches = { DMI_MATCH(DMI_BOARD_NAME, "8A13") },
+		.driver_data = (void *)&omen_v1_legacy_board_params,
+	},
+	{
+		.matches = { DMI_MATCH(DMI_BOARD_NAME, "8A42") },
+		.driver_data = (void *)&omen_v1_no_ec_board_params,
+	},
+	{
+		.matches = { DMI_MATCH(DMI_BOARD_NAME, "8A43") },
+		.driver_data = (void *)&omen_v1_no_ec_board_params,
 	},
 	{
 		.matches = { DMI_MATCH(DMI_BOARD_NAME, "8A3D") },
@@ -282,6 +295,15 @@ static const struct dmi_system_id hp_wmi_feature_boards[] __initconst = {
 	{
 		.matches = { DMI_MATCH(DMI_BOARD_NAME, "8BAB") },
 		.driver_data = (void *)&omen_v1_board_params,
+	},
+	{
+		/*
+		 * 8BAC: HP Omen 16-wf0xxx. ACPI tables have a broken GETB
+		 * helper (CreateField with zero length) that aborts all WMID
+		 * methods. Use no-EC params to skip EC thermal profile reads.
+		 */
+		.matches = { DMI_MATCH(DMI_BOARD_NAME, "8BAC") },
+		.driver_data = (void *)&omen_v1_no_ec_board_params,
 	},
 	{
 		.matches = { DMI_MATCH(DMI_BOARD_NAME, "8B2F") },
@@ -316,6 +338,21 @@ static const struct dmi_system_id hp_wmi_feature_boards[] __initconst = {
 		.driver_data = (void *)&victus_s_board_params,
 	},
 	{
+		/* 8C3F: Victus by HP Gaming Laptop 15-fa1xxx */
+		.matches = { DMI_MATCH(DMI_BOARD_NAME, "8C3F") },
+		.driver_data = (void *)&victus_s_board_params,
+	},
+	{
+		/*
+		 * 8C75: HP Omen 17-db0xxx. Same broken GETB helper as 8BAC
+		 * (AE_AML_BUFFER_LIMIT on _SB.WMID.WMBX / WMBA) causes all
+		 * WMID writes to abort silently, leaving fans stuck at 0 RPM
+		 * after an overheat. Use no-EC params to skip EC reads.
+		 */
+		.matches = { DMI_MATCH(DMI_BOARD_NAME, "8C75") },
+		.driver_data = (void *)&omen_v1_no_ec_board_params,
+	},
+	{
 		.matches = { DMI_MATCH(DMI_BOARD_NAME, "8C76") },
 		.driver_data = (void *)&omen_v1_board_params,
 	},
@@ -340,7 +377,20 @@ static const struct dmi_system_id hp_wmi_feature_boards[] __initconst = {
 		.driver_data = (void *)&omen_v1_legacy_board_params,
 	},
 	{
+		.matches = { DMI_MATCH(DMI_BOARD_NAME, "8D3F") },
+		.driver_data = (void *)&omen_v1_legacy_board_params,
+	},
+	{
+		/* 8D40: HP OMEN Slim Gaming Laptop 16-an0xxx */
+		.matches = { DMI_MATCH(DMI_BOARD_NAME, "8D40") },
+		.driver_data = (void *)&omen_v1_no_ec_board_params,
+	},
+	{
 		.matches = { DMI_MATCH(DMI_BOARD_NAME, "8D41") },
+		.driver_data = (void *)&omen_v1_no_ec_board_params,
+	},
+	{
+		.matches = { DMI_MATCH(DMI_BOARD_NAME, "8D42") },
 		.driver_data = (void *)&omen_v1_no_ec_board_params,
 	},
 	{
@@ -349,6 +399,11 @@ static const struct dmi_system_id hp_wmi_feature_boards[] __initconst = {
 	},
 	{
 		.matches = { DMI_MATCH(DMI_BOARD_NAME, "8D88") },
+		.driver_data = (void *)&omen_v1_no_ec_board_params,
+	},
+	{
+		/* 8DD0: Victus by HP Gaming Laptop 15-fb3xxx */
+		.matches = { DMI_MATCH(DMI_BOARD_NAME, "8DD0") },
 		.driver_data = (void *)&omen_v1_no_ec_board_params,
 	},
 	{
