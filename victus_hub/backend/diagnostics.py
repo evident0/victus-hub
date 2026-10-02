@@ -66,7 +66,7 @@ def program_version() -> str:
     try:
         return pkg_version("victus-hub")
     except PackageNotFoundError:
-        return "1.0.2"
+        return "1.0.3"
 
 
 def documents_dir() -> Path:
