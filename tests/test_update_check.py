@@ -189,6 +189,7 @@ class TestStartUpdate(unittest.TestCase):
             script,
         )
         self.assertIn("/usr/local/bin/victus-hub", script)
+        self.assertIn("'QT_QPA_PLATFORM=wayland;xcb'", script)
         self.assertIn("Update finished (exit %s). You can close this window.", script)
         self.assertIn("sleep infinity", script)
         self.assertNotIn("read -r", script)
@@ -214,6 +215,17 @@ class TestStartUpdate(unittest.TestCase):
         )
         self.assertNotIn("rm -rf", script)
         self.assertNotIn("1.0.2", script)
+
+    def test_fedora_and_mint_terminal_fallbacks(self):
+        for name, options in (("ptyxis", ["--new-window", "--"]),
+                              ("kgx", ["--"]),
+                              ("xfce4-terminal", ["--disable-server", "-x"]),
+                              ("mate-terminal", ["-x"]),
+                              ("x-terminal-emulator", ["-e"])):
+            with self.subTest(terminal=name):
+                popen = self.launch({"curl": "/usr/bin/curl", "sudo": "/usr/bin/sudo", name: f"/usr/bin/{name}"})
+                command = popen.call_args.args[0]
+                self.assertEqual(command[:-1], [f"/usr/bin/{name}", *options, "/bin/bash", "-c"])
 
     def test_konsole_fallback(self):
         popen = self.launch({

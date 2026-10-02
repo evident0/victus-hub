@@ -10,7 +10,6 @@ MODULE_DIR="$(cd -- "$SCRIPT_DIR/.." && pwd)"
 MODULE_KO="$MODULE_DIR/${MODULE_NAME}.ko"
 INSTALL_PATH="/lib/modules/${KERNEL_RELEASE}/extra/${MODULE_NAME}.ko"
 AUTOLOAD_CONF="/etc/modules-load.d/${MODULE_NAME}.conf"
-DEPMOD_CONF="/etc/depmod.d/victus-hub-hp-wmi-${KERNEL_RELEASE}.conf"
 PLATFORM_PATH="/sys/devices/platform/hp-wmi"
 
 if [ "$(id -u)" -eq 0 ]; then
@@ -62,12 +61,8 @@ done
 printf 'Installing %s to %s...\n' "$MODULE_KO" "$INSTALL_PATH"
 secure_boot_install_module "$MODULE_KO" "$INSTALL_PATH"
 
-# extra/ does not have priority over kernel/ on every distribution. Restrict
-# the override to this kernel so other kernels can still use their stock module.
-"${SUDO[@]}" install -d /etc/depmod.d
-printf 'override %s %s extra\n' "$MODULE_NAME" "$KERNEL_RELEASE" | "${SUDO[@]}" tee "$DEPMOD_CONF" >/dev/null
-printf 'Updating module dependency cache...\n'
-"${SUDO[@]}" depmod -a "$KERNEL_RELEASE"
+# Share distro-specific module priority and initramfs handling with DKMS.
+"${SUDO[@]}" bash "$MODULE_DIR/../dkms-post-install" "$KERNEL_RELEASE" "$MODULE_NAME"
 
 SELECTED_PATH=$(modinfo -k "$KERNEL_RELEASE" -n "$MODULE_NAME")
 if [ "$(readlink -f "$SELECTED_PATH")" != "$(readlink -f "$INSTALL_PATH")" ]; then

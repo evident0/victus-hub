@@ -84,3 +84,33 @@ class TestUninstallCleanup(unittest.TestCase):
         result = self.run_script(script, "--app-only")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(self.log.read_text(), "cache refreshed\n")
+
+    def test_legacy_modules_and_overrides_refresh_each_affected_kernel(self):
+        script = self.script("scripts/uninstall", ("/usr/local", "/usr/lib", "/usr/share", "/usr/src",
+                                                   "/etc/", "/opt/", "/var/", "/run/", "/sys/", "/lib/modules"))
+        self.script("kernel/dkms-post-remove", ("/lib/modules", "/etc/"))
+        for relative in ("kernel/hp-wmi/scripts/uninstall", "kernel/hp-kbd-rgb/scripts/uninstall",
+                         "scripts/ryzenadj-uninstall"):
+            helper = self.root / relative
+            helper.parent.mkdir(parents=True, exist_ok=True)
+            helper.write_text("#!/bin/bash\nexit 0\n")
+            helper.chmod(0o755)
+        self.command("systemctl", "exit 1")
+        self.command("python3", "exit 0")
+        self.command("depmod", 'printf "depmod %s\\n" "$*" >> "$TEST_LOG"')
+        self.command("update-initramfs", 'printf "initramfs %s\\n" "$*" >> "$TEST_LOG"')
+        for release in ("old-kernel", "other-kernel"):
+            extra = self.root / "lib/modules" / release / "extra"
+            extra.mkdir(parents=True)
+            for module in ("hp-wmi", "hp-kbd-rgb"):
+                (extra / f"{module}.ko").touch()
+            conf = self.root / "etc/depmod.d" / f"victus-hub-hp-wmi-{release}.conf"
+            conf.parent.mkdir(parents=True, exist_ok=True)
+            conf.touch()
+        result = self.run_script(script)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        log = self.log.read_text()
+        for release in ("old-kernel", "other-kernel"):
+            self.assertEqual(log.count(f"initramfs -u -k {release}\n"), 1)
+        self.assertFalse(list((self.root / "lib/modules").glob("*/extra/*.ko")))
+        self.assertFalse(list((self.root / "etc/depmod.d").glob("*.conf")))

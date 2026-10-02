@@ -69,8 +69,8 @@ if [ -f "$DEPMOD_CONF" ]; then
   "${SUDO[@]}" rm -f "$DEPMOD_CONF"
 fi
 
-printf 'Updating module dependency cache...\n'
-"${SUDO[@]}" depmod -a "$KERNEL_RELEASE"
+SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+"${SUDO[@]}" bash "$SCRIPT_DIR/../../dkms-post-remove" "$KERNEL_RELEASE" "$MODULE_NAME"
 
 SELECTED_PATH=$(modinfo -k "$KERNEL_RELEASE" -n "$MODULE_NAME")
 case "$SELECTED_PATH" in

@@ -239,6 +239,7 @@ fi
 
 # Sweep extra/ copies and depmod overrides on every installed kernel.
 # The kmod uninstallers target the running kernel only.
+declare -A legacy_releases=()
 for ko in \
 	/lib/modules/*/extra/hp-wmi.ko{,.xz,.zst,.gz} \
 	/lib/modules/*/extra/hp-kbd-rgb.ko{,.xz,.zst,.gz} \
@@ -248,12 +249,17 @@ do
 	printf 'Removing leftover module %s\n' "$ko"
 	"${SUDO[@]}" rm -f "$ko"
 	legacy_release="${ko#/lib/modules/}"
-	"${SUDO[@]}" depmod -a "${legacy_release%%/*}" || true
+	legacy_releases["${legacy_release%%/*}"]=1
 done
 for conf in /etc/depmod.d/victus-hub-hp-wmi-*.conf; do
 	[ -f "$conf" ] || continue
 	printf 'Removing %s\n' "$conf"
 	"${SUDO[@]}" rm -f "$conf"
+	legacy_release=${conf#/etc/depmod.d/victus-hub-hp-wmi-}
+	legacy_releases["${legacy_release%.conf}"]=1
+done
+for legacy_release in "${!legacy_releases[@]}"; do
+	"${SUDO[@]}" bash "$ROOT_DIR/kernel/dkms-post-remove" "$legacy_release" hp-wmi
 done
 
 # ── 5. ryzenadj ──

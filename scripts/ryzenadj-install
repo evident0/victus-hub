@@ -26,31 +26,17 @@ else
 fi
 
 # ── Build dependencies ──
-# Fedora: cmake gcc-c++ pciutils-devel (libpci). make and git assumed present.
 MISSING=()
-command -v cmake >/dev/null 2>&1 || MISSING+=(cmake)
-command -v g++   >/dev/null 2>&1 || MISSING+=(gcc-c++)
-command -v make  >/dev/null 2>&1 || MISSING+=(make)
-command -v git   >/dev/null 2>&1 || MISSING+=(git)
-if command -v pkg-config >/dev/null 2>&1; then
-  pkg-config --exists libpci || MISSING+=(pciutils-devel)
-else
-  [ -f /usr/include/pci/pci.h ] || MISSING+=(pciutils-devel)
-fi
+for tool in cmake gcc g++ make git pkg-config; do
+  command -v "$tool" >/dev/null 2>&1 || MISSING+=("$tool")
+done
+pkg-config --exists libpci 2>/dev/null || MISSING+=("libpci development headers")
 
 if [ "${#MISSING[@]}" -gt 0 ]; then
   printf 'Missing RyzenAdj build requirements: %s\n' "${MISSING[*]}" >&2
-  printf 'Install them yourself, then rerun:\n  Ubuntu/Mint: sudo apt install cmake g++ make git libpci-dev\n  Arch: sudo pacman -S --needed cmake base-devel git pciutils\n  Fedora: sudo dnf install cmake gcc-c++ make git pciutils-devel\n' >&2
+  printf 'Install them yourself, then rerun:\n  Ubuntu/Mint: sudo apt install cmake g++ make git pkg-config libpci-dev\n  Arch: sudo pacman -S --needed cmake base-devel git pciutils\n  Fedora: sudo dnf install cmake gcc-c++ make git pkgconf-pkg-config pciutils-devel\n' >&2
   exit 1
 fi
-
-# Re-check the critical tools in case a dep install was skipped or partial.
-for tool in cmake g++ make git; do
-  command -v "$tool" >/dev/null 2>&1 || {
-    printf '%s not found after dependency step — install it and re-run.\n' "$tool" >&2
-    exit 1
-  }
-done
 
 # ── Clone or update ──
 if [ -d "$CLONE_DIR/.git" ]; then
