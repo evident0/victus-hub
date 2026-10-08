@@ -1,0 +1,166 @@
+window.victus {
+  background: #161616;
+  color: #ededed;
+  font-family: "IBM Plex Sans", Cantarell, sans-serif;
+  font-size: 13px;
+}
+window.victus .victus-page,
+window.victus .victus-scroll,
+window.victus viewport,
+window.victus list,
+window.victus list row,
+window.victus row {
+  background: #161616;
+  color: #ededed;
+}
+window.victus .title {
+  font-size: 15px;
+  font-weight: 600;
+}
+window.victus .metric {
+  font-size: 42px;
+  font-weight: 600;
+}
+window.victus .unit {
+  color: #969696;
+  font-size: 13px;
+}
+window.victus .temp-unit { font-size: 18px; }
+window.victus .rpm-unit { font-size: 15px; }
+window.victus .hot { color: #ff4444; }
+window.victus .caption,
+window.victus .sub,
+window.victus .row-sub {
+  color: #969696;
+  font-size: 12px;
+}
+window.victus .row-title {
+  font-size: 14px;
+  font-weight: 400;
+}
+window.victus .sensor-group-title { font-weight: 700; }
+window.victus .heartbeat { font-size: 8px; }
+window.victus .mono {
+  font-family: "IBM Plex Mono", monospace;
+  color: #8a8a8a;
+  font-size: 12px;
+}
+window.victus .ok { color: #4ac06c; }
+window.victus .accent { color: #3f8cff; }
+window.victus .hairline { background: #2c2c2c; }
+window.victus .seg {
+  background: #0f0f0f;
+  border-radius: 10px;
+  padding: 4px;
+}
+window.victus button.seg-btn {
+  background: transparent;
+  color: #a8a8a8;
+  border: none;
+  box-shadow: none;
+  border-radius: 8px;
+  padding: 9px 6px;
+  min-height: 16px;
+  font-size: 13px;
+  font-weight: 400;
+}
+window.victus button.seg-btn.on {
+  background: #3f8cff;
+  color: #ffffff;
+  font-weight: 600;
+}
+window.graph-win {
+  background: #161616;
+  color: #ededed;
+}
+window.graph-win .graph-name { color: #cfcfcf; font-size: 11px; }
+window.graph-win .graph-value { color: #ffffff; font-size: 11px; font-weight: 800; }
+window.graph-win .graph-source { color: #969696; font-size: 11px; }
+window.graph-win .graph-scale { background: #3d3d3d; }
+window.graph-win entry {
+  background: #303030;
+  color: #ffffff;
+  border: 1px solid #555555;
+  border-radius: 2px;
+  min-height: 22px;
+  padding: 0 4px;
+  font-size: 11px;
+}
+popover.sensor-menu {
+  background: #202020;
+  color: #ededed;
+}
+popover.sensor-menu button {
+  background: transparent;
+  color: #ededed;
+  border: none;
+  box-shadow: none;
+  padding: 6px 18px;
+  min-height: 0;
+  font-size: 13px;
+}
+popover.sensor-menu button:disabled { color: #6a6a6a; }
+popover.sensor-menu button:hover { background: #303030; }
+window.victus .linkish {
+  background: transparent;
+  color: #a8a8a8;
+  border: none;
+  box-shadow: none;
+  padding: 0;
+  min-height: 0;
+}
+window.victus .linkish.on { color: #3f8cff; }
+window.victus button.selection-link {
+  border-bottom: 1px solid transparent;
+  border-radius: 0;
+  padding-bottom: 4px;
+  transition: border-bottom-color 280ms ease-out;
+}
+window.victus button.selection-link.on {
+  color: #ffffff;
+  border-bottom-color: #3f8cff;
+}
+window.victus .pill {
+  background: #202020;
+  color: #ededed;
+  border: none;
+  box-shadow: none;
+  border-radius: 999px;
+  padding: 6px 14px;
+  min-height: 0;
+}
+window.victus .row-link {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  padding: 8px 0;
+}
+window.victus .row-link:hover { background: #202020; border-radius: 10px; }
+window.victus .sunken-chip {
+  background: #0f0f0f;
+  border-radius: 8px;
+  padding: 4px 8px;
+}
+window.victus entry,
+window.victus dropdown,
+window.victus spinbutton {
+  background: #0f0f0f;
+  color: #ededed;
+  border: 1px solid #2c2c2c;
+  border-radius: 8px;
+}
+window.victus entry.hex { font-family: "IBM Plex Mono", monospace; }
+window.victus scale trough {
+  background: #313131;
+  border-radius: 99px;
+  min-height: 6px;
+}
+window.victus scale highlight { background: #3f8cff; }
+window.victus scale slider {
+  background: #ededed;
+  border-radius: 99px;
+  min-width: 16px;
+  min-height: 16px;
+}
+window.victus switch:checked { background: #3f8cff; }
+window.victus list row:selected { background: #202020; }
