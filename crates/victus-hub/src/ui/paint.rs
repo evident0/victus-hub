@@ -50,7 +50,7 @@ pub fn sidebar(cr: &Context, width: f64, height: f64, keyboard: bool, selected: 
         let color = if button.page == selected {
             "#EDEDED"
         } else if hover == Some(button.page) {
-            "#EDEDED"
+            "#969696"
         } else {
             "#848484"
         };
@@ -69,13 +69,15 @@ pub fn sidebar(cr: &Context, width: f64, height: f64, keyboard: bool, selected: 
 }
 
 fn icon(cr: &Context, page: usize) {
+    // Match the 24-unit SVG paths in victus_hub/widgets/sidebar.py.
     match page {
         0 => {
             let _ = cr.new_sub_path();
             let _ = cr.arc(12.0, 12.0, 8.5, 0.0, std::f64::consts::TAU);
+            stroke_only(cr, 1.6);
             let _ = cr.new_sub_path();
             let _ = cr.arc(12.0, 12.0, 3.4, 0.0, std::f64::consts::TAU);
-            stroke_only(cr, 1.6);
+            let _ = cr.fill();
         }
         1 => {
             let _ = cr.move_to(13.0, 2.0);
@@ -94,21 +96,29 @@ fn icon(cr: &Context, page: usize) {
         }
         3 => {
             rounded(cr, 2.5, 5.5, 19.0, 13.0, 2.0);
-            stroke_only(cr, 1.6);
-            for (x, y) in [(6.0, 9.5), (10.0, 9.5), (14.0, 9.5), (17.6, 9.5), (6.0, 12.5), (10.0, 12.5), (14.0, 12.5), (17.6, 12.5)] {
-                let _ = cr.arc(x, y, 0.7, 0.0, std::f64::consts::TAU);
+            for y in [9.5, 12.5] {
+                for x in [6.0, 9.8, 13.6, 17.4] {
+                    let _ = cr.move_to(x, y);
+                    let _ = cr.line_to(x + 0.4, y);
+                }
             }
-            let _ = cr.fill();
+            let _ = cr.move_to(7.5, 15.5);
+            let _ = cr.line_to(16.5, 15.5);
+            stroke_only(cr, 1.6);
         }
         4 => {
             let _ = cr.move_to(10.0, 14.2);
-            let _ = cr.line_to(10.0, 6.5);
-            let _ = cr.arc(12.0, 6.5, 2.0, std::f64::consts::PI, 0.0);
+            let _ = cr.line_to(10.0, 5.0);
+            let _ = cr.arc(12.0, 5.0, 2.0, std::f64::consts::PI, std::f64::consts::TAU);
             let _ = cr.line_to(14.0, 14.2);
-            let _ = cr.arc(12.0, 16.2, 4.0, 5.2, std::f64::consts::PI + 1.0);
+            // SVG A4 4 0 1 1 10 14.2: the long arc around the bulb.
+            let _ = cr.arc(12.0, 14.2 + 12.0_f64.sqrt(), 4.0, -std::f64::consts::PI / 3.0, 4.0 * std::f64::consts::PI / 3.0);
             let _ = cr.close_path();
+            let _ = cr.move_to(12.0, 8.0);
+            let _ = cr.line_to(12.0, 17.0);
             stroke_only(cr, 1.6);
-            let _ = cr.arc(12.0, 17.6, 2.0, 0.0, std::f64::consts::TAU);
+            let _ = cr.new_sub_path();
+            let _ = cr.arc(12.0, 17.7, 2.2, 0.0, std::f64::consts::TAU);
             let _ = cr.fill();
         }
         _ => gear(cr),
@@ -124,22 +134,21 @@ fn wave(cr: &Context, y: f64) {
 fn gear(cr: &Context) {
     let (cx, cy) = (12.0, 12.0);
     for index in 0..8 {
-        let angle = index as f64 * std::f64::consts::FRAC_PI_4;
-        let (sin, cos) = angle.sin_cos();
-        let (px, py) = (-sin, cos);
-        let ix = cx + cos * 7.2;
-        let iy = cy + sin * 7.2;
-        let ox = cx + cos * 10.4;
-        let oy = cy + sin * 10.4;
-        let _ = cr.move_to(ix + px * 1.4, iy + py * 1.4);
-        let _ = cr.line_to(ox + px * 1.3, oy + py * 1.3);
-        let _ = cr.line_to(ox - px * 1.3, oy - py * 1.3);
-        let _ = cr.line_to(ix - px * 1.4, iy - py * 1.4);
-        let _ = cr.close_path();
+        for (corner, (offset, radius)) in [(0.06, 10.0), (0.44, 10.0), (0.56, 7.6), (0.94, 7.6)].into_iter().enumerate() {
+            let angle = (index as f64 + offset) * std::f64::consts::FRAC_PI_4;
+            let (sin, cos) = angle.sin_cos();
+            let x = ((cx + cos * radius) * 100.0).round() / 100.0;
+            let y = ((cy + sin * radius) * 100.0).round() / 100.0;
+            if index == 0 && corner == 0 {
+                let _ = cr.move_to(x, y);
+            } else {
+                let _ = cr.line_to(x, y);
+            }
+        }
     }
-    let _ = cr.arc(cx, cy, 7.2, 0.0, std::f64::consts::TAU);
+    let _ = cr.close_path();
     let _ = cr.new_sub_path();
-    let _ = cr.arc(cx, cy, 3.1, 0.0, std::f64::consts::TAU);
+    let _ = cr.arc(cx, cy, 3.4, 0.0, std::f64::consts::TAU);
     let _ = cr.set_fill_rule(cairo::FillRule::EvenOdd);
     let _ = cr.fill();
 }
