@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 pub mod legacy;
+mod persist;
 use victus_core::{
     config_to_value, fan_mode_steps, keys_for_page, lighting_to_value, power_to_value, release_is_newer, render_markdown,
     state_from_value, zone_for_key, DaemonState, FanConfig, FanMode, LightingSettings, SensorSnapshot, PROGRAM_VERSION,

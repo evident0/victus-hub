@@ -174,23 +174,38 @@ pub(super) fn apply_snapshot(session: &Session, snapshot: SensorSnapshot, reques
 }
 
 pub(super) fn flush_lighting(session: &Session) {
-    let request = {
+    let (request, offline, conf, lighting) = {
         let mut model = session.model.borrow_mut();
         let zones = model.zones;
         model.state.lighting = normalize_lighting_settings(&model.state.lighting, zones);
-        lighting_request(&model.state.lighting)
+        (lighting_request(&model.state.lighting), model.offline, model.host.conf_path.clone(), model.state.lighting.clone())
     };
+    // Python writes the local copy before the daemon push, and keeps it if the push fails.
+    let saved = crate::persist::remember_lighting(offline, &conf, &lighting);
     let _ = commit(session, &request);
+    note_save(session, saved);
     refresh_view(session);
 }
 
 pub(super) fn flush_fan(session: &Session) {
-    let request = {
+    let (request, offline, conf, fan) = {
         let model = session.model.borrow();
-        format!("fan-config\t{}", config_to_value(&model.state.fan))
+        (format!("fan-config\t{}", config_to_value(&model.state.fan)), model.offline, model.host.conf_path.clone(), model.state.fan.clone())
     };
+    let saved = crate::persist::remember_fan(offline, &conf, &fan);
     let _ = commit(session, &request);
+    note_save(session, saved);
     refresh_view(session);
+}
+
+pub(super) fn note_save(session: &Session, saved: Result<(), String>) {
+    if let Err(error) = saved {
+        let mut model = session.model.borrow_mut();
+        if model.status.is_empty() {
+            model.status = error;
+        }
+    }
+    show_status(session);
 }
 
 pub(super) fn tick_animation(session: &Session) {
@@ -336,9 +351,16 @@ pub(super) fn apply_remote_state(session: &Session, value: &serde_json::Value) {
     }
     session.built.fans.response.set_selected(u32::from(model.state.fan.curve_response == CURVE_RESPONSE_AGGRESSIVE));
     session.built.fans.min_change.set_value(model.state.fan.min_fan_change_pct);
+    let save_lighting = session.light_at.get().is_none() && model.state.lighting != old.lighting;
+    let lighting = model.state.lighting.clone();
+    let offline = model.offline;
+    let conf = model.host.conf_path.clone();
     let frequency_changed = model.state.cpu_frequency != old_frequency || model.profile != profile;
     if model.profile != profile { session.selected_point.set(None); session.curve_selections.set([None, None]); session.drag.set(None); session.fan_hover.set(None); }
     drop(model);
+    if save_lighting {
+        note_save(session, crate::persist::remember_lighting(offline, &conf, &lighting));
+    }
     session.suppress.set(false);
     if session.light_at.get().is_none() { sync_color_entries(session); }
     if frequency_changed { refresh_frequency(session); }

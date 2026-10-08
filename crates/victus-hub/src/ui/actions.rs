@@ -140,6 +140,7 @@ pub(super) fn apply_fan_mode(session: &Session, mode: FanMode) {
         refresh_view(session);
         return;
     }
+    let pending_curve = session.fan_at.get().is_some();
     session.fan_at.set(None);
     session.drag.set(None);
     let requests = {
@@ -154,10 +155,20 @@ pub(super) fn apply_fan_mode(session: &Session, mode: FanMode) {
         }
     }
     if ok {
-        let mut model = session.model.borrow_mut();
-        if let Some(last) = fan_mode_steps(&model.state.fan, mode).last() {
-            model.state.fan = last.clone();
-        }
+        let saved = {
+            let mut model = session.model.borrow_mut();
+            if let Some(last) = fan_mode_steps(&model.state.fan, mode).last() {
+                model.state.fan = last.clone();
+            }
+            crate::persist::remember_fan(model.offline, &model.host.conf_path, &model.state.fan)
+        };
+        super::view::note_save(session, saved);
+    } else if pending_curve {
+        let saved = {
+            let model = session.model.borrow();
+            crate::persist::remember_fan(model.offline, &model.host.conf_path, &model.state.fan)
+        };
+        super::view::note_save(session, saved);
     }
     refresh_view(session);
 }
@@ -257,7 +268,15 @@ pub(super) fn control_result(session: &Session, kind: ControlRequest, result: Re
             }
             if success {
                 *session.applied_power.borrow_mut() = policy.clone();
-                session.model.borrow_mut().state.power = policy;
+                let saved = {
+                    let mut model = session.model.borrow_mut();
+                    model.state.power = policy;
+                    crate::persist::remember_power(model.offline, &model.host.conf_path, model.host.intel, &model.state.power)
+                };
+                if let Err(error) = saved {
+                    let mut model = session.model.borrow_mut();
+                    if model.status.is_empty() { model.status = error; }
+                }
             } else {
                 session.suppress.set(true);
                 session.built.power.enabled.set_active(session.model.borrow().state.power.enabled);
@@ -268,7 +287,18 @@ pub(super) fn control_result(session: &Session, kind: ControlRequest, result: Re
         ControlRequest::Frequency(minimum, maximum) => {
             session.built.power.freq_min.row.set_sensitive(true);
             session.built.power.freq_max.row.set_sensitive(true);
-            if success { session.model.borrow_mut().state.cpu_frequency = Some((minimum, maximum)); session.applied_freq.set(Some((minimum, maximum))); }
+            if success {
+                let saved = {
+                    let mut model = session.model.borrow_mut();
+                    model.state.cpu_frequency = Some((minimum, maximum));
+                    crate::persist::remember_frequency(model.offline, &model.host.conf_path, minimum, maximum)
+                };
+                session.applied_freq.set(Some((minimum, maximum)));
+                if let Err(error) = saved {
+                    let mut model = session.model.borrow_mut();
+                    if model.status.is_empty() { model.status = error; }
+                }
+            }
             else { session.built.power.freq_note.set_text(&format!("Could not apply CPU frequency: {}", result.as_ref().err().cloned().unwrap_or_default())); }
             refresh_power_actions(session);
             session.last_frequency.borrow_mut().take();

@@ -228,7 +228,19 @@ pub(super) fn bind_switch(session: &Rc<Session>, switch: &gtk4::Switch, kind: Sw
             switch.set_active(!active);
             kind.store(&mut session.model.borrow_mut(), !active);
             session.suppress.set(false);
+            return;
         }
+        // Battery power-save is stored by the daemon. Python writes that
+        // checkbox only when it copies daemon state back at startup.
+        let saved = {
+            let model = session.model.borrow();
+            match kind {
+                SwitchKind::Nvidia => crate::persist::remember_nvidia(model.offline, &model.host.conf_path, active),
+                SwitchKind::Hardware => crate::persist::remember_hardware_shortcuts(model.offline, &model.host.conf_path, active),
+                SwitchKind::Battery => Ok(()),
+            }
+        };
+        super::view::note_save(&session, saved);
     });
 }
 

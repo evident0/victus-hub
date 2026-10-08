@@ -86,7 +86,15 @@ pub fn start(model: Model, own_bus: bool) -> Result<(), String> {
 pub fn hydrate_live(model: &mut Model) {
     let Some(socket) = connects_to_socket(model).map(Path::to_path_buf) else { return };
     match fetched_state(&socket) {
-        Ok(value) => model.hydrate(&value),
+        Ok(value) => {
+            model.hydrate(&value);
+            if model.state.initialized
+                && let Err(error) = crate::persist::mirror_daemon(model.offline, &model.host.conf_path, model.host.intel, &model.state)
+                && model.status.is_empty()
+            {
+                model.status = error;
+            }
+        }
         Err(error) => { model.status = error; return; }
     }
     if !model.state.initialized {
