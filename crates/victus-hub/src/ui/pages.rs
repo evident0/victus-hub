@@ -7,7 +7,7 @@ use std::cell::RefCell;
 use std::collections::HashSet;
 use std::rc::Rc;
 
-use super::widgets::{self, column, head, metric, pill, settings_row, slider, stack_page, Slider};
+use super::widgets::{self, accent, column, head, metric, pill, settings_row, slider, stack_page, Slider};
 
 pub struct Home {
     pub title: Label,
@@ -321,6 +321,7 @@ fn home(model: &crate::Model) -> (Box, Home) {
     page.append(&fan_row);
     let curve = Button::with_label("Edit curve");
     curve.add_css_class("linkish");
+    curve.add_css_class("curve-link");
     curve.add_css_class("on");
     let curve_row = Box::new(Orientation::Horizontal, 0);
     curve_row.set_margin_top(8);
@@ -464,9 +465,8 @@ fn power(intel: bool) -> (Box, Power) {
     limits.append(&tctl.row);
     limits.append(&reapply.row);
     page.append(&limits);
-    let apply = pill("Apply power");
-    apply.set_margin_top(8);
-    apply.set_halign(Align::End);
+    let apply = accent("Apply");
+    apply.set_margin_top(16);
     page.append(&apply);
     let freq_min = slider("Minimum", 400_000.0, 6_000_000.0, 100_000.0);
     let freq_max = slider("Maximum", 400_000.0, 6_000_000.0, 100_000.0);
@@ -475,8 +475,7 @@ fn power(intel: bool) -> (Box, Power) {
     freq_note.set_wrap(true);
     freq_note.set_halign(Align::Start);
     freq_note.set_xalign(0.0);
-    let freq_apply = pill("Apply frequency");
-    freq_apply.set_halign(Align::End);
+    let freq_apply = accent("Apply CPU frequency");
     let freq_sliders = Box::new(Orientation::Vertical, 0);
     freq_sliders.append(&freq_min.row);
     freq_sliders.append(&freq_max.row);
@@ -493,8 +492,7 @@ fn power(intel: bool) -> (Box, Power) {
     page.append(&freq_wrap);
     let uv_core = slider("Core", -250.0, 0.0, 1.0);
     let uv_cache = slider("Cache", -250.0, 0.0, 1.0);
-    let uv_apply = pill("Apply undervolt");
-    uv_apply.set_halign(Align::End);
+    let uv_apply = accent("Apply undervolt");
     let uv_status = Label::new(None);
     uv_status.set_text("Set both offsets to 0 mV to reset. Requires the msr kernel module and firmware voltage-control support. Saved offsets are applied only when you click Apply undervolt.");
     uv_status.add_css_class("sub");

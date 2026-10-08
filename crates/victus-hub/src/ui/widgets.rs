@@ -146,6 +146,14 @@ pub fn pill(label: &str) -> Button {
     button
 }
 
+pub fn accent(label: &str) -> Button {
+    let button = Button::with_label(label);
+    button.add_css_class("accent-btn");
+    button.set_cursor_from_name(Some("pointer"));
+    button.set_halign(Align::Start);
+    button
+}
+
 pub fn settings_row(title: &str, subtitle: &str, control: &impl IsAWidget) -> Box {
     let row = Box::new(Orientation::Horizontal, 18);
     row.set_margin_top(14);
@@ -246,6 +254,7 @@ impl<T: IsA<Widget>> IsAWidget for T {}
 
 pub fn sensor_header() -> Box {
     let row = Box::new(Orientation::Horizontal, 8);
+    row.add_css_class("sensor-head");
     row.set_margin_bottom(6);
     let name = Label::new(Some("Sensor"));
     name.add_css_class("caption");

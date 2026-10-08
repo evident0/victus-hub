@@ -63,11 +63,13 @@ window.victus button.seg-btn {
   font-size: 13px;
   font-weight: 400;
 }
+window.victus button.seg-btn label { font-weight: 400; }
 window.victus button.seg-btn.on {
   background: #3f8cff;
   color: #ffffff;
   font-weight: 600;
 }
+window.victus button.seg-btn.on label { font-weight: 600; }
 window.victus button.seg-btn:hover:not(:disabled) { color: #ededed; }
 window.victus button.seg-btn.on:hover:not(:disabled) { color: #ffffff; }
 window.victus button.seg-btn:disabled { color: #7e7e7e; }
@@ -88,29 +90,47 @@ window.graph-win entry {
   padding: 0 4px;
   font-size: 11px;
 }
-popover.sensor-menu {
-  background: #202020;
+popover.sensor-menu > contents {
+  background-color: #161616;
   color: #ededed;
+  border: 1px solid #2c2c2c;
+  border-radius: 8px;
+  padding: 4px;
+  box-shadow: none;
 }
 popover.sensor-menu button {
   background: transparent;
   color: #ededed;
   border: none;
   box-shadow: none;
-  padding: 6px 18px;
+  border-radius: 6px;
+  padding: 6px 14px;
+  margin: 1px 2px;
   min-height: 0;
+  min-width: 0;
   font-size: 13px;
+  font-weight: 400;
 }
-popover.sensor-menu button:disabled { color: #6a6a6a; }
-popover.sensor-menu button:hover { background: #303030; }
+popover.sensor-menu button label { font-weight: 400; }
+popover.sensor-menu button:hover:not(:disabled) { background: #202020; }
+popover.sensor-menu button:disabled,
+popover.sensor-menu button:disabled label { color: #969696; background: transparent; }
 window.victus .linkish {
   background: transparent;
-  color: #a8a8a8;
+  color: #909090;
   border: none;
   box-shadow: none;
   padding: 0;
   min-height: 0;
+  font-size: 14px;
+  font-weight: 400;
 }
+window.victus button.linkish label {
+  font-size: 14px;
+  font-weight: 400;
+}
+window.victus button.curve-link,
+window.victus button.curve-link label { font-size: 12px; }
 window.victus .linkish.on { color: #3f8cff; }
 window.victus button.linkish:hover:not(:disabled) { color: #ededed; }
 window.victus button.linkish.on:hover:not(:disabled) { color: #6ba6ff; }
@@ -122,29 +142,57 @@ window.victus button.selection-link {
   transition: border-bottom-color 280ms ease-out;
 }
 window.victus button.selection-link.on {
-  color: #ffffff;
+  color: #f4f4f4;
   border-bottom-color: #3f8cff;
 }
-window.victus button.selection-link.on:hover:not(:disabled) { color: #ffffff; }
-window.victus .pill {
+window.victus button.selection-link.on:hover:not(:disabled) { color: #f4f4f4; }
+window.victus button.pill {
   background: #202020;
   color: #ededed;
-  border: none;
+  border: 1px solid #343434;
   box-shadow: none;
-  border-radius: 999px;
-  padding: 6px 14px;
-  min-height: 0;
+  border-radius: 8px;
+  padding: 0 12px;
+  min-height: 34px;
+  font-size: 13px;
+  font-weight: 400;
 }
+window.victus button.pill label { font-weight: 400; }
 window.victus button.pill:hover:not(:disabled) { background: #343434; }
 window.victus button.pill:active:not(:disabled) { background: #313131; }
 window.victus button.pill:disabled { background: #0f0f0f; color: #7e7e7e; }
+window.victus button.accent-btn {
+  background: #3f8cff;
+  color: #ffffff;
+  border: none;
+  box-shadow: none;
+  border-radius: 8px;
+  padding: 7px 12px;
+  min-height: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+window.victus button.accent-btn label {
+  color: #ffffff;
+  font-weight: 600;
+}
+window.victus button.accent-btn:hover:not(:disabled) { background: #6ba6ff; }
+window.victus button.accent-btn:disabled { background: #202020; color: #7e7e7e; }
+window.victus button.accent-btn:disabled label { background: transparent; color: #7e7e7e; }
 window.victus .row-link {
   background: transparent;
   border: none;
   box-shadow: none;
   padding: 8px 0;
 }
+window.victus button.row-link label { font-weight: 400; }
+window.victus button.row-link .sensor-group-title { font-weight: 700; }
 window.victus .row-link:hover:not(:disabled) { background: #202020; border-radius: 10px; }
+window.victus list.sensors button.row-link,
+window.victus list.sensors button.row-link:hover:not(:disabled) {
+  background: transparent;
+  border-radius: 0;
+}
 window.victus .sunken-chip {
   background: #0f0f0f;
   border-radius: 8px;
@@ -157,46 +205,79 @@ window.victus spinbutton {
   border: 1px solid #2c2c2c;
   border-radius: 8px;
 }
-/* DropDown's selected item is a row inside a toggle button, not a page row. */
 window.victus dropdown > button {
-  background: #0f0f0f;
+  background: #202020;
   color: #ededed;
-  border: none;
+  border: 1px solid #2c2c2c;
   box-shadow: none;
-  border-radius: 8px;
-  padding: 4px 10px;
+  border-radius: 6px;
+  padding: 4px 8px 4px 10px;
   min-height: 24px;
+  font-weight: 400;
 }
-window.victus dropdown > button:hover:not(:disabled),
-window.victus dropdown > button:checked { background: #202020; }
-window.victus dropdown > button row {
-  background: transparent;
-  padding: 0;
+window.victus dropdown > button label,
+window.victus dropdown > button row { font-weight: 400; background: transparent; }
+window.victus dropdown > button:hover:not(:disabled) { background: #363636; }
+window.victus dropdown > button:checked,
+window.victus dropdown > button:active:not(:disabled) {
+  background: #202020;
+  border-color: #343434;
 }
+window.victus dropdown > button row { padding: 0; }
 window.victus dropdown popover > contents {
-  background: #0f0f0f;
+  background: #161616;
   color: #ededed;
   border: 1px solid #2c2c2c;
   border-radius: 8px;
   padding: 4px;
+  box-shadow: none;
 }
+window.victus dropdown popover label { font-weight: 400; }
 window.victus dropdown listview,
-window.victus dropdown listview > row { background: transparent; }
+window.victus dropdown listview > row {
+  background: transparent;
+  border-radius: 6px;
+  min-height: 0;
+  margin: 0;
+  padding: 2px 8px;
+}
 window.victus dropdown listview > row:hover,
 window.victus dropdown listview > row:selected { background: #202020; }
 window.victus entry.hex { font-family: "IBM Plex Mono", monospace; }
 window.victus scale trough {
   background: #313131;
   border-radius: 99px;
-  min-height: 6px;
+  min-height: 2px;
 }
 window.victus scale highlight { background: #3f8cff; }
 window.victus scale slider {
-  background: #ededed;
+  background: #3f8cff;
   border-radius: 99px;
-  min-width: 16px;
-  min-height: 16px;
+  min-width: 14px;
+  min-height: 14px;
+  /* Center the 14px thumb on the 2px track; Adwaita's -8px yields -2px sizes. */
+  margin: -6px;
 }
 window.victus switch:checked { background: #3f8cff; }
+window.victus .sensor-head {
+  border-bottom: 1px solid #2c2c2c;
+  padding-bottom: 4px;
+  margin-top: 12px;
+}
+window.victus .sensor-head > label {
+  color: #969696;
+  font-size: 11px;
+  font-weight: 700;
+}
+window.victus list.sensors > row {
+  padding: 0;
+  min-height: 0;
+  border: none;
+  border-radius: 0;
+}
+window.victus list.sensors > row:focus,
+window.victus list.sensors > row:focus-visible { outline: none; box-shadow: none; }
 window.victus list.sensors > row:hover,
 window.victus list.sensors > row:selected { background: #202020; }
+window.victus list.sensors label.mono { color: #ededed; }
+window.victus list.sensors label.hot { color: #ff4444; }

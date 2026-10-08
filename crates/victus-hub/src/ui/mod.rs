@@ -647,11 +647,18 @@ struct GraphPick {
 }
 
 fn wire_sensors(session: &Rc<Session>) {
+    // Parent the menu to the list so its anchor is in list coordinates.
+    // A popover opened during the right-click press is dismissed by that same
+    // click, so the menu is shown on release, after the event has finished.
     let menu = gtk4::Popover::new();
-    menu.set_parent(&session.window);
+    menu.set_parent(&session.built.sensors.list);
     menu.set_has_arrow(false);
+    menu.set_position(gtk4::PositionType::Bottom);
     menu.add_css_class("sensor-menu");
     let item = gtk4::Button::with_label("Graph");
+    item.add_css_class("flat");
+    item.set_hexpand(true);
+    item.set_halign(gtk4::Align::Fill);
     menu.set_child(Some(&item));
     *session.sensor_menu.borrow_mut() = Some(menu);
 
@@ -661,28 +668,13 @@ fn wire_sensors(session: &Rc<Session>) {
     click.set_propagation_phase(gtk4::PropagationPhase::Capture);
     let weak = Rc::downgrade(session);
     let pending_click = Rc::clone(&pending);
-    click.connect_pressed(move |gesture, _, x, y| {
-        gesture.set_state(gtk4::EventSequenceState::Claimed);
-        let Some(session) = weak.upgrade() else { return };
-        let Some(y_px) = finite_i32(y) else { return };
-        let Some(row) = session.built.sensors.list.row_at_y(y_px) else { return };
-        let key = row.widget_name().to_string();
-        if key.is_empty() {
+    click.connect_released(move |gesture, n_press, x, y| {
+        if n_press != 1 {
             return;
         }
-        let pick = {
-            let rows = session.sensor_rows.borrow();
-            let Some(sensor) = rows.iter().find(|item| item.key == key) else { return };
-            GraphPick {
-                key: sensor.key.clone(),
-                name: sensor.name.clone(),
-                group: sensor.group.clone(),
-                unit: sensor.unit.clone(),
-                min: sensor.min,
-                max: sensor.max,
-                graphable: sensor.graphable,
-            }
-        };
+        gesture.set_state(gtk4::EventSequenceState::Claimed);
+        let Some(session) = weak.upgrade() else { return };
+        let Some((pick, anchor)) = sensor_at_point(&session, x, y) else { return };
         let graphable = pick.graphable;
         *pending_click.borrow_mut() = Some(pick);
         let Some(menu) = session.sensor_menu.borrow().clone() else { return };
@@ -690,17 +682,10 @@ fn wire_sensors(session: &Rc<Session>) {
             button.set_sensitive(graphable);
             button.set_tooltip_text(if graphable { None } else { Some("Not graphable") });
         }
-        let Some(x_px) = finite_i32(x) else { return };
-        let Some(point) = session.built.sensors.list.compute_point(
-            &session.window,
-            &gtk4::graphene::Point::new(x_px as f32, y_px as f32),
-        ) else {
-            return;
-        };
-        let origin_x = finite_i32(f64::from(point.x())).unwrap_or(0);
-        let origin_y = finite_i32(f64::from(point.y())).unwrap_or(0);
-        menu.set_pointing_to(Some(&gtk4::gdk::Rectangle::new(origin_x, origin_y, 1, 1)));
-        menu.popup();
+        let _idle = glib::idle_add_local_once(move || {
+            menu.set_pointing_to(Some(&anchor));
+            menu.popup();
+        });
     });
     session.built.sensors.list.add_controller(click);
 
@@ -1547,7 +1532,7 @@ fn refresh_view(session: &Session) {
     session.built.keyboard.speed_row.set_visible(animated);
     if session.accent_profile.get() != Some(profile) {
         let color = accent_hex(profile);
-        session.accent.load_from_string(&format!("window.victus button.seg-btn.on {{ background: {color}; }} window.victus .linkish.on, window.victus .accent {{ color: {color}; }} window.victus button.linkish.on:not(.selection-link):hover:not(:disabled) {{ color: mix({color}, #ffffff, 0.22); }} window.victus button.selection-link.on {{ color: #ffffff; border-bottom-color: {color}; }} window.victus scale highlight, window.victus switch:checked {{ background: {color}; }}"));
+        session.accent.load_from_string(&format!("window.victus button.seg-btn.on {{ background: {color}; }} window.victus .linkish.on, window.victus label.accent {{ color: {color}; }} window.victus button.linkish.on:not(.selection-link):hover:not(:disabled) {{ color: mix({color}, #ffffff, 0.22); }} window.victus button.selection-link.on {{ color: #f4f4f4; border-bottom-color: {color}; }} window.victus button.accent-btn:not(:disabled) {{ background: {color}; }} window.victus button.accent-btn:hover:not(:disabled) {{ background: mix({color}, #ffffff, 0.22); }} window.victus scale highlight, window.victus scale slider, window.victus switch:checked {{ background: {color}; }}"));
         session.accent_profile.set(Some(profile));
     }
     session.built.home.mini.queue_draw();
@@ -1822,6 +1807,29 @@ fn extra_signature(extras: &[ExtraSensor]) -> String {
     extras.iter().map(|extra| format!("{}:{}", extra.group, extra.key)).collect::<Vec<_>>().join("\n")
 }
 
+fn sensor_at_point(session: &Session, x: f64, y: f64) -> Option<(GraphPick, gtk4::gdk::Rectangle)> {
+    let x_px = finite_i32(x)?;
+    let y_px = finite_i32(y)?;
+    let row = session.built.sensors.list.row_at_y(y_px)?;
+    let name = row.widget_name();
+    if name.is_empty() {
+        return None;
+    }
+    let key = name.to_string();
+    let rows = session.sensor_rows.borrow();
+    let sensor = rows.iter().find(|item| item.key == key)?;
+    let pick = GraphPick {
+        key: sensor.key.clone(),
+        name: sensor.name.clone(),
+        group: sensor.group.clone(),
+        unit: sensor.unit.clone(),
+        min: sensor.min,
+        max: sensor.max,
+        graphable: sensor.graphable,
+    };
+    Some((pick, gtk4::gdk::Rectangle::new(x_px, y_px, 1, 1)))
+}
+
 fn finite_i32(value: f64) -> Option<i32> {
     if !value.is_finite() {
         return None;
@@ -1912,6 +1920,56 @@ mod regression_tests {
         value["power"]["stapm_limit"] = 50_000.into();
         apply_remote_state(&session, &value);
         assert_eq!(session.applied_power.borrow().stapm_limit, 40_000, "stale state was accepted");
+        session.built.stack.set_visible_child_name("sensors");
+        while glib::MainContext::default().iteration(false) {}
+        let list = &session.built.sensors.list;
+        let row_y = |name: &str| -> f64 {
+            let mut index = 0;
+            while let Some(row) = list.row_at_index(index) {
+                if row.widget_name() == name {
+                    let bounds = row.compute_bounds(list).expect("row bounds");
+                    return f64::from(bounds.y()) + f64::from(bounds.height()) / 2.0;
+                }
+                index += 1;
+            }
+            panic!("missing sensor row {name}");
+        };
+        let y = row_y("cpu-temp");
+        assert!(sensor_at_point(&session, 12.0, y).is_some_and(|(pick, _)| pick.key == "cpu-temp" && pick.graphable));
+        let group = list.row_at_index(0).expect("group row");
+        let group_bounds = group.compute_bounds(list).expect("group bounds");
+        assert!(sensor_at_point(&session, 12.0, f64::from(group_bounds.y()) + 2.0).is_none());
+        let controllers = list.observe_controllers();
+        let mut right_click = None;
+        for index in 0..controllers.n_items() {
+            if let Some(gesture) = controllers.item(index).and_downcast::<gtk4::GestureClick>() {
+                if gesture.button() == 3 {
+                    right_click = Some(gesture);
+                    break;
+                }
+            }
+        }
+        let right_click = right_click.expect("right-click gesture");
+        let release = |gesture: &gtk4::GestureClick, at: f64| {
+            let presses = 1i32;
+            let x = 12.0f64;
+            gesture.emit_by_name::<()>("released", &[&presses, &x, &at]);
+            while glib::MainContext::default().iteration(false) {}
+        };
+        release(&right_click, f64::from(group_bounds.y()) + 2.0);
+        let menu = session.sensor_menu.borrow().clone().expect("sensor menu");
+        assert!(!menu.is_visible(), "group rows do not open the sensor menu");
+        release(&right_click, row_y("pwm-mode"));
+        assert!(menu.is_visible(), "sensor menu stays open");
+        let graph = menu.child().and_downcast::<gtk4::Button>().expect("graph item");
+        assert!(!graph.is_sensitive(), "pwm mode is not graphable");
+        assert_eq!(graph.tooltip_text().as_deref(), Some("Not graphable"));
+        menu.popdown();
+        release(&right_click, y);
+        assert!(menu.is_visible(), "sensor menu stays open after right-click release");
+        assert!(graph.is_sensitive());
+        graph.emit_clicked();
+        assert!(session.charts.has_visible(), "graph opens from the sensor menu");
         session.sensor_menu.borrow_mut().take().unwrap().unparent();
         quit(&session);
     }
