@@ -7,6 +7,7 @@
 #![allow(clippy::module_name_repetitions, clippy::doc_markdown, clippy::too_many_arguments)]
 
 mod cpufreq;
+mod lm;
 mod nvidia;
 mod rapl;
 mod sensors;

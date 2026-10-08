@@ -56,8 +56,11 @@ impl ProgramShortcuts {
         if self.bindings.get(&uid) == Some(&binding) {
             return Ok(());
         }
-        self.bindings.insert(uid, binding);
-        self.store()
+        let mut updated = self.clone();
+        updated.bindings.insert(uid, binding);
+        updated.store()?;
+        self.bindings = updated.bindings;
+        Ok(())
     }
 
     fn store(&self) -> HubResult<()> {
@@ -85,6 +88,22 @@ mod tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt;
     use victus_core::{offline_scratch, KEY_LEFTCTRL};
+
+    #[test]
+    fn failed_save_keeps_the_old_binding_and_can_be_retried() {
+        let dir = offline_scratch("shortcut-save-failure");
+        let path = dir.join("program-shortcuts.json");
+        let mut store = ProgramShortcuts::load(&path);
+        store.set(1000, &[], 149).unwrap();
+        fs::remove_file(&path).unwrap();
+        fs::create_dir(&path).unwrap();
+        assert!(store.set(1000, &[KEY_LEFTCTRL], 24).is_err());
+        assert_eq!(store.get(1000), Some(&(Vec::new(), 149)));
+        fs::remove_dir(&path).unwrap();
+        store.set(1000, &[KEY_LEFTCTRL], 24).unwrap();
+        assert!(ProgramShortcuts::load(&path).matches_any(&[KEY_LEFTCTRL], 24));
+        let _ = fs::remove_dir_all(dir);
+    }
 
     #[test]
     fn shortcuts_stay_in_the_scratch_file_and_skip_root() {

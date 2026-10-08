@@ -600,6 +600,7 @@ fn keyboard(zones: i32) -> (Box, Keyboard) {
     for label in &effect_labels {
         let button = Button::with_label(label);
         button.add_css_class("linkish");
+        button.add_css_class("selection-link");
         flow.append(&button);
         effect_buttons.push(button);
     }

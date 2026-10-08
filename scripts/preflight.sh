@@ -21,8 +21,8 @@ preflight() {
 		local rust_version
 		rust_version=$(rustc --version)
 		if ! [[ "$rust_version" =~ ^rustc\ ([0-9]+)\.([0-9]+) ]] ||
-			! (( BASH_REMATCH[1] > 1 || (BASH_REMATCH[1] == 1 && BASH_REMATCH[2] >= 85) )); then
-			missing+=("Rust >= 1.85")
+			! (( BASH_REMATCH[1] > 1 || (BASH_REMATCH[1] == 1 && BASH_REMATCH[2] >= 90) )); then
+			missing+=("Rust >= 1.90")
 		fi
 	fi
 	if [ "$(id -u)" -ne 0 ]; then

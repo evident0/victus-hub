@@ -48,7 +48,7 @@ where P: Platform + 'static, F: Fn(u32, i32) -> Peer + Send + Sync + 'static {
 
     let (light_tx, light_rx) = mpsc::sync_channel::<String>(32);
     runtime.lock().expect("runtime lock").set_lighting_sender(light_tx);
-    let subscribers = Arc::new(Mutex::new(Vec::<SyncSender<String>>::new()));
+    let subscribers = Arc::new(Mutex::new(Vec::<Arc<SyncSender<String>>>::new()));
     let fanout = Arc::clone(&subscribers);
     thread::spawn(move || {
         while let Ok(line) = light_rx.recv() {
@@ -96,7 +96,7 @@ fn handle_client<P: Platform>(
     runtime: &Arc<Mutex<Runtime<P>>>,
     workers: Option<&(Arc<Mutex<P>>, Arc<Mutex<P>>)>,
     auth: &dyn Fn(u32, i32) -> Peer,
-    subscribers: &Arc<Mutex<Vec<SyncSender<String>>>>,
+    subscribers: &Arc<Mutex<Vec<Arc<SyncSender<String>>>>>,
     stop: &AtomicBool,
 ) -> HubResult<()> {
     stream.set_read_timeout(Some(Duration::from_secs(5))).ok();
@@ -115,9 +115,10 @@ fn handle_client<P: Platform>(
     if !peer.authorized { write_line(&stream, "ERR\taccess denied: session is no longer active and unlocked\n")?; return Ok(()); }
     if line == "shortcut-events" {
         write_line(&stream, "OK\tshortcut-events\n")?;
-        let initial = runtime.lock().expect("runtime lock").state_value();
-        write_line(&stream, &format!("STATE\t{initial}\n"))?;
-        stream_events(stream, subscribers, stop, &peer, auth)?;
+        stream_events(stream, subscribers, stop, &peer, auth, || {
+            let initial = runtime.lock().expect("runtime lock").state_value();
+            Some(format!("STATE\t{initial}\n"))
+        })?;
         return Ok(());
     }
     let response = if let Some((sampler, commands)) = workers {
@@ -130,14 +131,32 @@ fn handle_client<P: Platform>(
     Ok(())
 }
 
-fn stream_events(mut stream: UnixStream, subscribers: &Arc<Mutex<Vec<SyncSender<String>>>>, stop: &AtomicBool, peer: &Peer, auth: &dyn Fn(u32, i32) -> Peer) -> HubResult<()> {
+fn stream_events(mut stream: UnixStream, subscribers: &Arc<Mutex<Vec<Arc<SyncSender<String>>>>>, stop: &AtomicBool, peer: &Peer, auth: &dyn Fn(u32, i32) -> Peer, snapshot: impl FnOnce() -> Option<String>) -> HubResult<()> {
     let (sender, receiver) = mpsc::sync_channel(16);
-    subscribers.lock().expect("subscribers").push(sender);
+    let sender = Arc::new(sender);
+    subscribers.lock().expect("subscribers").push(Arc::clone(&sender));
+    struct Subscription<'a> {
+        subscribers: &'a Mutex<Vec<Arc<SyncSender<String>>>>,
+        sender: std::sync::Weak<SyncSender<String>>,
+    }
+    impl Drop for Subscription<'_> {
+        fn drop(&mut self) {
+            if let Ok(mut subscribers) = self.subscribers.lock() {
+                subscribers.retain(|sender| Arc::as_ptr(sender) != self.sender.as_ptr());
+            }
+        }
+    }
+    let _subscription = Subscription { subscribers, sender: Arc::downgrade(&sender) };
+    drop(sender);
+    // Register before taking the snapshot so no state change falls in a gap.
+    if let Some(initial) = snapshot() { write_line(&stream, &initial)?; }
     stream.set_nonblocking(true).ok();
     while !stop.load(Ordering::Relaxed) {
         match receiver.recv_timeout(Duration::from_secs(1)) {
             Ok(line) => {
-                if !auth(peer.uid, peer.pid).authorized { continue; }
+                // Reconnecting supplies an authoritative snapshot after unlock.
+                // Keeping this stream alive would silently lose the update.
+                if !auth(peer.uid, peer.pid).authorized { break; }
                 if stream.write_all(line.as_bytes()).is_err() {
                     break;
                 }
@@ -204,6 +223,34 @@ mod tests {
     use super::*;
     use crate::platform::FakePlatform;
     use victus_core::{offline_scratch, transact, DEFAULT_SOCKET};
+
+    #[test]
+    fn locked_subscriber_disconnects_and_is_removed() {
+        let (server, mut client) = UnixStream::pair().unwrap();
+        client.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+        let subscribers = Arc::new(Mutex::new(Vec::new()));
+        let server_subscribers = Arc::clone(&subscribers);
+        let worker = thread::spawn(move || {
+            let stop = AtomicBool::new(false);
+            let peer = Peer { uid: 1000, pid: 1, authorized: true };
+            stream_events(server, &server_subscribers, &stop, &peer,
+                &|uid, pid| Peer { uid, pid, authorized: false }, || None).unwrap();
+        });
+        let mut sent = false;
+        for _ in 0..100 {
+            if let Some(sender) = subscribers.lock().unwrap().first() {
+                sender.send("STATE\t{}\n".into()).unwrap();
+                sent = true;
+                break;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        assert!(sent);
+        let mut bytes = [0_u8; 1];
+        assert_eq!(client.read(&mut bytes).unwrap(), 0);
+        worker.join().unwrap();
+        assert!(subscribers.lock().unwrap().is_empty());
+    }
 
     #[test]
     fn server_answers_on_a_temporary_socket() {

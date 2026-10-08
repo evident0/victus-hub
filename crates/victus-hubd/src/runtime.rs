@@ -118,6 +118,27 @@ impl<P: Platform> Runtime<P> {
         self.publish_state();
     }
 
+    /// Import legacy user policy once. A failed save must remain retryable.
+    pub fn initialize_state(&mut self, mut state: victus_core::DaemonState) -> HubResult<String> {
+        if self.state.initialized { return Ok("state already initialized".into()); }
+        state.lighting = normalize_lighting_settings(&state.lighting, self.platform.zone_count());
+        if let Some((minimum, maximum)) = state.cpu_frequency {
+            victus_core::validate_frequency(minimum, maximum)?;
+            self.platform.cpu_frequency(minimum, maximum)?;
+        }
+        state.initialized = true;
+        victus_core::save_state(&state, &self.state_path).map_err(victus_core::HubError::new)?;
+        self.state = state;
+        self.sync_gpu_policy();
+        self.apply_fan_mode();
+        self.invalidate_lighting(true);
+        self.last_power_apply = 0.0;
+        self.on_battery = None;
+        self.refresh_host(true);
+        self.publish_state();
+        Ok("legacy settings migrated".into())
+    }
+
     pub fn set_fan_config(&mut self, config: FanConfig) -> String {
         self.state.fan = config;
         self.sync_gpu_policy();

@@ -162,6 +162,16 @@ window.victus .linkish {
   min-height: 0;
 }
 window.victus .linkish.on { color: #3f8cff; }
+window.victus button.selection-link {
+  border-bottom: 1px solid transparent;
+  border-radius: 0;
+  padding-bottom: 4px;
+  transition: border-bottom-color 280ms ease-out;
+}
+window.victus button.selection-link.on {
+  color: #ffffff;
+  border-bottom-color: #3f8cff;
+}
 window.victus .pill {
   background: #202020;
   color: #ededed;
@@ -250,6 +260,7 @@ enum BackgroundEvent {
 }
 
 enum ControlRequest {
+    Profile(i32),
     Power(victus_core::PowerPolicy),
     Frequency(i32, i32),
     Undervolt(i32, i32),
@@ -269,7 +280,9 @@ struct EventSender {
 
 impl EventSender {
     fn send(&self, event: BackgroundEvent) {
-        if self.tx.try_send(event).is_ok() { let _ = (&*self.wake).write(&[1]); }
+        // Producers run on background threads. Never discard a completion:
+        // doing so could leave its UI controls permanently marked busy.
+        if self.tx.send(event).is_ok() { let _ = (&*self.wake).write(&[1]); }
     }
 }
 
@@ -294,6 +307,7 @@ struct Session {
     applied_freq: Cell<Option<(i32, i32)>>,
     last_frequency: RefCell<Option<crate::FrequencyWindow>>,
     applied_uv: Cell<Option<(i32, i32)>>,
+    profile_busy: Cell<bool>,
     captured_mods: RefCell<Vec<i32>>,
     selected_point: Cell<Option<usize>>,
     fan_hover: Cell<Option<usize>>,
@@ -377,7 +391,36 @@ pub fn hydrate_live(model: &mut Model) {
     match transact(&socket, "get-state", Duration::from_secs(2)) {
         Ok(response) => match parse_status_response(&response) {
             Ok(body) => match serde_json::from_str(&body) {
-                Ok(value) => model.hydrate(&value),
+                Ok(value) => {
+                    model.hydrate(&value);
+                    if !model.state.initialized {
+                        let text = std::fs::read_to_string(&model.host.conf_path).unwrap_or_default();
+                        let fan = model.host.conf_path.parent().and_then(|dir| std::fs::read_to_string(dir.join("config.json")).ok())
+                            .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok()).filter(serde_json::Value::is_object);
+                        if let Some(state) = crate::legacy::migrated_state(&text, fan.as_ref(), model.host.intel) {
+                            let request = format!("initialize-state\t{}", victus_core::state_to_value(&state));
+                            match transact(&socket, &request, Duration::from_secs(10)).and_then(|line| parse_status_response(&line)) {
+                                Ok(_) => {
+                                    // Another client may have initialized it first.
+                                    if let Ok(value) = transact(&socket, "get-state", Duration::from_secs(2))
+                                        .and_then(|line| parse_status_response(&line))
+                                        .and_then(|body| serde_json::from_str::<serde_json::Value>(&body).map_err(|error| victus_core::HubError::new(error.to_string()))) {
+                                        model.hydrate(&value);
+                                    }
+                                }
+                                Err(error) => model.status = format!("Legacy settings migration failed: {error}"),
+                            }
+                        }
+                    }
+                    let text = std::fs::read_to_string(&model.host.conf_path).unwrap_or_default();
+                    let settings = crate::legacy::settings(&text);
+                    if settings.contains_key("programShortcut") || settings.contains_key("programShortcut/key") {
+                        let body = serde_json::json!({"mods": model.host.shortcut_mods, "key": model.host.shortcut_key});
+                        if let Err(error) = transact(&socket, &format!("program-shortcut\t{body}"), Duration::from_secs(2)).and_then(|line| parse_status_response(&line)) {
+                            model.status = format!("Could not sync program shortcut: {error}");
+                        }
+                    }
+                }
                 Err(_) => model.status = "Daemon state was not valid".into(),
             },
             Err(error) => model.status = error.to_string(),
@@ -549,6 +592,7 @@ fn build_ui(
         applied_freq: Cell::new(None),
         last_frequency: RefCell::new(None),
         applied_uv: Cell::new(None),
+        profile_busy: Cell::new(false),
         captured_mods: RefCell::new(Vec::new()),
         selected_point: Cell::new(None),
         fan_hover: Cell::new(None),
@@ -628,6 +672,7 @@ fn spawn_state_stream(session: &Session) {
     let tx = session.events_tx.clone();
     let stop = Arc::clone(&session.stop);
     std::thread::spawn(move || {
+        let mut retry = 2;
         while !stop.load(Ordering::Relaxed) {
             if let Ok(mut stream) = UnixStream::connect(&socket) {
                 stream.set_read_timeout(Some(Duration::from_secs(1))).ok();
@@ -640,7 +685,7 @@ fn spawn_state_stream(session: &Session) {
                             Ok(0) => break,
                             Ok(_) => {
                                 if line.len() > 65_536 { break; }
-                                if line.trim() == "OK\tshortcut-events" { reader.get_ref().set_read_timeout(None).ok(); }
+                                if line.trim() == "OK\tshortcut-events" { retry = 2; }
                                 if let Some(body) = line.strip_prefix("STATE\t") {
                                     if let Ok(value) = serde_json::from_str(body.trim()) { tx.send(BackgroundEvent::State(value)); }
                                 } else if line.starts_with("ERR\t") { break; }
@@ -652,7 +697,8 @@ fn spawn_state_stream(session: &Session) {
                     }
                 }
             }
-            std::thread::sleep(Duration::from_secs(2));
+            std::thread::sleep(Duration::from_secs(retry));
+            retry = (retry * 2).min(30);
         }
     });
 }
@@ -1488,6 +1534,7 @@ fn sync_controls(session: &Session) {
     drop(model);
     session.suppress.set(false);
     sync_color_entries(session);
+    show_shortcut(session, None);
     refresh_view(session);
 }
 
@@ -1527,16 +1574,11 @@ fn page_width(page: usize) -> i32 {
 
 fn select_profile(session: &Session, profile: i32) {
     let profile = profile.clamp(0, 2);
-    let previous = session.model.borrow().profile;
-    {
-        let mut model = session.model.borrow_mut();
-        model.profile = profile;
-        model.state.profile_before_battery = None;
-    }
-    if !commit(session, &format!("set-profile\t{profile}")) {
-        session.model.borrow_mut().profile = previous;
-    }
-    refresh_view(session);
+    if session.profile_busy.replace(true) { return; }
+    for button in &session.built.home.profile_buttons { button.set_sensitive(false); }
+    session.model.borrow_mut().status = "Changing power profile…".into();
+    show_status(session);
+    submit_control(session, format!("set-profile\t{profile}"), ControlRequest::Profile(profile));
 }
 
 fn apply_fan_mode(session: &Session, mode: FanMode) {
@@ -1619,11 +1661,25 @@ fn submit_control(session: &Session, request: String, kind: ControlRequest) {
     let socket = connects_to_socket(&session.model.borrow()).map(Path::to_path_buf);
     let tx = session.events_tx.clone();
     std::thread::spawn(move || {
-        let result = match socket {
-            Some(socket) => transact(&socket, &request, Duration::from_secs(10)).and_then(|line| parse_status_response(&line)).map_err(|error| error.to_string()),
+        let result = match socket.as_ref() {
+            Some(socket) => {
+                // Profile discovery and application can each take ten seconds.
+                let timeout = if matches!(&kind, ControlRequest::Profile(_)) { 60 } else { 10 };
+                transact(socket, &request, Duration::from_secs(timeout)).and_then(|line| parse_status_response(&line)).map_err(|error| error.to_string())
+            }
             None => Ok("Offline preview".into()),
         };
+        let refresh_profile = result.is_ok() && matches!(&kind, ControlRequest::Profile(_));
         tx.send(BackgroundEvent::Control(kind, result));
+        if refresh_profile {
+            if let Some(socket) = socket {
+                if let Ok(value) = transact(&socket, "get-state", Duration::from_secs(2))
+                    .and_then(|line| parse_status_response(&line))
+                    .and_then(|body| serde_json::from_str(&body).map_err(|error| victus_core::HubError::new(error.to_string()))) {
+                    tx.send(BackgroundEvent::State(value));
+                }
+            }
+        }
     });
 }
 
@@ -1631,6 +1687,15 @@ fn control_result(session: &Session, kind: ControlRequest, result: Result<String
     let success = result.is_ok();
     session.model.borrow_mut().status = result.as_ref().err().cloned().unwrap_or_default();
     match kind {
+        ControlRequest::Profile(index) => {
+            session.profile_busy.set(false);
+            for button in &session.built.home.profile_buttons { button.set_sensitive(true); }
+            if success && session.model.borrow().offline {
+                session.model.borrow_mut().profile = index;
+                refresh_frequency(session);
+            }
+            refresh_view(session);
+        }
         ControlRequest::Power(policy) => {
             session.built.power.apply.set_sensitive(true);
             session.built.power.enabled.set_sensitive(true);
@@ -2312,8 +2377,8 @@ fn refresh_view(session: &Session) {
     session.built.home.curve_row.set_visible(mode == FanMode::Custom);
     session.built.fans.editor.set_visible(mode == FanMode::Custom);
     session.built.fans.info.set_visible(mode != FanMode::Custom);
-    session.built.fans.cpu_link.set_css_classes(if session.curve_cpu.get() { &["linkish", "on"] } else { &["linkish"] });
-    session.built.fans.gpu_link.set_css_classes(if session.curve_cpu.get() { &["linkish"] } else { &["linkish", "on"] });
+    session.built.fans.cpu_link.set_css_classes(if session.curve_cpu.get() { &["linkish", "selection-link", "on"] } else { &["linkish", "selection-link"] });
+    session.built.fans.gpu_link.set_css_classes(if session.curve_cpu.get() { &["linkish", "selection-link"] } else { &["linkish", "selection-link", "on"] });
     widgets::mark(&session.built.home.mux_buttons, mux_index);
     let effect_index = if enabled {
         session.built.keyboard.effect_ids.iter().position(|id| id == &effect)
@@ -2335,7 +2400,7 @@ fn refresh_view(session: &Session) {
     session.built.keyboard.speed_row.set_visible(animated);
     if session.accent_profile.get() != Some(profile) {
         let color = accent_hex(profile);
-        session.accent.load_from_string(&format!("window.victus button.seg-btn.on {{ background: {color}; }} window.victus .linkish.on, window.victus .accent {{ color: {color}; }} window.victus scale highlight, window.victus switch:checked {{ background: {color}; }}"));
+        session.accent.load_from_string(&format!("window.victus button.seg-btn.on {{ background: {color}; }} window.victus .linkish.on, window.victus .accent {{ color: {color}; }} window.victus button.selection-link.on {{ color: #ffffff; border-bottom-color: {color}; }} window.victus scale highlight, window.victus switch:checked {{ background: {color}; }}"));
         session.accent_profile.set(Some(profile));
     }
     session.built.home.mini.queue_draw();

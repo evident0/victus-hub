@@ -272,6 +272,10 @@ fn read_frequencies(cpu_root: &Path) -> Vec<ExtraSensor> {
 }
 
 fn read_lm(hwmon_class: &Path, skip_nvidia: bool) -> Vec<ExtraSensor> {
+    // Scratch trees never initialize a library that reads the installed host.
+    if hwmon_class == Path::new("/sys/class/hwmon") {
+        if let Some(sensors) = crate::lm::read(skip_nvidia) { return sensors; }
+    }
     let mut sensors = Vec::new();
     for hwmon in hwmon_dirs(hwmon_class) {
         let chip = read_text(&hwmon.join("name")).unwrap_or_else(|| "hwmon".into());
@@ -306,10 +310,7 @@ fn read_lm(hwmon_class: &Path, skip_nvidia: bool) -> Vec<ExtraSensor> {
             if matches!(chip.as_str(), "hp" | "hp-wmi" | "hp_wmi" | "k10temp")
                 || (chip == "amdgpu" && matches!(label.as_str(), "edge" | "PPT"))
                 || (chip.starts_with("BAT") && unit == "W") { continue; }
-            let group = if chip.starts_with("nvme") { "Drives" } else if chip.starts_with("spd") { "Memory" }
-                else if chip.starts_with("mt7921") { "Network" } else if chip.starts_with("BAT") { "Battery" }
-                else if chip.starts_with("ucsi_source") { "USB-C" } else if matches!(chip.as_str(), "amdgpu" | "nvidia" | "nouveau") { "GPU" }
-                else if chip.starts_with("acpitz") { "ACPI" } else { "Other" };
+            let group = lm_group(&chip);
             let slug = |text: &str| text.chars().map(|ch| if ch.is_ascii_alphanumeric() { ch.to_ascii_lowercase() } else { '-' }).collect::<String>();
             sensors.push(ExtraSensor {
                 key: format!("lm-{}-{}", slug(&chip_id), slug(feature)),
@@ -327,7 +328,15 @@ fn read_lm(hwmon_class: &Path, skip_nvidia: bool) -> Vec<ExtraSensor> {
     sensors
 }
 
-fn format_sensor(value: f64, unit: &str) -> String {
+pub(crate) fn lm_group(chip: &str) -> &'static str {
+    if chip.starts_with("nvme") { "Drives" } else if chip.starts_with("spd") { "Memory" }
+    else if chip.starts_with("mt7921") { "Network" } else if chip.starts_with("BAT") { "Battery" }
+    else if chip.starts_with("ucsi_source") { "USB-C" }
+    else if ["amdgpu", "nvidia", "nouveau"].iter().any(|prefix| chip.starts_with(prefix)) { "GPU" }
+    else if chip.starts_with("acpitz") { "ACPI" } else { "Other" }
+}
+
+pub(crate) fn format_sensor(value: f64, unit: &str) -> String {
     if unit == "RPM" { format!("{value:.0} {unit}") }
     else if matches!(unit, "V" | "A") { format!("{value:.2} {unit}") }
     else { format!("{value:.1} {unit}") }

@@ -29,6 +29,15 @@ pub fn dispatch<P: Platform>(runtime: &mut Runtime<P>, peer: &Peer, request: &st
 
 fn handle<P: Platform>(runtime: &mut Runtime<P>, peer: &Peer, prefix: &str, body: &str) -> HubResult<String> {
     match prefix {
+        "initialize-state\t" => {
+            let value = parse_json_object(body, "initialize-state")?;
+            let state = victus_core::state_from_value(&value);
+            if state.power.enabled {
+                if runtime.platform.intel_cpu() { validate_intel_power(state.power.slow_limit, state.power.fast_limit)?; }
+                else { validate_ryzenadj(state.power.stapm_limit, state.power.fast_limit, state.power.slow_limit, state.power.tctl_temp)?; }
+            }
+            Ok(ok(&runtime.initialize_state(state)?))
+        }
         "cpu-power" => Ok(runtime.platform.cpu_power().format_line()),
         "gpu-mux-mode\t" => {
             let mode = one_int(body, "gpu-mux-mode")?;
@@ -133,7 +142,7 @@ pub fn dispatch_with_workers<P: Platform>(
             "cpu-power" => Ok(Some(sampler.lock().expect("sensor worker").cpu_power().format_line())),
             "set-profile\t" => {
                 let index = one_int(body, "profile")?.clamp(0, 2);
-                let mut worker = commands.lock().expect("command worker");
+                let mut worker = commands.try_lock().map_err(|_| HubError::new("hardware command already pending; try again when it finishes"))?;
                 let message = worker.apply_profile(index)?;
                 runtime.lock().expect("runtime lock").complete_profile(index);
                 Ok(Some(ok(&message)))
@@ -285,6 +294,18 @@ mod tests {
         let dir = offline_scratch("dispatch");
         let runtime = Runtime::new(dir.join("state.json"), &dir.join("shortcuts.json"), FakePlatform::default());
         (runtime, dir)
+    }
+
+    #[test]
+    fn legacy_import_cannot_replace_initialized_daemon_policy() {
+        let (mut runtime, dir) = runtime();
+        let request = "initialize-state\t{\"hardware_shortcuts\":true,\"lighting\":{\"enabled\":false}}";
+        assert!(dispatch(&mut runtime, &peer(1000), request).starts_with("OK\t"));
+        assert!(runtime.snapshot().initialized);
+        assert!(runtime.snapshot().hardware_shortcuts);
+        assert!(dispatch(&mut runtime, &peer(1000), "initialize-state\t{\"hardware_shortcuts\":false}").starts_with("OK\t"));
+        assert!(runtime.snapshot().hardware_shortcuts);
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]

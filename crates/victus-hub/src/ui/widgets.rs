@@ -130,6 +130,7 @@ pub fn links(labels: &[impl AsRef<str>]) -> (Box, Vec<Button>) {
     for label in labels {
         let button = Button::with_label(label.as_ref());
         button.add_css_class("linkish");
+        button.add_css_class("selection-link");
         row.append(&button);
         buttons.push(button);
     }

@@ -259,45 +259,93 @@ fn spawn_profile_worker(runtime: Arc<Mutex<Runtime<SysPlatform>>>, commands: Arc
 
 fn spawn_host_watch(runtime: Arc<Mutex<Runtime<SysPlatform>>>, cache: Arc<AtomicI32>, stop: Arc<AtomicBool>) {
     thread::spawn(move || {
-        let context = gio::glib::MainContext::new();
-        let _ = context.with_thread_default(|| {
-            let refresh: Arc<dyn Fn() + Send + Sync> = Arc::new(move || {
-                if let Some(index) = victus_hubd::system::read_system_profile(Path::new("/etc/tuned/active_profile")) { cache.store(index, Ordering::Relaxed); }
-                runtime.lock().expect("runtime lock").refresh_host(false);
-            });
-            let mut monitors = Vec::new();
-            for path in ["/etc/tuned", "/sys/class/power_supply"] {
-                if let Ok(monitor) = gio::File::for_path(path).monitor_directory(gio::FileMonitorFlags::NONE, None::<&gio::Cancellable>) {
-                    let refresh = Arc::clone(&refresh);
-                    monitor.connect_changed(move |_, _, _, _| refresh());
-                    monitors.push(monitor);
-                }
-            }
-            let bus = gio::bus_get_sync(gio::BusType::System, None::<&gio::Cancellable>).ok();
-            let mut subscriptions = Vec::new();
-            if let Some(bus) = &bus {
-                for (interface, member) in [("org.freedesktop.DBus.Properties", "PropertiesChanged"), ("com.redhat.tuned.control", "profile_changed")] {
-                    let refresh = Arc::clone(&refresh);
-                    subscriptions.push(bus.subscribe_to_signal(None, Some(interface), Some(member), None, None, gio::DBusSignalFlags::NONE,
-                        move |signal| {
-                            let path = signal.object_path;
-                            if path.starts_with("/org/freedesktop/UPower") || path == "/net/hadess/PowerProfiles" || path == "/Tuned" { refresh(); }
-                        }));
-                }
-            }
-            // Slow fallback also catches sysfs changes on hosts without UPower.
-            let main_loop = gio::glib::MainLoop::new(Some(&context), false);
-            let tick_loop = main_loop.clone();
-            let source = gio::glib::timeout_source_new(Duration::from_secs(30), Some("host-recovery"), gio::glib::Priority::DEFAULT, move || {
-                if stop.load(Ordering::Relaxed) { tick_loop.quit(); return gio::glib::ControlFlow::Break; }
-                refresh();
-                gio::glib::ControlFlow::Continue
-            });
-            source.attach(Some(&context));
-            main_loop.run();
-            drop(monitors);
-            drop(subscriptions);
+        while !stop.load(Ordering::Relaxed) {
+            host_watch_once(Arc::clone(&runtime), Arc::clone(&cache), Arc::clone(&stop));
+        }
+    });
+}
+
+fn host_watch_once(runtime: Arc<Mutex<Runtime<SysPlatform>>>, cache: Arc<AtomicI32>, stop: Arc<AtomicBool>) {
+    let context = gio::glib::MainContext::new();
+    let _ = context.with_thread_default(|| {
+        let bus = gio::bus_get_sync(gio::BusType::System, None::<&gio::Cancellable>).ok();
+        let profile_recovery = Arc::new(AtomicBool::new(true));
+        let battery_events = Arc::new(AtomicBool::new(victus_hubd::system::bus_has_owner(bus.as_ref(), "org.freedesktop.UPower")));
+        let refresh_bus = bus.clone();
+        let recovery = Arc::clone(&profile_recovery);
+        let refresh: Arc<dyn Fn() + Send + Sync> = Arc::new(move || {
+            let index = victus_hubd::system::read_bus_profile(Path::new("/etc/tuned/active_profile"), refresh_bus.as_ref());
+            recovery.store(index.is_none(), Ordering::Relaxed);
+            if let Some(index) = index { cache.store(index, Ordering::Relaxed); }
+            runtime.lock().expect("runtime lock").refresh_host(false);
         });
+        let pending = Arc::new(AtomicBool::new(false));
+        let notify_context = context.clone();
+        let notify_refresh = Arc::clone(&refresh);
+        let notify: Arc<dyn Fn() + Send + Sync> = Arc::new(move || {
+            if pending.swap(true, Ordering::Relaxed) { return; }
+            let pending = Arc::clone(&pending);
+            let refresh = Arc::clone(&notify_refresh);
+            let source = gio::glib::timeout_source_new(Duration::from_millis(50), Some("host-coalesce"), gio::glib::Priority::DEFAULT, move || {
+                pending.store(false, Ordering::Relaxed);
+                refresh();
+                gio::glib::ControlFlow::Break
+            });
+            source.attach(Some(&notify_context));
+        });
+        let mut monitors = Vec::new();
+        for path in ["/etc/tuned", "/sys/class/power_supply"] {
+            if let Ok(monitor) = gio::File::for_path(path).monitor_directory(gio::FileMonitorFlags::NONE, None::<&gio::Cancellable>) {
+                let notify = Arc::clone(&notify);
+                monitor.connect_changed(move |_, _, _, _| notify());
+                monitors.push(monitor);
+            }
+        }
+        let mut subscriptions = Vec::new();
+        if let Some(bus) = &bus {
+            for (service, path, interface, member) in [
+                ("org.freedesktop.UPower", "/org/freedesktop/UPower", "org.freedesktop.DBus.Properties", "PropertiesChanged"),
+                ("org.freedesktop.UPower.PowerProfiles", "/org/freedesktop/UPower/PowerProfiles", "org.freedesktop.DBus.Properties", "PropertiesChanged"),
+                ("net.hadess.PowerProfiles", "/net/hadess/PowerProfiles", "org.freedesktop.DBus.Properties", "PropertiesChanged"),
+                ("com.redhat.tuned", "/Tuned", "com.redhat.tuned.control", "profile_changed"),
+            ] {
+                let notify = Arc::clone(&notify);
+                let property_interface = (member == "PropertiesChanged").then_some(service);
+                subscriptions.push(bus.subscribe_to_signal(Some(service), Some(interface), Some(member), Some(path), property_interface, gio::DBusSignalFlags::NONE,
+                    move |signal| {
+                        let path = signal.object_path;
+                        if (path == "/Tuned" && signal.signal_name == "profile_changed")
+                            || victus_hubd::system::relevant_host_properties(path, signal.parameters) { notify(); }
+                    }));
+            }
+            let notify = Arc::clone(&notify);
+            let battery_events = Arc::clone(&battery_events);
+            subscriptions.push(bus.subscribe_to_signal(Some("org.freedesktop.DBus"), Some("org.freedesktop.DBus"), Some("NameOwnerChanged"), None, None,
+                gio::DBusSignalFlags::NONE, move |signal| {
+                    if let Some((name, _, owner)) = signal.parameters.get::<(String, String, String)>() {
+                        if name == "org.freedesktop.UPower" { battery_events.store(!owner.is_empty(), Ordering::Relaxed); }
+                        if matches!(name.as_str(), "org.freedesktop.UPower" | "org.freedesktop.UPower.PowerProfiles" | "net.hadess.PowerProfiles" | "com.redhat.tuned") { notify(); }
+                    }
+                }));
+        }
+        refresh();
+        // Slow fallback also catches sysfs changes on hosts without UPower.
+        let main_loop = gio::glib::MainLoop::new(Some(&context), false);
+        let tick_loop = main_loop.clone();
+        let source = gio::glib::timeout_source_new(Duration::from_secs(30), Some("host-recovery"), gio::glib::Priority::DEFAULT, move || {
+            if stop.load(Ordering::Relaxed) { tick_loop.quit(); return gio::glib::ControlFlow::Break; }
+            if bus.as_ref().is_none_or(gio::DBusConnection::is_closed) {
+                // Recreate the connection and all subscriptions after loss.
+                tick_loop.quit();
+                return gio::glib::ControlFlow::Break;
+            }
+            if profile_recovery.load(Ordering::Relaxed) || !battery_events.load(Ordering::Relaxed) { refresh(); }
+            gio::glib::ControlFlow::Continue
+        });
+        source.attach(Some(&context));
+        main_loop.run();
+        drop(monitors);
+        drop(subscriptions);
     });
 }
 

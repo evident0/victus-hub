@@ -364,16 +364,10 @@ pub fn profile_from_active_file(path: &Path) -> Option<i32> {
 
 pub fn read_system_profile(tuned_active: &Path) -> Option<i32> {
     if let Some(index) = profile_from_active_file(tuned_active) { return Some(index); }
-    for service in ["org.freedesktop.UPower.PowerProfiles", "net.hadess.PowerProfiles"] {
-        let path = if service.starts_with("org.") { "/org/freedesktop/UPower/PowerProfiles" } else { "/net/hadess/PowerProfiles" };
-        let args = ["--system", "get-property", service, path, service, "ActiveProfile"].map(str::to_owned);
-        if let Ok(output) = victus_hw::run_command_timeout(Path::new("/usr/bin/busctl"), &args, Duration::from_secs(2)) {
-            if output.status == 0 {
-                let name = output.stdout.trim().strip_prefix("s ").unwrap_or(output.stdout.trim()).trim_matches('"');
-                if let Some(index) = profile_index_for_name(name) { return Some(index); }
-            }
-        }
+    if let Ok(bus) = gio::bus_get_sync(gio::BusType::System, None::<&gio::Cancellable>) {
+        if let Some(index) = read_bus_profile(tuned_active, Some(&bus)) { return Some(index); }
     }
+    // CLI discovery is only used for the startup snapshot, never by HostWatch.
     for (program, argument) in [("/usr/bin/powerprofilesctl", "get"), ("/usr/sbin/tuned-adm", "active"), ("/usr/bin/tuned-adm", "active")] {
         if let Ok(output) = victus_hw::run_command_timeout(Path::new(program), &[argument.into()], Duration::from_secs(2)) {
             if output.status == 0 {
@@ -383,6 +377,49 @@ pub fn read_system_profile(tuned_active: &Path) -> Option<i32> {
         }
     }
     None
+}
+
+/// Query the existing connection, with no process creation on host events.
+pub fn read_bus_profile(tuned_active: &Path, bus: Option<&gio::DBusConnection>) -> Option<i32> {
+    use gio::glib::variant::ToVariant;
+    if let Some(index) = profile_from_active_file(tuned_active) { return Some(index); }
+    let bus = bus?;
+    for service in ["org.freedesktop.UPower.PowerProfiles", "net.hadess.PowerProfiles"] {
+        let path = if service.starts_with("org.") { "/org/freedesktop/UPower/PowerProfiles" } else { "/net/hadess/PowerProfiles" };
+        if let Ok(reply) = bus.call_sync(Some(service), path, "org.freedesktop.DBus.Properties", "Get",
+            Some(&(service, "ActiveProfile").to_variant()), None, gio::DBusCallFlags::NONE, 2000, None::<&gio::Cancellable>) {
+            if let Some((value,)) = reply.get::<(gio::glib::Variant,)>() {
+                if let Some(name) = value.str() { if let Some(index) = profile_index_for_name(name) { return Some(index); } }
+            }
+        }
+    }
+    if let Ok(reply) = bus.call_sync(Some("com.redhat.tuned"), "/Tuned", "com.redhat.tuned.control", "active_profile",
+        None, None, gio::DBusCallFlags::NONE, 2000, None::<&gio::Cancellable>) {
+        if let Some((name,)) = reply.get::<(String,)>() { return profile_index_for_name(&name); }
+    }
+    None
+}
+
+pub fn bus_has_owner(bus: Option<&gio::DBusConnection>, name: &str) -> bool {
+    use gio::glib::variant::ToVariant;
+    bus.is_some_and(|bus| {
+        bus.call_sync(Some("org.freedesktop.DBus"), "/org/freedesktop/DBus", "org.freedesktop.DBus", "NameHasOwner",
+            Some(&(name,).to_variant()), None, gio::DBusCallFlags::NONE, 2000, None::<&gio::Cancellable>)
+            .ok().and_then(|reply| reply.get::<(bool,)>()).is_some_and(|(owned,)| owned)
+    })
+}
+
+/// Only the properties that can change power policy warrant a refresh.
+pub fn relevant_host_properties(path: &str, parameters: &gio::glib::Variant) -> bool {
+    let property = match path {
+        "/org/freedesktop/UPower" => "OnBattery",
+        "/org/freedesktop/UPower/PowerProfiles" | "/net/hadess/PowerProfiles" => "ActiveProfile",
+        _ => return false,
+    };
+    if let Some((_, changed, invalidated)) = parameters.get::<(String, std::collections::HashMap<String, gio::glib::Variant>, Vec<String>)>() {
+        return changed.contains_key(property) || invalidated.iter().any(|key| key == property);
+    }
+    false
 }
 
 pub fn ac_online(power_supply: &Path) -> Option<bool> {
@@ -462,6 +499,18 @@ pub fn elapsed_secs(origin: Instant, now: Instant) -> Duration {
 mod tests {
     use super::*;
     use victus_core::offline_scratch;
+
+    #[test]
+    fn battery_telemetry_does_not_trigger_profile_queries() {
+        use gio::glib::variant::ToVariant;
+        let parameters = |key: &str| ("org.freedesktop.UPower", std::collections::HashMap::from([(key.to_owned(), true.to_variant())]), Vec::<String>::new()).to_variant();
+        assert!(relevant_host_properties("/org/freedesktop/UPower", &parameters("OnBattery")));
+        assert!(!relevant_host_properties("/org/freedesktop/UPower", &parameters("Percentage")));
+        assert!(!relevant_host_properties("/org/freedesktop/UPower/devices/battery_BAT0", &parameters("Percentage")));
+        assert!(relevant_host_properties("/net/hadess/PowerProfiles", &parameters("ActiveProfile")));
+        let invalidated = ("net.hadess.PowerProfiles", std::collections::HashMap::<String, gio::glib::Variant>::new(), vec!["ActiveProfile"]).to_variant();
+        assert!(relevant_host_properties("/net/hadess/PowerProfiles", &invalidated));
+    }
 
     #[test]
     fn host_readers_use_the_scratch_tree() {

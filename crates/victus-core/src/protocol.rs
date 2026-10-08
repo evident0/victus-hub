@@ -277,6 +277,7 @@ pub fn match_request(request: &str) -> Option<(&'static str, &str)> {
         "cpu-power",
         "gpu-mux-mode\t",
         "fan-config\t",
+        "initialize-state\t",
         "fan-auto",
         "fan-max",
         "fan-pwm\t",

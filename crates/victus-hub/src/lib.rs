@@ -10,6 +10,7 @@ use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 
 use serde_json::Value;
+pub mod legacy;
 use victus_core::{
     config_to_value, fan_mode_steps, keys_for_page, lighting_to_value, power_to_value, release_is_newer, render_markdown,
     state_from_value, zone_for_key, DaemonState, FanConfig, FanMode, LightingSettings, SensorSnapshot, PROGRAM_VERSION,
@@ -243,11 +244,23 @@ fn read_trimmed(path: &Path) -> Option<String> {
     std::fs::read_to_string(path).ok().map(|text| text.trim().to_owned()).filter(|text| !text.is_empty())
 }
 
-/// Read the `[programShortcut]` section of a Qt settings file.
+/// Read a legacy Qt QVariant shortcut or the `[programShortcut]` section.
 pub fn program_shortcut_from_conf(text: &str) -> (Vec<i32>, i32) {
+    let values = legacy::settings(text);
+    if !values.contains_key("programShortcut/key") {
+        if let Some(binding) = values.get("programShortcut").and_then(Value::as_object) {
+            if binding.get("enabled").and_then(Value::as_bool) == Some(false) { return (Vec::new(), 0); }
+            let mods = binding.get("mods").and_then(Value::as_array).map(|items| {
+                items.iter().filter_map(Value::as_i64).filter_map(|value| i32::try_from(value).ok()).collect::<Vec<_>>()
+            }).unwrap_or_default();
+            let key = binding.get("key").and_then(Value::as_i64).and_then(|value| i32::try_from(value).ok()).unwrap_or(0);
+            return victus_core::validate_shortcut(&mods, key).unwrap_or_default();
+        }
+    }
     let mut section = false;
     let mut key = 0;
     let mut mods = Vec::new();
+    let mut enabled = true;
     for line in text.lines() {
         let line = line.trim();
         if let Some(rest) = line.strip_prefix('[') {
@@ -259,6 +272,7 @@ pub fn program_shortcut_from_conf(text: &str) -> (Vec<i32>, i32) {
         }
         let Some((name, value)) = line.split_once('=') else { continue };
         match name.trim() {
+            "enabled" => enabled = !matches!(value.trim(), "false" | "0"),
             "key" => key = value.trim().parse().unwrap_or(0),
             "mods" => {
                 mods = value.split([',', ' ']).filter(|part| !part.is_empty()).filter_map(|part| part.parse().ok()).collect();
@@ -266,7 +280,7 @@ pub fn program_shortcut_from_conf(text: &str) -> (Vec<i32>, i32) {
             _ => {}
         }
     }
-    (mods, key)
+    if enabled { victus_core::validate_shortcut(&mods, key).unwrap_or_default() } else { (Vec::new(), 0) }
 }
 
 /// Replace or append `[programShortcut]` without touching other sections.

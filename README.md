@@ -9,7 +9,9 @@ with Fedora.
 
 The panel and the root daemon are a Cargo workspace (`victus-hub` and `victus-hubd`). The panel is a GTK 4 and libadwaita window. Python stays in the tree as the behavior reference. `cargo build --release` writes both binaries under `target/release/`. `scripts/install` builds them and installs the binaries; it does not create a Python virtualenv. `VICTUS_HUB_OFFLINE=1` opens the panel without connecting to a daemon.
 
-Building requires Rust 1.85 or newer, GTK 4.14 or newer, libadwaita 1.5 or newer, and their development/pkg-config packages. The installer builds in a temporary directory using the invoking user's home and cache, including when the source checkout under `/opt` belongs to root.
+Building requires Rust 1.90 or newer, GTK 4.14 or newer, libadwaita 1.5 or newer, and their development/pkg-config packages. The installer builds in a temporary directory using the invoking user's home and cache, including when the source checkout under `/opt` belongs to root.
+
+The Sensors page uses `libsensors.so.5` when available, honoring lm-sensors `compute`, `label`, and `ignore` configuration without starting a subprocess for each sample. If the library is unavailable or cannot initialize, it falls back to raw hwmon readings. Qt user settings are imported once when the daemon has no initialized policy; an existing daemon policy remains authoritative.
 
 ## Install (One-Liner)
 ```
