@@ -2,7 +2,7 @@
 # Install (or reinstall) all Victus Hub components:
 #   1. custom hp-wmi (includes MUX), hp-kbd-rgb, ryzenadj (AMD only)
 #   2. victus-hubd daemon         (release binary + systemd service)
-#   3. victus-hub program         (egui binary, same install as daemon)
+#   3. victus-hub program         (GTK 4 binary, same install as daemon)
 #   4. .desktop entry + icon     (app-menu integration)
 set -euo pipefail
 
@@ -34,6 +34,11 @@ if [ "${VICTUS_HUB_BANNER_SHOWN:-}" != 1 ]; then
 fi
 
 ROOT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+if [ -f "$ROOT_DIR/scripts/libadwaita-pkgconfig.sh" ]; then
+	# shellcheck source=libadwaita-pkgconfig.sh
+	source "$ROOT_DIR/scripts/libadwaita-pkgconfig.sh"
+	ensure_libadwaita_pkgconfig
+fi
 # shellcheck source=kmod-prompts.sh
 source "$ROOT_DIR/scripts/kmod-prompts.sh"
 source "$ROOT_DIR/scripts/preflight.sh"
@@ -111,7 +116,11 @@ fi
 printf '\033[1;34m── Building victus-hubd daemon + victus-hub program ──\033[0m\n'
 cd "$ROOT_DIR"
 if [ "$(id -u)" -eq 0 ] && [ -n "${SUDO_UID:-}" ]; then
-	sudo -u "#$SUDO_UID" -- env HOME="${SUDO_HOME:-${HOME:-/root}}" cargo build --release --manifest-path "$ROOT_DIR/Cargo.toml"
+	if [ -n "${PKG_CONFIG_PATH:-}" ]; then
+		sudo -u "#$SUDO_UID" -- env HOME="${SUDO_HOME:-${HOME:-/root}}" PKG_CONFIG_PATH="$PKG_CONFIG_PATH" cargo build --release --manifest-path "$ROOT_DIR/Cargo.toml"
+	else
+		sudo -u "#$SUDO_UID" -- env HOME="${SUDO_HOME:-${HOME:-/root}}" cargo build --release --manifest-path "$ROOT_DIR/Cargo.toml"
+	fi
 else
 	cargo build --release --manifest-path "$ROOT_DIR/Cargo.toml"
 fi
@@ -220,6 +229,7 @@ Exec=env VICTUS_HUB_DEBUG_LEVEL=0 $VICTUS_HUB_BIN
 Icon=victus-hub
 Terminal=false
 Categories=System;Utility;
+StartupWMClass=io.github.evident0.VictusHub
 DESKTOP
 
 "${SUDO[@]}" tee "$DBUS_SERVICE_DST" >/dev/null <<DBUS

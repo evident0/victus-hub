@@ -2,6 +2,15 @@
 # Offline UI preview. Does not stop, disable, or talk to the installed daemon.
 set -euo pipefail
 
+if [ "$#" -ne 0 ]; then
+	exit 2
+fi
+
 ROOT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 cd "$ROOT_DIR"
+if [ -f "$ROOT_DIR/scripts/libadwaita-pkgconfig.sh" ]; then
+	# shellcheck source=libadwaita-pkgconfig.sh
+	source "$ROOT_DIR/scripts/libadwaita-pkgconfig.sh"
+	ensure_libadwaita_pkgconfig
+fi
 exec env VICTUS_HUB_EMULATE_ZONES=4 VICTUS_HUB_OFFLINE=1 VICTUS_HUB_NO_DBUS=1 cargo run --release -p victus-hub

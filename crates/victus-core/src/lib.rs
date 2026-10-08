@@ -29,7 +29,7 @@ pub use error::{HubError, HubResult};
 pub use fan::{
     active_curve_drives_fans, compute_ewma, config_from_value, config_to_value, curve_response_params,
     default_cpu_points, default_gpu_points, fan_enable_mode, fan_mode_steps, hysteretic_curve_target,
-    interpolate_fan, load_config, pct_to_pwm, profile_index, save_config_text, smart_cpu_points,
+    interpolate_fan, load_config, normalize_fan_points, pct_to_pwm, profile_index, save_config_text, smart_cpu_points,
     smart_gpu_points, update_curve_target, update_overheat, FanConfig, FanController, FanEnable, FanIo,
     FanMode, FanPoint, FanProfileConfig, LoopState, CPU_TEMP_MAX_C, CURVE_RESPONSE_AGGRESSIVE,
     CURVE_RESPONSE_SMOOTH, GPU_TEMP_MAX_C, TEMP_MIN_C,
@@ -49,7 +49,8 @@ pub use loglevel::{debug_level_from_value, journal_line_visible, message_debug_l
 pub use power::{
     clamp_power_limit, clamp_reapply_seconds, clamp_tctl_temp, ryzenadj_args, validate_frequency,
     validate_intel_power, validate_ryzenadj, validate_undervolt, PowerPolicy, DEFAULT_POWER_LIMIT_MW,
-    DEFAULT_REAPPLY_SECONDS, DEFAULT_TCTL_TEMP_C, POWER_MAX_MW, POWER_MIN_MW, TCTL_TEMP_MAX_C, TCTL_TEMP_MIN_C,
+    DEFAULT_REAPPLY_SECONDS, DEFAULT_TCTL_TEMP_C, POWER_MAX_MW, POWER_MIN_MW, REAPPLY_MAX_S, REAPPLY_MIN_S,
+    TCTL_TEMP_MAX_C, TCTL_TEMP_MIN_C,
 };
 pub use profiles::{
     clamp_profile, parse_tuned_active, parse_tuned_list, profile_index_for_name, tuned_candidates,

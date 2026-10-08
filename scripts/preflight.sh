@@ -17,7 +17,7 @@ preflight() {
 	if [ "$(id -u)" -ne 0 ]; then
 		command -v sudo >/dev/null 2>&1 || missing+=(sudo)
 	fi
-	for tool in libsystemd.so.0 libEGL.so.1 libGL.so.1 libwayland-client.so.0 libxkbcommon.so.0 libX11.so.6; do
+	for tool in libsystemd.so.0 libgtk-4.so.1 libadwaita-1.so.0; do
 		have_shared_lib "$tool" || missing+=("$tool")
 	done
 	[ -d /run/systemd/system ] || missing+=("a booted systemd system")
@@ -51,14 +51,14 @@ preflight() {
 	printf 'Install prerequisites yourself, then rerun the installer. Missing requirements:\n' >&2
 	printf '  - %s\n' "${missing[@]}" >&2
 	if command -v apt-get >/dev/null 2>&1; then
-		packages="python3 cargo rustc libsystemd0 libglib2.0-bin libegl1 libgl1 libwayland-client0 libxkbcommon0 libx11-6"
+		packages="python3 cargo rustc libsystemd0 libglib2.0-bin libgtk-4-1 libadwaita-1-0 libgtk-4-dev libadwaita-1-dev"
 		[ "$app_only" -eq 1 ] || packages+=" git build-essential dkms linux-headers-$kernel mokutil openssl cmake pkg-config libpci-dev xz-utils gzip zstd"
 		printf '\nUbuntu/Mint/Debian package names (install the missing ones):\n  sudo apt install %s\n' "$packages" >&2
 	elif command -v pacman >/dev/null 2>&1; then
-		printf '\nArch package names (install the missing ones):\n  sudo pacman -S --needed python rust systemd glib2 mesa libglvnd wayland libxkbcommon libx11\n' >&2
+		printf '\nArch package names (install the missing ones):\n  sudo pacman -S --needed python rust systemd glib2 gtk4 libadwaita\n' >&2
 		[ "$app_only" -eq 1 ] || printf '  sudo pacman -S --needed base-devel git dkms linux-headers mokutil openssl cmake pciutils xz gzip zstd\nUse linux-lts-headers/linux-zen-headers instead if that is your kernel.\n' >&2
 	elif command -v dnf >/dev/null 2>&1; then
-		printf '\nFedora package names (install the missing ones):\n  sudo dnf install python3 cargo rust systemd-libs glib2 mesa-libEGL libglvnd-glx libwayland-client libxkbcommon libX11\n' >&2
+		printf '\nFedora package names (install the missing ones):\n  sudo dnf install python3 cargo rust systemd-libs glib2 gtk4 libadwaita gtk4-devel libadwaita-devel\n' >&2
 		[ "$app_only" -eq 1 ] || printf '  sudo dnf install git gcc gcc-c++ make binutils dkms kernel-devel-%s mokutil openssl cmake pkgconf-pkg-config pciutils-devel xz gzip zstd\n' "$kernel" >&2
 	else
 		printf '\nUse your distribution package manager to install the requirements listed above.\n' >&2

@@ -69,8 +69,61 @@ pub fn update_shell() -> String {
 }
 
 #[derive(Debug, Clone)]
+pub struct FrequencyWindow {
+    pub lower: i32,
+    pub upper: i32,
+    pub minimum: i32,
+    pub maximum: i32,
+    pub policies: usize,
+    pub mixed: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct MuxChoice {
+    pub label: String,
+    pub index: i32,
+}
+
+/// Read-only facts gathered by the binary. Library code only uses the paths stored here.
+#[derive(Debug, Clone)]
+pub struct HostView {
+    pub intel: bool,
+    pub keyboard: bool,
+    pub fan_modes: Vec<String>,
+    pub frequency: Option<FrequencyWindow>,
+    pub frequency_error: String,
+    pub power_supply: PathBuf,
+    pub conf_path: PathBuf,
+    pub shortcut_mods: Vec<i32>,
+    pub shortcut_key: i32,
+    pub mux: Vec<MuxChoice>,
+    pub mux_index: i32,
+    pub product: String,
+}
+
+impl Default for HostView {
+    fn default() -> Self {
+        Self {
+            intel: false,
+            keyboard: true,
+            fan_modes: ["auto", "smart", "max", "custom"].into_iter().map(str::to_owned).collect(),
+            frequency: None,
+            frequency_error: String::new(),
+            power_supply: PathBuf::new(),
+            conf_path: PathBuf::new(),
+            shortcut_mods: Vec::new(),
+            shortcut_key: 0,
+            mux: Vec::new(),
+            mux_index: -1,
+            product: String::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct Model {
     pub page: usize,
+    pub profile: i32,
     pub offline: bool,
     pub socket: PathBuf,
     pub state: DaemonState,
@@ -80,12 +133,14 @@ pub struct Model {
     pub history: VecDeque<f64>,
     pub visible: bool,
     pub quit: bool,
+    pub host: HostView,
 }
 
 impl Model {
     pub fn offline(zones: i32) -> Self {
         Self {
             page: 0,
+            profile: 1,
             offline: true,
             socket: PathBuf::new(),
             state: DaemonState::default(),
@@ -95,6 +150,7 @@ impl Model {
             history: VecDeque::new(),
             visible: true,
             quit: false,
+            host: HostView::default(),
         }
     }
 
@@ -131,6 +187,115 @@ impl Model {
     pub fn keyboard_zone(&self, label: &str, x: f64, width: f64) -> usize {
         zone_for_key(label, x, width)
     }
+}
+
+/// Footer text from an explicit power-supply directory. An empty or missing
+/// directory returns an em dash and does not look at the host `/sys`.
+pub fn power_status_line(root: &Path) -> String {
+    if root.as_os_str().is_empty() || !root.is_dir() {
+        return "—".into();
+    }
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return "—".into();
+    };
+    let mut supplies = entries.flatten().map(|entry| entry.path()).collect::<Vec<_>>();
+    supplies.sort();
+    let mut saw_mains = false;
+    let mut mains_online = false;
+    let mut battery = None;
+    for supply in supplies {
+        let kind = read_trimmed(&supply.join("type"));
+        if matches!(kind.as_deref(), Some("Mains" | "ADP" | "USB")) {
+            saw_mains = true;
+            mains_online |= read_trimmed(&supply.join("online")).as_deref() == Some("1");
+        } else if kind.as_deref() == Some("Battery") && battery.is_none() {
+            battery = Some(supply);
+        }
+    }
+    let source = if saw_mains {
+        if mains_online { "AC" } else { "Battery" }
+    } else if let Some(supply) = &battery {
+        match read_trimmed(&supply.join("status")).unwrap_or_default().to_ascii_lowercase().as_str() {
+            "charging" | "full" | "not charging" => "AC",
+            "discharging" => "Battery",
+            _ => return "—".into(),
+        }
+    } else {
+        return "—".into();
+    };
+    let Some(supply) = battery else {
+        return source.into();
+    };
+    match read_trimmed(&supply.join("capacity")).and_then(|text| text.parse::<i32>().ok()) {
+        Some(capacity) if (0..=100).contains(&capacity) => format!("{source} · {capacity}%"),
+        _ => source.into(),
+    }
+}
+
+fn read_trimmed(path: &Path) -> Option<String> {
+    std::fs::read_to_string(path).ok().map(|text| text.trim().to_owned()).filter(|text| !text.is_empty())
+}
+
+/// Read the `[programShortcut]` section of a Qt settings file.
+pub fn program_shortcut_from_conf(text: &str) -> (Vec<i32>, i32) {
+    let mut section = false;
+    let mut key = 0;
+    let mut mods = Vec::new();
+    for line in text.lines() {
+        let line = line.trim();
+        if let Some(rest) = line.strip_prefix('[') {
+            section = rest.trim_end_matches(']').eq_ignore_ascii_case("programShortcut");
+            continue;
+        }
+        if !section {
+            continue;
+        }
+        let Some((name, value)) = line.split_once('=') else { continue };
+        match name.trim() {
+            "key" => key = value.trim().parse().unwrap_or(0),
+            "mods" => {
+                mods = value.split([',', ' ']).filter(|part| !part.is_empty()).filter_map(|part| part.parse().ok()).collect();
+            }
+            _ => {}
+        }
+    }
+    (mods, key)
+}
+
+/// Replace or append `[programShortcut]` without touching other sections.
+pub fn upsert_program_shortcut(text: &str, mods: &[i32], key: i32) -> String {
+    let enabled = if key == 0 { "false" } else { "true" };
+    let mods_line = mods.iter().map(i32::to_string).collect::<Vec<_>>().join(",");
+    let block = format!("[programShortcut]\nenabled={enabled}\nkey={key}\nmods={mods_line}\n");
+    let lines: Vec<&str> = text.lines().collect();
+    let Some(start) = lines.iter().position(|line| line.trim().eq_ignore_ascii_case("[programShortcut]")) else {
+        let mut out = text.to_owned();
+        if !out.is_empty() && !out.ends_with('\n') {
+            out.push('\n');
+        }
+        if !out.is_empty() && !out.ends_with("\n\n") {
+            out.push('\n');
+        }
+        out.push_str(&block);
+        return out;
+    };
+    let end = lines
+        .iter()
+        .skip(start + 1)
+        .position(|line| line.trim().starts_with('['))
+        .map_or(lines.len(), |offset| start + 1 + offset);
+    let mut out = String::new();
+    for (index, line) in lines.iter().enumerate() {
+        if index == start {
+            out.push_str(&block);
+        }
+        if (start..end).contains(&index) {
+            continue;
+        }
+        out.push_str(line);
+        out.push('\n');
+    }
+    out
 }
 
 pub fn diagnostics_from_logs(module_errors: Option<&str>, acpi: Option<&str>, daemon: Option<&str>) -> String {
@@ -206,5 +371,28 @@ mod tests {
         let report = diagnostics_from_logs(Some("hp_wmi Unknown EC"), None, Some(""));
         assert!(report.contains("## hp-wmi / RGB module errors"));
         assert!(report.contains("Unknown EC"));
+    }
+
+    #[test]
+    fn power_status_and_shortcut_conf_stay_on_the_given_text() {
+        let root = victus_core::offline_scratch("power-status");
+        assert!(root.starts_with(std::env::temp_dir()));
+        assert_eq!(power_status_line(&root), "—");
+        assert_eq!(power_status_line(Path::new("")), "—");
+        let battery = root.join("BAT0");
+        std::fs::create_dir_all(&battery).unwrap();
+        std::fs::write(battery.join("type"), "Battery\n").unwrap();
+        std::fs::write(battery.join("status"), "Discharging\n").unwrap();
+        std::fs::write(battery.join("capacity"), "42\n").unwrap();
+        assert_eq!(power_status_line(&root), "Battery · 42%");
+
+        let text = "[General]\nheight=680\n\n[programShortcut]\nenabled=true\nkey=149\nmods=\n\n[window]\nwidth=460\n";
+        assert_eq!(program_shortcut_from_conf(text), (Vec::<i32>::new(), 149));
+        let updated = upsert_program_shortcut(text, &[29], 24);
+        assert!(updated.contains("height=680"));
+        assert!(updated.contains("width=460"));
+        assert!(updated.contains("key=24"));
+        assert!(updated.contains("mods=29"));
+        assert_eq!(program_shortcut_from_conf(&updated).1, 24);
     }
 }

@@ -69,11 +69,8 @@ class TestPreflight(unittest.TestCase):
         libdir.mkdir(parents=True, exist_ok=True)
         for name in (
             "libsystemd.so.0",
-            "libEGL.so.1",
-            "libGL.so.1",
-            "libwayland-client.so.0",
-            "libxkbcommon.so.0",
-            "libX11.so.6",
+            "libgtk-4.so.1",
+            "libadwaita-1.so.0",
         ):
             (libdir / name).write_text("")
 

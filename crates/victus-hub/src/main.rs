@@ -1,29 +1,25 @@
-//! egui control panel. Offline preview never opens the installed socket.
+//! GTK 4 control panel. Offline preview never opens the installed socket.
 
-use std::path::PathBuf;
-use std::sync::mpsc;
+use std::path::{Path, PathBuf};
+
+use victus_hub::{FrequencyWindow, MuxChoice};
 
 fn main() {
     let offline = std::env::var("VICTUS_HUB_OFFLINE").ok().as_deref() == Some("1");
-    let (activate_tx, activate_rx) = mpsc::channel();
-    let model = if offline {
+    let mut model = if offline {
         victus_hub::Model::offline(zone_count(true))
     } else {
         let socket = std::env::var("VICTUS_HUB_SOCKET")
             .map(PathBuf::from)
             .unwrap_or_else(|_| PathBuf::from(victus_core::DEFAULT_SOCKET));
-        let mut model = victus_hub::Model::live(socket, zone_count(false));
-        victus_hub::ui::hydrate_live(&mut model);
-        model
+        victus_hub::Model::live(socket, zone_count(false))
     };
-    if !offline && std::env::var("VICTUS_HUB_NO_DBUS").ok().as_deref() != Some("1") {
-        std::thread::spawn(move || {
-            if let Err(error) = bus::own_session_name(activate_tx) {
-                eprintln!("session bus: {error}");
-            }
-        });
+    fill_host(&mut model, offline);
+    if !offline {
+        victus_hub::ui::hydrate_live(&mut model);
     }
-    if let Err(error) = victus_hub::ui::start(model, activate_rx) {
+    let own_bus = !offline && std::env::var("VICTUS_HUB_NO_DBUS").ok().as_deref() != Some("1");
+    if let Err(error) = victus_hub::ui::start(model, own_bus) {
         eprintln!("{error}");
         std::process::exit(1);
     }
@@ -47,4 +43,69 @@ fn zone_count(offline: bool) -> i32 {
         .max(1)
 }
 
-mod bus;
+fn fill_host(model: &mut victus_hub::Model, offline: bool) {
+    let host = &mut model.host;
+    host.intel = std::fs::read_to_string("/proc/cpuinfo").is_ok_and(|text| text.contains("GenuineIntel"));
+    host.product = std::fs::read_to_string("/sys/class/dmi/id/product_name")
+        .ok()
+        .map(|text| text.trim().to_owned())
+        .filter(|text| !text.is_empty())
+        .unwrap_or_else(|| "HP Laptop".to_owned());
+    let supply = PathBuf::from("/sys/class/power_supply");
+    host.power_supply = if supply.is_dir() { supply } else { PathBuf::new() };
+    host.conf_path = config_path();
+    if !host.conf_path.as_os_str().is_empty() {
+        if let Ok(text) = std::fs::read_to_string(&host.conf_path) {
+            let (mods, key) = victus_hub::program_shortcut_from_conf(&text);
+            host.shortcut_mods = mods;
+            host.shortcut_key = key;
+        }
+    }
+    match victus_hw::read_policies(Path::new("/sys/devices/system/cpu/cpufreq")) {
+        Ok(policies) => {
+            let first = &policies[0];
+            let mixed = policies.iter().any(|policy| policy.minimum != first.minimum || policy.maximum != first.maximum);
+            host.frequency = Some(FrequencyWindow {
+                lower: first.hardware_min,
+                upper: first.hardware_max,
+                minimum: first.minimum,
+                maximum: first.maximum,
+                policies: policies.len(),
+                mixed,
+            });
+        }
+        Err(error) => host.frequency_error = error.to_string(),
+    }
+    if offline {
+        let emulated = std::env::var("VICTUS_HUB_EMULATE_ZONES").ok().and_then(|value| value.parse::<i32>().ok());
+        host.keyboard = emulated.is_some_and(|zones| zones > 0) || model.zones > 1;
+        return;
+    }
+    let caps = victus_hw::detect_capabilities(
+        Path::new("/sys/class/hwmon"),
+        Path::new("/sys/class/leds"),
+        Path::new("/sys/devices/platform/hp-wmi"),
+    );
+    if !caps.fan_modes.is_empty() {
+        host.fan_modes = caps.fan_modes;
+    }
+    host.keyboard = caps.keyboard_lighting;
+    if let Some(mux) = caps.gpu_mux {
+        host.mux_index = mux.current_index;
+        host.mux = mux
+            .modes
+            .into_iter()
+            .map(|mode| MuxChoice { label: mode.label, index: mode.index })
+            .collect();
+    }
+}
+
+fn config_path() -> PathBuf {
+    if let Some(dir) = std::env::var_os("XDG_CONFIG_HOME").filter(|dir| !dir.is_empty()) {
+        return PathBuf::from(dir).join("victus-hub/victus-hub.conf");
+    }
+    std::env::var_os("HOME")
+        .filter(|home| !home.is_empty())
+        .map(|home| PathBuf::from(home).join(".config/victus-hub/victus-hub.conf"))
+        .unwrap_or_default()
+}

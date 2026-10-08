@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
-description = "egui control panel for HP Victus and Omen laptops"
+description = "GTK 4 control panel for HP Victus and Omen laptops"
 
 [lib]
 name = "victus_hub"
@@ -17,9 +17,9 @@ path = "src/main.rs"
 [dependencies]
 victus-core = { path = "../victus-core" }
 victus-hw = { path = "../victus-hw" }
-eframe.workspace = true
+gtk4.workspace = true
+libadwaita.workspace = true
 serde_json.workspace = true
-zbus.workspace = true
 
 [lints.rust]
 unsafe_code = "forbid"
