@@ -157,21 +157,5 @@ fn strip_ansi(line: &str) -> String {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn journal_filters_keep_real_errors_and_distinct_placeholders() {
-        assert!(kernel_module_error_line("hp_wmi: Unknown EC layout"));
-        assert!(!kernel_module_error_line("hp_wmi: Registered as platform profile handler"));
-        assert!(acpi_error_line("ACPI BIOS Error on WMID"));
-        assert!(!acpi_error_line("ACPI: battery"));
-        let errors = filter_journal_lines(Some("ok\nhp-kbd-rgb: verification failed\n"), kernel_module_error_line, 80);
-        assert!(errors.unwrap().contains("verification failed"));
-        let report = render_markdown("2026-10-08 12:00:00", &[("Board", "8BD4")], &[], &[], &[], None, None, Some(""));
-        assert!(report.contains("## hp-wmi / RGB module errors"));
-        assert!(report.contains("_Kernel journal not available._"));
-        assert!(report.contains("_No ACPI errors._"));
-        assert!(report.contains("_Daemon journal not available._"));
-    }
-}
+#[path = "../../../tests/rust/victus-core/diagnostics.rs"]
+mod tests;

@@ -67,40 +67,5 @@ pub fn parse_loginctl(stdout: &str) -> Option<SessionInfo> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn desktop(locked: bool) -> SessionInfo {
-        SessionInfo {
-            user: 1000,
-            active: true,
-            remote: false,
-            locked,
-            kind: "wayland".into(),
-            seat: "seat0".into(),
-        }
-    }
-
-    #[test]
-    fn root_is_authorized_without_a_session_lookup() {
-        let mut looked = false;
-        let peer = authorize(0, 1, "", |_| {
-            looked = true;
-            None
-        });
-        assert!(peer.authorized);
-        assert!(!looked);
-    }
-
-    #[test]
-    fn locked_or_missing_sessions_fail_closed() {
-        let peer = authorize(1000, 2, "", |_| Some(desktop(false)));
-        assert!(!peer.authorized);
-        let peer = authorize(1000, 2, "1", |_| Some(desktop(true)));
-        assert!(!peer.authorized);
-        let peer = authorize(1000, 2, "1", |_| Some(desktop(false)));
-        assert!(peer.authorized);
-        let text = "User=1000\nActive=yes\nRemote=no\nLockedHint=no\nType=wayland\nSeat=seat0\n";
-        assert!(session_ok(1000, &parse_loginctl(text).unwrap()));
-    }
-}
+#[path = "../../../tests/rust/victus-hubd/auth.rs"]
+mod tests;

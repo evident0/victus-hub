@@ -139,34 +139,5 @@ pub fn state_path_from_env(override_path: Option<&str>) -> PathBuf {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::offline_scratch;
-
-    #[test]
-    fn state_round_trips_in_a_temp_file() {
-        let dir = offline_scratch("state");
-        let path = dir.join("state.json");
-        assert!(path.starts_with(std::env::temp_dir()));
-        let mut state = DaemonState::default();
-        state.battery_power_save = true;
-        state.cpu_frequency = Some((1_400_000, 5_000_000));
-        state.power.enabled = true;
-        state.initialized = true;
-        save_state(&state, &path).unwrap();
-        let loaded = load_state(&path);
-        assert!(loaded.battery_power_save);
-        assert_eq!(loaded.cpu_frequency, Some((1_400_000, 5_000_000)));
-        assert!(loaded.power.enabled);
-        assert!(!loaded.lighting.enabled);
-        let _ = fs::remove_dir_all(dir);
-    }
-
-    #[test]
-    fn missing_file_does_not_touch_the_default_path() {
-        let dir = offline_scratch("state-missing");
-        let loaded = load_state(&dir.join("nope.json"));
-        assert!(!loaded.initialized || loaded.fan.profiles.len() == 3);
-        let _ = fs::remove_dir_all(dir);
-    }
-}
+#[path = "../../../tests/rust/victus-core/state.rs"]
+mod tests;

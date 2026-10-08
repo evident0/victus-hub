@@ -224,52 +224,5 @@ pub fn intel_power_limits(root: &Path, pl1_mw: i32, pl2_mw: i32, intel: bool) ->
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use victus_core::offline_scratch;
-
-    #[test]
-    fn ryzenadj_validation_does_not_execute_a_program() {
-        let missing = offline_scratch("ryzen").join("missing-ryzenadj");
-        let error = apply_ryzenadj(&missing, 500, 25_000, 25_000, 95).unwrap_err();
-        assert!(error.to_string().contains("stapm-limit"));
-        let _ = std::fs::remove_dir_all(missing.parent().unwrap());
-    }
-
-    #[test]
-    fn command_output_child() {
-        use std::io::Write;
-        match std::env::var("VICTUS_TEST_CHILD").ok().as_deref() {
-            Some("output") => {
-                std::io::stdout().write_all(b"stdout-child\n").unwrap();
-                std::io::stderr().write_all(b"stderr-child\n").unwrap();
-                let chunk = [b'x'; 8192];
-                for _ in 0..256 {
-                    std::io::stdout().write_all(&chunk).unwrap();
-                    std::io::stderr().write_all(&chunk).unwrap();
-                }
-            }
-            Some("wait") => std::thread::sleep(Duration::from_secs(5)),
-            _ => {},
-        }
-    }
-
-    #[test]
-    fn command_pipes_are_bounded_drained_and_timed_out_without_scripts() {
-        let executable = std::env::current_exe().unwrap();
-        let mut command = Command::new(&executable);
-        command.args(["--exact", "tests::command_output_child", "--nocapture"]).env("VICTUS_TEST_CHILD", "output");
-        let output = run_prepared_command(&mut command, Duration::from_secs(5)).unwrap();
-        assert_eq!(output.status, 0);
-        assert_eq!(output.stdout.len(), 1024 * 1024);
-        assert_eq!(output.stderr.len(), 1024 * 1024);
-        assert!(output.stdout.contains("stdout-child"));
-        assert!(output.stderr.contains("stderr-child"));
-        let mut command = Command::new(executable);
-        command.args(["--exact", "tests::command_output_child", "--nocapture"]).env("VICTUS_TEST_CHILD", "wait");
-        let started = Instant::now();
-        let error = run_prepared_command(&mut command, Duration::from_millis(50)).unwrap_err();
-        assert!(error.to_string().contains("timed out"));
-        assert!(started.elapsed() < Duration::from_secs(2));
-    }
-}
+#[path = "../../../tests/rust/victus-hw/lib.rs"]
+mod tests;

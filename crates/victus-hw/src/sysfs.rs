@@ -202,45 +202,5 @@ pub fn read_pwm_percent(hwmon: Option<&Path>) -> Option<f64> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use victus_core::offline_scratch;
-
-    #[test]
-    fn fan_and_keyboard_writes_stay_in_the_scratch_tree() {
-        let root = offline_scratch("sysfs");
-        assert!(root.starts_with(std::env::temp_dir()));
-        let hwmon = root.join("hwmon/hwmon0");
-        fs::create_dir_all(&hwmon).unwrap();
-        fs::write(hwmon.join("name"), "hp-wmi\n").unwrap();
-        fs::write(hwmon.join("pwm1_enable"), "2\n").unwrap();
-        fs::write(hwmon.join("pwm1"), "0\n").unwrap();
-        fs::write(hwmon.join("pwm2"), "0\n").unwrap();
-        let class = root.join("hwmon");
-        let found = find_hwmon(&class, &["hp-wmi"]).unwrap();
-        write_pwm(Some(found.as_path()), 128).unwrap();
-        assert_eq!(read_text(&found.join("pwm1_enable")).as_deref(), Some("1"));
-        assert_eq!(read_text(&found.join("pwm1")).as_deref(), Some("128"));
-        assert_eq!(read_text(&found.join("pwm2")).as_deref(), Some("128"));
-
-        let leds = root.join("leds/hp::kbd_backlight");
-        fs::create_dir_all(&leds).unwrap();
-        fs::write(leds.join("multi_intensity"), "0 0 0\n").unwrap();
-        fs::write(leds.join("brightness"), "0\n").unwrap();
-        write_led_color(&leds, 1, 2, 3, 40).unwrap();
-        assert_eq!(read_text(&leds.join("multi_intensity")).as_deref(), Some("1 2 3"));
-        assert!(keyboard_lighting_supported(&root.join("leds")));
-
-        let mux = root.join("hp-wmi");
-        fs::create_dir_all(&mux).unwrap();
-        fs::write(mux.join("gpu_mux_supported_names"), "hybrid discrete\n").unwrap();
-        fs::write(mux.join("gpu_mux_mode"), "0\n").unwrap();
-        let state = read_gpu_mux(&mux).unwrap();
-        assert_eq!(state.current_index, 0);
-        assert_eq!(state.modes.len(), 2);
-        let caps = detect_capabilities(&class, &root.join("leds"), &mux);
-        assert!(caps.fan_modes.contains(&"custom".to_owned()));
-        assert!(caps.keyboard_lighting);
-        let _ = fs::remove_dir_all(root);
-    }
-}
+#[path = "../../../tests/rust/victus-hw/sysfs.rs"]
+mod tests;

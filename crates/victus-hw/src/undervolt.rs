@@ -63,20 +63,5 @@ fn mailbox(file: &std::fs::File, domain: u64, offset: Option<i32>) -> HubResult<
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use victus_core::offline_scratch;
-
-    #[test]
-    fn rejected_undervolt_does_not_open_a_device_file() {
-        let root = offline_scratch("msr");
-        let path = root.join("msr");
-        let error = apply_undervolt(&path, true, -300, 0).unwrap_err();
-        assert!(error.to_string().contains("-250"));
-        assert!(!path.exists());
-        let error = apply_undervolt(&path, false, -50, -50).unwrap_err();
-        assert!(error.to_string().contains("unavailable"));
-        assert!(!path.exists());
-        let _ = std::fs::remove_dir_all(root);
-    }
-}
+#[path = "../../../tests/rust/victus-hw/undervolt.rs"]
+mod tests;

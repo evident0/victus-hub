@@ -86,3 +86,27 @@ pub fn offline_scratch(label: &str) -> PathBuf {
     std::fs::create_dir_all(&path).expect("create offline scratch directory");
     path
 }
+
+#[cfg(test)]
+#[path = "../../../tests/rust/scripts/portability.rs"]
+mod script_tests;
+
+#[cfg(test)]
+#[path = "../../../tests/rust/kernel/hp_wmi_fan_runtime.rs"]
+mod hp_wmi_fan_runtime_tests;
+
+#[cfg(test)]
+#[path = "../../../tests/rust/kernel/hp_wmi_fan_settings.rs"]
+mod hp_wmi_fan_settings_tests;
+
+#[cfg(test)]
+#[path = "../../../tests/rust/kernel/hp_wmi_installation.rs"]
+mod hp_wmi_installation_tests;
+
+#[cfg(test)]
+#[path = "../../../tests/rust/scripts/install_preflight.rs"]
+mod install_preflight_tests;
+
+#[cfg(test)]
+#[path = "../../../tests/rust/scripts/uninstall.rs"]
+mod uninstall_tests;

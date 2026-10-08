@@ -404,57 +404,5 @@ pub fn step_effect_settings(settings: &LightingSettings, direction: i32, zone_co
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn effects_aliases_and_spatial_order() {
-        let single: Vec<_> = effects_for_zone_count(1).iter().map(|(value, _)| *value).collect();
-        assert_eq!(single, vec!["static", "breathing", "cycle"]);
-        assert_eq!(normalize_effect("color-cycle", 1), "cycle");
-        assert_eq!(normalize_effect("pulse", 4), "breathing");
-        assert_eq!(normalize_effect("strobe", 4), "blinking");
-        assert_eq!(normalize_effect("wave", 1), "static");
-        assert_eq!(spatial_index(2, 4), 0);
-        assert_eq!(spatial_index(3, 4), 1);
-        assert_eq!(spatial_index(1, 4), 2);
-        assert_eq!(spatial_index(0, 4), 3);
-    }
-
-    #[test]
-    fn animation_colors_match_the_python_cases() {
-        let color = compute_anim_color("static", 1.0, 0, 4, 10, 20, 30, 1, 2, 3);
-        assert_eq!((color.red, color.green, color.blue), (10, 20, 30));
-        let color = compute_anim_color("breathing", 0.0, 0, 1, 200, 100, 50, 0, 0, 0);
-        assert_eq!((color.red, color.green, color.blue), (100, 50, 25));
-        let on = compute_anim_color("blinking", 0.0, 0, 1, 255, 0, 0, 0, 0, 0);
-        let off = compute_anim_color("blinking", std::f64::consts::PI, 0, 1, 255, 0, 0, 0, 0, 0);
-        assert_eq!((on.red, on.green, on.blue), (255, 0, 0));
-        assert_eq!((off.red, off.green, off.blue), (0, 0, 0));
-        let a = compute_anim_color("cycle", 1.2, 0, 4, 0, 0, 0, 0, 0, 0);
-        let b = compute_anim_color("cycle", 1.2, 3, 4, 0, 0, 0, 0, 0, 0);
-        assert_eq!((a.red, a.green, a.blue), (b.red, b.green, b.blue));
-        let wave = compute_anim_color("wave", 0.0, 0, 1, 255, 0, 0, 0, 0, 255);
-        assert_eq!((wave.red, wave.green, wave.blue), (127, 0, 127));
-        let hot = compute_anim_color("chase", 0.0, 0, 4, 200, 0, 0, 0, 0, 0);
-        let dim = compute_anim_color("chase", 0.0, 1, 4, 200, 0, 0, 0, 0, 0);
-        assert_eq!((hot.red, hot.green, hot.blue), (200, 0, 0));
-        assert_eq!((dim.red, dim.green, dim.blue), (30, 0, 0));
-    }
-
-    #[test]
-    fn frames_use_zone_colors_and_speed() {
-        let settings = LightingSettings {
-            color: "#ff0000".to_owned(),
-            zone_colors: vec!["#ff0000".to_owned(), "#00ff00".to_owned(), "#0000ff".to_owned(), "#ffffff".to_owned()],
-            ..LightingSettings::default()
-        };
-        let frames = lighting_frames(&settings, 4, 0.0);
-        assert_eq!(frames[1], RgbColor::new(0, 255, 0));
-        let off = LightingSettings { enabled: false, effect: "breathing".to_owned(), ..LightingSettings::default() };
-        assert!(lighting_frames(&off, 4, 1.0).iter().all(|color| *color == RgbColor::new(0, 0, 0)));
-        assert!((step_increment(50, 0.050) - 0.125).abs() < 1e-12);
-        assert_eq!(zone_for_key("W", 10.0, 15.0), 3);
-        assert_eq!(zone_for_key("p", 1.0, 15.0), 2);
-    }
-}
+#[path = "../../../tests/rust/victus-core/lighting.rs"]
+mod tests;

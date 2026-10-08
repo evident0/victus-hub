@@ -82,22 +82,5 @@ pub fn apply_limits(root: &Path, minimum: i32, maximum: i32) -> HubResult<String
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use victus_core::offline_scratch;
-
-    #[test]
-    fn raises_the_ceiling_before_the_floor() {
-        let root = offline_scratch("cpufreq");
-        let policy = root.join("policy0");
-        std::fs::create_dir_all(&policy).unwrap();
-        std::fs::write(policy.join("cpuinfo_min_freq"), "400000\n").unwrap();
-        std::fs::write(policy.join("cpuinfo_max_freq"), "5000000\n").unwrap();
-        std::fs::write(policy.join("scaling_min_freq"), "400000\n").unwrap();
-        std::fs::write(policy.join("scaling_max_freq"), "800000\n").unwrap();
-        apply_limits(&root, 1_200_000, 3_000_000).unwrap();
-        assert_eq!(std::fs::read_to_string(policy.join("scaling_min_freq")).unwrap().trim(), "1200000");
-        assert_eq!(std::fs::read_to_string(policy.join("scaling_max_freq")).unwrap().trim(), "3000000");
-        let _ = std::fs::remove_dir_all(root);
-    }
-}
+#[path = "../../../tests/rust/victus-hw/cpufreq.rs"]
+mod tests;

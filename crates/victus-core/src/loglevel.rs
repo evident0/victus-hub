@@ -59,18 +59,5 @@ pub fn journal_line_visible(line: &str, level: i32) -> bool {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn debug_level_filters_categories() {
-        assert!(debug_level_from_value("4").is_err());
-        assert_eq!(message_debug_level("keyboard color"), Some(3));
-        assert_eq!(message_debug_level("ryzenadj stapm"), Some(2));
-        assert_eq!(message_debug_level("fan pwm write"), Some(1));
-        assert!(!terminal_line_visible("fan tick", 0, false));
-        assert!(terminal_line_visible("fan tick", 1, false));
-        assert!(terminal_line_visible("anything", 0, true));
-        assert!(!journal_line_visible("keyboard-last-input 1.0", 3));
-    }
-}
+#[path = "../../../tests/rust/victus-core/loglevel.rs"]
+mod tests;
