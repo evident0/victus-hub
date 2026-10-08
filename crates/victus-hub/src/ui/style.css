@@ -12,12 +12,6 @@ window.victus list.sensors > row {
   background: #161616;
   color: #ededed;
 }
-/* Leave room for glyph ink at fractional text/display scales. */
-window.victus label,
-window.graph-win label,
-popover.sensor-menu label {
-  padding: 2px;
-}
 window.victus .title {
   font-size: 15px;
   font-weight: 600;
