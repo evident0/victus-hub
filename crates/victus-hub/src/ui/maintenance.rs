@@ -6,11 +6,10 @@ use std::rc::Rc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use gtk4::prelude::*;
-use libadwaita::prelude::*;
 use victus_core::{acpi_error_line, filter_journal_lines, kernel_module_error_line, PROGRAM_VERSION};
 
 use crate::{parse_release_tag, update_choice, update_shell, UpdateChoice, RELEASE_URL};
-use super::{gpu_name, quit, BackgroundEvent, Session};
+use super::{gpu_name, quit, widgets, BackgroundEvent, Session};
 
 pub(super) enum Release {
     Failed,
@@ -21,6 +20,8 @@ pub(super) enum Release {
 pub(super) fn check_updates(session: &Session) {
     session.built.settings.update.set_sensitive(false);
     session.built.settings.update_status.set_text("Checking for updates…");
+    session.built.settings.update_status.set_css_classes(&["sub"]);
+    session.built.settings.update_status.set_visible(true);
     let tx = session.events_tx.clone();
     let _ = std::thread::Builder::new().name("victus-update".into()).spawn(move || {
         tx.send(BackgroundEvent::Release(fetch_release()));
@@ -29,6 +30,10 @@ pub(super) fn check_updates(session: &Session) {
 
 pub(super) fn show_release(session: &Rc<Session>, release: Release) {
     session.built.settings.update.set_sensitive(true);
+    session.built.settings.update_status.set_visible(true);
+    session.built.settings.update_status.set_css_classes(&["sub", match &release {
+        Release::Failed => "sub", Release::Current => "ok", Release::Available(_) => "warn",
+    }]);
     match release {
         Release::Failed => session.built.settings.update_status.set_text("Could not check for updates."),
         Release::Current => session.built.settings.update_status.set_text("Program is up to date."),
@@ -41,22 +46,20 @@ pub(super) fn show_release(session: &Rc<Session>, release: Release) {
 
 fn confirm_update(session: &Rc<Session>, tag: &str) {
     let body = format!("Install Victus Hub {tag}?\n\nThe app will close during installation and reopen when it finishes.");
-    let dialog = libadwaita::AlertDialog::new(Some("Update available"), Some(&body));
-    dialog.add_response("cancel", "Cancel");
-    dialog.add_response("update", "Update");
-    dialog.set_response_appearance("update", libadwaita::ResponseAppearance::Suggested);
-    dialog.set_default_response(Some("cancel"));
-    dialog.set_close_response("cancel");
+    let dialog = widgets::message_dialog(&session.window, "Update available", &body,
+        &[("Cancel", gtk4::ResponseType::Cancel), ("Update", gtk4::ResponseType::Accept)]);
+    dialog.set_default_response(gtk4::ResponseType::Cancel);
     let weak = Rc::downgrade(session);
-    dialog.connect_response(None, move |_, response| {
-        if response != "update" { return; }
+    dialog.connect_response(move |dialog, response| {
+        dialog.close();
+        if response != gtk4::ResponseType::Accept { return; }
         let Some(session) = weak.upgrade() else { return };
         match launch_update() {
             Ok(()) => quit(&session),
             Err(message) => session.built.settings.update_status.set_text(message),
         }
     });
-    dialog.present(Some(&session.window));
+    dialog.present();
 }
 
 fn fetch_release() -> Release {
@@ -115,25 +118,24 @@ pub(super) fn show_diagnostics(session: &Rc<Session>, result: Result<PathBuf, St
     let path = match result {
         Ok(path) => path,
         Err(error) => {
-            let dialog = libadwaita::AlertDialog::new(Some("Diagnostics"), Some(&format!("Could not save diagnostics:\n{error}")));
-            dialog.add_response("ok", "OK");
-            dialog.set_close_response("ok");
-            dialog.present(Some(&session.window));
+            let dialog = widgets::message_dialog(&session.window, "Diagnostics", &format!("Could not write the report:\n{error}"),
+                &[("OK", gtk4::ResponseType::Ok)]);
+            dialog.connect_response(|dialog, _| dialog.close());
+            dialog.present();
             return;
         }
     };
     let body = format!("Report saved to:\n{}", path.display());
-    let dialog = libadwaita::AlertDialog::new(Some("Diagnostics"), Some(&body));
-    dialog.add_response("open", "Open");
-    dialog.add_response("ok", "OK");
-    dialog.set_default_response(Some("ok"));
-    dialog.set_close_response("ok");
-    dialog.connect_response(None, move |_, response| {
-        if response == "open" && let Some(program) = which("xdg-open") {
+    let dialog = widgets::message_dialog(&session.window, "Diagnostics", &body,
+        &[("Open", gtk4::ResponseType::Accept), ("OK", gtk4::ResponseType::Ok)]);
+    dialog.set_default_response(gtk4::ResponseType::Ok);
+    dialog.connect_response(move |dialog, response| {
+        dialog.close();
+        if response == gtk4::ResponseType::Accept && let Some(program) = which("xdg-open") {
             let _ = Command::new(program).arg(&path).spawn();
         }
     });
-    dialog.present(Some(&session.window));
+    dialog.present();
 }
 
 fn write_diagnostics(state: &serde_json::Value, logs: &[String]) -> Result<PathBuf, String> {

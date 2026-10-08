@@ -32,7 +32,6 @@ use gtk4::gdk::{Key, ModifierType};
 use gtk4::gio::ApplicationFlags;
 use gtk4::glib::{self, ControlFlow, Propagation};
 use gtk4::prelude::*;
-use libadwaita::prelude::*;
 use victus_core::{
     config_to_value, effect_is_animated, fan_mode_steps, is_modifier,
     keybind_label, normalize_fan_points, normalize_lighting_settings,
@@ -47,7 +46,7 @@ use crate::{
     upsert_program_shortcut, Model,
 };
 
-use self::keyboard::{active_color, hsv_parts, ignores_color, needs_color2, paint_keys, sync_color_entries};
+use self::keyboard::{active_color, ignores_color, needs_color2, paint_keys, sync_color_entries};
 use self::maintenance::{check_updates, collect_diagnostics, show_diagnostics, show_release, Release};
 use self::pages::SensorRow;
 use self::readings::{cpu_caption, current_text, format_stat_unit, gpu_caption, merge_snapshot, power_head, ram_status, reading_source, rpm_text, sample_value, temp_text};
@@ -109,6 +108,9 @@ struct Session {
     built: pages::Built,
     accent: gtk4::CssProvider,
     hover: Cell<Option<usize>>,
+    nav_position: Cell<Option<f64>>,
+    nav_slide: Cell<Option<(f64, Instant)>>,
+    nav_ticking: Cell<bool>,
     anim: Cell<f64>,
     light_at: Cell<Option<Instant>>,
     fan_at: Cell<Option<Instant>>,
@@ -116,6 +118,7 @@ struct Session {
     drag: Cell<Option<usize>>,
     capturing: Cell<bool>,
     zone_target: Cell<i32>,
+    strip_hue: Cell<f64>,
     applied_power: RefCell<PowerPolicy>,
     applied_freq: Cell<Option<(i32, i32)>>,
     last_frequency: RefCell<Option<crate::FrequencyWindow>>,
@@ -123,6 +126,7 @@ struct Session {
     profile_busy: Cell<bool>,
     captured_mods: RefCell<Vec<i32>>,
     selected_point: Cell<Option<usize>>,
+    curve_selections: Cell<[Option<usize>; 2]>,
     fan_hover: Cell<Option<usize>>,
     self_weak: RefCell<Weak<Session>>,
     timer: RefCell<Option<glib::SourceId>>,
@@ -412,6 +416,9 @@ fn build_ui(
         built,
         accent,
         hover: Cell::new(None),
+        nav_position: Cell::new(None),
+        nav_slide: Cell::new(None),
+        nav_ticking: Cell::new(false),
         anim: Cell::new(0.0),
         light_at: Cell::new(None),
         fan_at: Cell::new(None),
@@ -419,6 +426,7 @@ fn build_ui(
         drag: Cell::new(None),
         capturing: Cell::new(false),
         zone_target: Cell::new(-1),
+        strip_hue: Cell::new(210.0 / 360.0),
         applied_power: RefCell::new(model.borrow().state.power.clone()),
         applied_freq: Cell::new(None),
         last_frequency: RefCell::new(None),
@@ -426,6 +434,7 @@ fn build_ui(
         profile_busy: Cell::new(false),
         captured_mods: RefCell::new(Vec::new()),
         selected_point: Cell::new(None),
+        curve_selections: Cell::new([None, None]),
         fan_hover: Cell::new(None),
         self_weak: RefCell::new(Weak::new()),
         timer: RefCell::new(None),
@@ -688,6 +697,18 @@ fn wire_sensors(session: &Rc<Session>) {
         });
     });
     session.built.sensors.list.add_controller(click);
+    let keys = gtk4::EventControllerKey::new();
+    let list = session.built.sensors.list.downgrade();
+    keys.connect_key_pressed(move |_, key, _, _| {
+        if !matches!(key, Key::Left | Key::Right) { return Propagation::Proceed; }
+        let Some(list) = list.upgrade() else { return Propagation::Proceed };
+        let Some(row) = list.selected_row().filter(|row| row.widget_name().is_empty()) else { return Propagation::Proceed };
+        let Some(button) = row.child().and_then(|line| line.first_child()).and_downcast::<gtk4::Button>() else { return Propagation::Proceed };
+        let Some(arrow) = button.child().and_downcast::<gtk4::Label>() else { return Propagation::Proceed };
+        if (key == Key::Left && arrow.text() == "▾") || (key == Key::Right && arrow.text() == "▸") { button.emit_clicked(); }
+        Propagation::Stop
+    });
+    session.built.sensors.list.add_controller(keys);
 
     let weak = Rc::downgrade(session);
     item.connect_clicked(move |_| {
@@ -731,7 +752,6 @@ fn wire_settings(session: &Rc<Session>) {
     });
     on_click(session, &session.built.settings.update, check_updates);
     on_click(session, &session.built.settings.diagnostics, collect_diagnostics);
-    on_click(session, &session.built.settings.quit, quit);
     let keys = gtk4::EventControllerKey::new();
     keys.set_propagation_phase(gtk4::PropagationPhase::Capture);
     let weak = Rc::downgrade(session);
@@ -841,7 +861,15 @@ fn bind_switch(session: &Rc<Session>, switch: &gtk4::Switch, kind: SwitchKind) {
 fn wire_draws(session: &Rc<Session>) {
     on_draw(session, &session.built.sidebar, |session, cr, width, height| {
         let keyboard = session.model.borrow().host.keyboard;
-        paint::sidebar(cr, f64::from(width), f64::from(height), keyboard, session.page.load(Ordering::Relaxed), session.hover.get());
+        let selected = session.page.load(Ordering::Relaxed);
+        let target = paint::nav_buttons(keyboard, f64::from(height)).into_iter().find(|button| button.page == selected).map_or(20.0, |button| button.y);
+        let y = if let Some((from, start)) = session.nav_slide.get() {
+            let fraction = (start.elapsed().as_secs_f64() / 0.28).min(1.0);
+            if fraction >= 1.0 { session.nav_slide.set(None); }
+            from + (target - from) * (1.0 - (1.0 - fraction).powi(3))
+        } else { target };
+        session.nav_position.set(Some(y));
+        paint::sidebar_with_pill(cr, f64::from(width), f64::from(height), keyboard, selected, session.hover.get(), Some(y));
     });
     on_draw(session, &session.built.fans.chart, paint_chart);
     for (area, compact) in [(&session.built.keyboard.visual, false), (&session.built.home.mini, true)] {
@@ -859,8 +887,7 @@ fn wire_draws(session: &Rc<Session>) {
     });
     on_draw(session, &session.built.keyboard.shade, |session, cr, width, height| {
         let hex = active_color(&session.model.borrow(), session.zone_target.get());
-        let (hue, _, _) = hsv_parts(&hex);
-        paint::shade_strip(cr, f64::from(width), f64::from(height), hue, paint::unit_rgb(&hex));
+        paint::shade_strip(cr, f64::from(width), f64::from(height), session.strip_hue.get(), paint::unit_rgb(&hex));
     });
 }
 
@@ -898,11 +925,16 @@ fn sync_controls(session: &Session) {
         set_scale(&session.built.power.freq_min.scale, f64::from(minimum));
         set_scale(&session.built.power.freq_max.scale, f64::from(maximum));
         session.applied_freq.set(Some((window.minimum, window.maximum)));
-        session.built.power.freq_sliders.set_visible(true);
-        let note = if window.mixed { "CPU policies disagree. The sliders use their common hardware range." } else { "" };
-        session.built.power.freq_note.set_text(note);
+        session.built.power.freq_sliders.set_sensitive(true);
+        session.built.power.freq_note.set_text(&frequency_note(&window));
     } else {
-        session.built.power.freq_sliders.set_visible(false);
+        session.built.power.freq_sliders.set_sensitive(false);
+        for slider in [&session.built.power.freq_min, &session.built.power.freq_max] {
+            configure_scale(&slider.scale, 0.0, 1.0, 1.0);
+            slider.scale.set_value(0.0);
+            slider.value.set_range(0.0, 0.001);
+            slider.value.set_value(0.0);
+        }
         let note = if model.host.frequency_error.is_empty() {
             "CPU frequency control is unavailable on this system"
         } else {
@@ -937,10 +969,22 @@ fn show_page(session: &Session, page: usize) {
     if page == 3 && !session.model.borrow().host.keyboard {
         return;
     }
-    session.page.store(page, Ordering::Relaxed);
+    let previous = session.page.swap(page, Ordering::Relaxed);
+    if previous != page {
+        if let Some(from) = session.nav_position.get() { session.nav_slide.set(Some((from, Instant::now()))); }
+        if !session.nav_ticking.replace(true) {
+            let weak = session.self_weak.borrow().clone();
+            session.built.sidebar.add_tick_callback(move |area, _| {
+                let Some(session) = weak.upgrade() else { return ControlFlow::Break };
+                area.queue_draw();
+                if session.nav_slide.get().is_none() { session.nav_ticking.set(false); ControlFlow::Break } else { ControlFlow::Continue }
+            });
+        }
+    }
     session.model.borrow_mut().page = page;
+    if page == 4 && previous != page { session.built.sidebar.grab_focus(); }
     session.built.stack.set_visible_child_name(PAGE_NAMES[page]);
-    session.built.root.set_size_request(page_width(page), -1);
+    session.built.root.set_size_request(page_width(page), 680);
     session.window.set_default_size(page_width(page), 680);
     session.built.sidebar.queue_draw();
     notify_sensors(session);
@@ -992,7 +1036,7 @@ fn apply_fan_mode(session: &Session, mode: FanMode) {
 }
 
 fn apply_power(session: &Session) {
-    if !session.built.power.apply.is_sensitive() { return; }
+    if !session.built.power.enabled.is_sensitive() { return; }
     let policy = power_form(session);
     if policy == *session.applied_power.borrow() {
         return;
@@ -1000,6 +1044,7 @@ fn apply_power(session: &Session) {
     let request = format!("power-config\t{}", power_to_value(&policy));
     session.built.power.apply.set_sensitive(false);
     session.built.power.enabled.set_sensitive(false);
+    if session.model.borrow().host.intel { session.built.power.status.set_text("Applying Intel power limits…"); }
     submit_control(session, request, ControlRequest::Power(policy));
 }
 
@@ -1016,6 +1061,9 @@ fn apply_frequency(session: &Session) {
         return;
     }
     session.built.power.freq_apply.set_sensitive(false);
+    session.built.power.freq_min.row.set_sensitive(false);
+    session.built.power.freq_max.row.set_sensitive(false);
+    session.built.power.freq_note.set_text("Applying CPU frequency limits…");
     submit_control(session, format!("cpu-frequency-config\t{minimum}\t{maximum}"), ControlRequest::Frequency(minimum, maximum));
 }
 
@@ -1028,6 +1076,8 @@ fn apply_undervolt(session: &Session) {
         return;
     }
     session.built.power.uv_apply.set_sensitive(false);
+    session.built.power.uv_core.row.set_sensitive(false);
+    session.built.power.uv_cache.row.set_sensitive(false);
     session.built.power.uv_status.set_text("Applying Intel undervolt…");
     submit_control(session, format!("intel-undervolt\t{core}\t{cache}"), ControlRequest::Undervolt(core, cache));
 }
@@ -1072,8 +1122,12 @@ fn control_result(session: &Session, kind: ControlRequest, result: Result<String
             refresh_view(session);
         }
         ControlRequest::Power(policy) => {
-            session.built.power.apply.set_sensitive(true);
             session.built.power.enabled.set_sensitive(true);
+            if session.model.borrow().host.intel {
+                session.built.power.status.set_text(&if success { "Intel PL1/PL2 limits applied.".into() } else {
+                    format!("Could not apply Intel power limits: {}", result.as_ref().err().cloned().unwrap_or_default())
+                });
+            }
             if success {
                 *session.applied_power.borrow_mut() = policy.clone();
                 session.model.borrow_mut().state.power = policy;
@@ -1085,14 +1139,19 @@ fn control_result(session: &Session, kind: ControlRequest, result: Result<String
             refresh_view(session);
         }
         ControlRequest::Frequency(minimum, maximum) => {
-            session.built.power.freq_apply.set_sensitive(true);
+            session.built.power.freq_min.row.set_sensitive(true);
+            session.built.power.freq_max.row.set_sensitive(true);
             if success { session.model.borrow_mut().state.cpu_frequency = Some((minimum, maximum)); session.applied_freq.set(Some((minimum, maximum))); }
+            else { session.built.power.freq_note.set_text(&format!("Could not apply CPU frequency: {}", result.as_ref().err().cloned().unwrap_or_default())); }
+            refresh_power_actions(session);
             session.last_frequency.borrow_mut().take();
             refresh_frequency(session);
         }
         ControlRequest::Undervolt(core, cache) => {
             session.built.power.uv_apply.set_sensitive(true);
-            if !success { session.built.power.uv_status.set_text(result.as_ref().err().map(String::as_str).unwrap_or("Undervolt failed")); show_status(session); return; }
+            session.built.power.uv_core.row.set_sensitive(true);
+            session.built.power.uv_cache.row.set_sensitive(true);
+            if !success { session.built.power.uv_status.set_text(&format!("Could not apply Intel undervolt: {}", result.as_ref().err().map_or("Undervolt failed", String::as_str))); show_status(session); return; }
         session.applied_uv.set(Some((core, cache)));
         let path = {
             let mut model = session.model.borrow_mut();
@@ -1107,7 +1166,7 @@ fn control_result(session: &Session, kind: ControlRequest, result: Result<String
                 return;
             }
         }
-        session.built.power.uv_status.set_text("Undervolt applied.");
+        session.built.power.uv_status.set_text(&format!("Undervolt applied: core {core} mV · cache {cache} mV"));
         }
     }
     show_status(session);
@@ -1125,22 +1184,37 @@ fn power_form(session: &Session) -> PowerPolicy {
     }
 }
 
+fn refresh_power_actions(session: &Session) {
+    let power = &session.built.power;
+    let enabled = power.enabled.is_active();
+    power.limits.set_visible(enabled);
+    power.note.set_visible(!enabled);
+    power.apply.set_sensitive(enabled && power.enabled.is_sensitive() && power_form(session) != *session.applied_power.borrow());
+    let frequency = (paint::round_i32(power.freq_min.scale.value()), paint::round_i32(power.freq_max.scale.value()));
+    power.freq_apply.set_sensitive(power.freq_sliders.is_sensitive() && power.freq_min.row.is_sensitive()
+        && (session.applied_freq.get() != Some(frequency) || session.model.borrow().state.cpu_frequency != Some(frequency)));
+    for button in [&power.apply, &power.freq_apply, &power.uv_apply] {
+        button.set_cursor_from_name(Some(if button.is_sensitive() { "pointer" } else { "default" }));
+    }
+}
+
+fn frequency_note(window: &crate::FrequencyWindow) -> String {
+    format!("Applies to all {} CPU policies. {}Hardware range: {:.3}–{:.3} MHz.", window.policies,
+        if window.mixed { "Current limits differ between policies. " } else { "" }, f64::from(window.lower) / 1000.0, f64::from(window.upper) / 1000.0)
+}
+
 fn confirm_mux(session: &Rc<Session>, index: i32, label: String) {
     if session.model.borrow().host.mux_index == index {
         return;
     }
-    let dialog = libadwaita::AlertDialog::new(
-        Some(&format!("Switch to {label}?")),
-        Some("You must restart for this change to take effect."),
-    );
-    dialog.add_response("cancel", "Cancel");
-    dialog.add_response("apply", "Apply");
-    dialog.set_response_appearance("apply", libadwaita::ResponseAppearance::Suggested);
-    dialog.set_default_response(Some("cancel"));
-    dialog.set_close_response("cancel");
+    let dialog = widgets::message_dialog(&session.window, "MUX Switch",
+        &format!("Switch to {label}?\n\nYou must restart for this change to take effect."),
+        &[("Cancel", gtk4::ResponseType::Cancel), ("Apply", gtk4::ResponseType::Accept)]);
+    dialog.set_default_response(gtk4::ResponseType::Cancel);
     let weak = Rc::downgrade(session);
-    dialog.connect_response(None, move |_, response| {
-        if response != "apply" {
+    dialog.connect_response(move |dialog, response| {
+        dialog.close();
+        if response != gtk4::ResponseType::Accept {
             return;
         }
         let Some(session) = weak.upgrade() else { return };
@@ -1149,7 +1223,7 @@ fn confirm_mux(session: &Rc<Session>, index: i32, label: String) {
             refresh_view(&session);
         }
     });
-    dialog.present(Some(&session.window));
+    dialog.present();
 }
 
 fn schedule_fan_if_custom(session: &Session) {
@@ -1288,6 +1362,7 @@ fn show_shortcut(session: &Session, override_text: Option<&str>) {
     }
     let model = session.model.borrow();
     session.built.settings.shortcut.set_text(&keybind_label(&model.host.shortcut_mods, model.host.shortcut_key));
+    session.built.settings.shortcut_clear.set_sensitive(model.host.shortcut_key != 0);
 }
 
 fn quit(session: &Session) {
@@ -1396,9 +1471,14 @@ fn apply_snapshot(session: &Session, snapshot: SensorSnapshot, requested: &[Stri
     let signature = extra_signature(&snapshot.extra_sensors);
     if session.page.load(Ordering::Relaxed) == 4 && signature != *session.extra_sig.borrow() {
         *session.extra_sig.borrow_mut() = signature;
+        let scroll = session.built.sensors.list.ancestor(gtk4::ScrolledWindow::static_type()).and_downcast::<gtk4::ScrolledWindow>();
+        let saved_scroll = scroll.as_ref().map(|scroll| (scroll.vadjustment(), scroll.vadjustment().value()));
+        let selected_key = session.built.sensors.list.selected_row().map(|row| row.widget_name().to_string());
         pages::clear_list(&session.built.sensors.list);
         let rows = pages::fill_sensors(&session.built.sensors.list, &snapshot.extra_sensors, &session.built.sensors.collapsed);
+        if let Some(row) = rows.iter().find(|row| Some(&row.key) == selected_key.as_ref()) { session.built.sensors.list.select_row(Some(&row.row)); }
         *session.sensor_rows.borrow_mut() = rows;
+        if let Some((adjustment, value)) = saved_scroll { let _idle = glib::idle_add_local_once(move || adjustment.set_value(value)); }
     }
     {
         let mut stats = session.stats.borrow_mut();
@@ -1471,6 +1551,7 @@ fn tick_animation(session: &Session) {
 }
 
 fn refresh_view(session: &Session) {
+    refresh_power_actions(session);
     let model = session.model.borrow();
     let profile = model.profile;
     let mode = FanMode::from_config(&model.state.fan);
@@ -1509,8 +1590,7 @@ fn refresh_view(session: &Session) {
     session.built.home.curve_row.set_visible(mode == FanMode::Custom);
     session.built.fans.editor.set_visible(mode == FanMode::Custom);
     session.built.fans.info.set_visible(mode != FanMode::Custom);
-    session.built.fans.cpu_link.set_css_classes(if session.curve_cpu.get() { &["linkish", "selection-link", "on"] } else { &["linkish", "selection-link"] });
-    session.built.fans.gpu_link.set_css_classes(if session.curve_cpu.get() { &["linkish", "selection-link"] } else { &["linkish", "selection-link", "on"] });
+    widgets::mark(&[session.built.fans.cpu_link.clone(), session.built.fans.gpu_link.clone()], Some(usize::from(!session.curve_cpu.get())));
     widgets::mark(&session.built.home.mux_buttons, mux_index);
     let effect_index = if enabled {
         session.built.keyboard.effect_ids.iter().position(|id| id == &effect)
@@ -1532,7 +1612,8 @@ fn refresh_view(session: &Session) {
     session.built.keyboard.speed_row.set_visible(animated);
     if session.accent_profile.get() != Some(profile) {
         let color = accent_hex(profile);
-        session.accent.load_from_string(&format!("window.victus button.seg-btn.on {{ background: {color}; }} window.victus .linkish.on, window.victus label.accent {{ color: {color}; }} window.victus button.linkish.on:not(.selection-link):hover:not(:disabled) {{ color: mix({color}, #ffffff, 0.22); }} window.victus button.selection-link.on {{ color: #f4f4f4; border-bottom-color: {color}; }} window.victus button.accent-btn:not(:disabled) {{ background: {color}; }} window.victus button.accent-btn:hover:not(:disabled) {{ background: mix({color}, #ffffff, 0.22); }} window.victus scale highlight, window.victus scale slider, window.victus switch:checked {{ background: {color}; }}"));
+        widgets::set_accent_color(accent_rgb(profile));
+        session.accent.load_from_string(&format!("window.victus button.seg-btn.on:not(.animated-seg) {{ background: {color}; }} window.victus .linkish.on, window.victus label.accent {{ color: {color}; }} window.victus button.linkish.on:not(.selection-link):hover:not(:disabled) {{ color: mix({color}, #ffffff, 0.22); }} window.victus button.selection-link.on {{ color: #f4f4f4; }} window.victus button.selection-link.on:not(.animated-link) {{ border-bottom-color: {color}; }} window.victus button.accent-btn:not(:disabled) {{ background: {color}; }} window.victus button.accent-btn:hover:not(:disabled) {{ background: mix({color}, #ffffff, 0.22); }} window.victus scale highlight, window.victus scale slider, window.victus switch:checked {{ background: {color}; }}"));
         session.accent_profile.set(Some(profile));
     }
     session.built.home.mini.queue_draw();
@@ -1591,7 +1672,7 @@ fn show_status(session: &Session) {
         let mut log = session.log.borrow_mut();
         if log.back() != Some(&status) { log.push_back(status.clone()); while log.len() > 80 { log.pop_front(); } }
     }
-    session.built.status.set_visible(!status.is_empty());
+    session.built.status.set_visible(!status.is_empty() && status != "Offline preview");
     session.built.status.set_text(&status);
 }
 
@@ -1707,8 +1788,9 @@ fn light_subtitle(model: &Model) -> String {
         return "Off".into();
     }
     let name = title_effect(&model.state.lighting.effect);
-    if model.zones > 1 {
-        format!("{name} · {} zones", model.zones)
+    let zones = model.state.lighting.zone_colors.len();
+    if zones > 1 {
+        format!("{name} · {zones} zones")
     } else {
         name
     }
@@ -1767,7 +1849,7 @@ fn apply_remote_state(session: &Session, value: &serde_json::Value) {
     session.built.fans.response.set_selected(u32::from(model.state.fan.curve_response == CURVE_RESPONSE_AGGRESSIVE));
     session.built.fans.min_change.set_value(model.state.fan.min_fan_change_pct);
     let frequency_changed = model.state.cpu_frequency != old_frequency || model.profile != profile;
-    if model.profile != profile { session.selected_point.set(None); session.drag.set(None); session.fan_hover.set(None); }
+    if model.profile != profile { session.selected_point.set(None); session.curve_selections.set([None, None]); session.drag.set(None); session.fan_hover.set(None); }
     drop(model);
     session.suppress.set(false);
     if session.light_at.get().is_none() { sync_color_entries(session); }
@@ -1777,10 +1859,11 @@ fn apply_remote_state(session: &Session, value: &serde_json::Value) {
 
 fn apply_frequency_view(session: &Session, result: Result<crate::FrequencyWindow, String>) {
     let Ok(window) = result else {
-        session.built.power.freq_sliders.set_visible(false);
+        session.built.power.freq_sliders.set_sensitive(false);
         session.built.power.freq_note.set_text(&result.err().unwrap_or_default());
         session.model.borrow_mut().host.frequency = None;
         session.last_frequency.borrow_mut().take();
+        refresh_power_actions(session);
         return;
     };
     if session.last_frequency.borrow().as_ref() == Some(&window) { return; }
@@ -1796,11 +1879,11 @@ fn apply_frequency_view(session: &Session, result: Result<crate::FrequencyWindow
     }
     session.suppress.set(false);
     session.applied_freq.set(Some((window.minimum, window.maximum)));
-    session.built.power.freq_note.set_text(&format!("Applies to all {} CPU policies. {}Hardware range: {:.3}–{:.3} MHz.", window.policies,
-        if window.mixed { "Current limits differ between policies. " } else { "" }, f64::from(window.lower) / 1000.0, f64::from(window.upper) / 1000.0));
-    session.built.power.freq_sliders.set_visible(true);
+    session.built.power.freq_note.set_text(&frequency_note(&window));
+    session.built.power.freq_sliders.set_sensitive(true);
     *session.last_frequency.borrow_mut() = Some(window.clone());
     session.model.borrow_mut().host.frequency = Some(window);
+    refresh_power_actions(session);
 }
 
 fn extra_signature(extras: &[ExtraSensor]) -> String {
@@ -1865,7 +1948,9 @@ mod regression_tests {
     #[ignore = "requires a GTK display; run under Xvfb"]
     fn gtk_controls_preserve_pending_edits_and_wire_lighting_and_navigation() {
         gtk4::init().unwrap();
+        gtk4::Settings::default().unwrap().set_gtk_application_prefer_dark_theme(false);
         libadwaita::init().unwrap();
+        configure_font_rendering();
         let app = libadwaita::Application::new(None, ApplicationFlags::NON_UNIQUE);
         app.register(None::<&gtk4::gio::Cancellable>).unwrap();
         let model = Rc::new(RefCell::new(Model::offline(4)));
@@ -1876,6 +1961,7 @@ mod regression_tests {
             &Arc::new(Mutex::new(Vec::new())), &Arc::new(wake), &Rc::new(RefCell::new(None)),
             &Arc::new((Mutex::new(0), Condvar::new())),
         );
+        verify_page_parity(&session);
 
         session.built.home.curve.emit_clicked();
         assert_eq!(model.borrow().page, 2);
@@ -1885,6 +1971,7 @@ mod regression_tests {
         assert_eq!(session.selected_point.get(), None);
         session.built.fans.cpu_link.emit_clicked();
         assert!(session.curve_cpu.get());
+        assert_eq!(session.selected_point.get(), Some(1), "CPU point selection was lost when switching curves");
 
         session.built.home.light_row.emit_clicked();
         assert_eq!(model.borrow().page, 3);
@@ -1892,12 +1979,16 @@ mod regression_tests {
         session.built.keyboard.effect_buttons[static_index].emit_clicked();
         session.built.keyboard.brightness.set_value(128.0);
         session.built.keyboard.hex.set_text("123456");
+        assert_ne!(model.borrow().state.lighting.color, "#123456", "hex edits should commit only when editing finishes");
+        session.built.keyboard.hex.emit_activate();
         session.built.keyboard.hex2.set_text("ABCDEF");
+        session.built.keyboard.hex2.emit_activate();
         assert_eq!(model.borrow().state.lighting.brightness, 128);
         assert_eq!(model.borrow().state.lighting.zone_colors, vec!["#123456"; 4]);
         assert_eq!(model.borrow().state.lighting.color2, "#ABCDEF");
         session.built.keyboard.zone_buttons[0].emit_clicked();
         session.built.keyboard.hex.set_text("654321");
+        session.built.keyboard.hex.emit_activate();
         assert_eq!(model.borrow().state.lighting.zone_colors, ["#654321", "#123456", "#123456", "#123456"]);
 
         let mut remote = model.borrow().state.clone();
@@ -1972,6 +2063,161 @@ mod regression_tests {
         assert!(session.charts.has_visible(), "graph opens from the sensor menu");
         session.sensor_menu.borrow_mut().take().unwrap().unparent();
         quit(&session);
+        verify_hardware_variants(&app);
+    }
+
+    fn settle_ui() {
+        let end = Instant::now() + Duration::from_millis(350);
+        while Instant::now() < end {
+            while glib::MainContext::default().iteration(false) {}
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    fn snapshot_ui(session: &Session, name: &str) {
+        settle_ui();
+        let Some(folder) = std::env::var_os("VICTUS_HUB_UI_SNAPSHOTS").map(PathBuf::from) else { return };
+        std::fs::create_dir_all(&folder).unwrap();
+        let paintable = gtk4::WidgetPaintable::new(Some(&session.built.root));
+        let mut node = None;
+        for _ in 0..10 {
+            let snapshot = gtk4::Snapshot::new();
+            paintable.snapshot(&snapshot, f64::from(session.built.root.width()), f64::from(session.built.root.height()));
+            node = snapshot.to_node();
+            if node.is_some() { break; }
+            std::thread::sleep(Duration::from_millis(20));
+            while glib::MainContext::default().iteration(false) {}
+        }
+        let node = node.unwrap_or_else(|| panic!("rendered UI for {name}: {}×{}", session.built.root.width(), session.built.root.height()));
+        let texture = session.window.renderer().unwrap().render_texture(&node, None);
+        texture.save_to_png(folder.join(format!("{name}-gtk.png"))).unwrap();
+    }
+
+    fn verify_page_parity(session: &Session) {
+        let original = session.model.borrow().clone();
+        session.model.borrow_mut().state.lighting.enabled = true;
+        sync_controls(session);
+        assert!(!session.built.power.limits.is_visible());
+        assert!(!session.built.power.apply.is_sensitive());
+        assert!(session.built.power.freq_sliders.is_visible(), "unavailable frequency controls stay visible but disabled");
+        assert!(!session.built.power.freq_sliders.is_sensitive());
+        assert!(!session.built.settings.shortcut_clear.is_sensitive());
+        for (index, name) in PAGE_NAMES.iter().enumerate() {
+            show_page(session, index);
+            snapshot_ui(session, name);
+            assert_eq!(session.window.width(), page_width(index), "{name} page forces a wider window than Qt");
+        }
+        let group = session.built.sensors.list.row_at_index(0).unwrap();
+        let first_sensor = session.built.sensors.list.row_at_index(1).unwrap();
+        let branch = group.child().unwrap().first_child().and_downcast::<gtk4::Button>().unwrap();
+        session.built.sensors.list.select_row(Some(&group));
+        assert!(first_sensor.is_visible(), "selecting a group must not collapse it");
+        branch.emit_clicked();
+        assert!(!first_sensor.is_visible());
+        branch.emit_clicked();
+        assert!(first_sensor.is_visible());
+        session.built.sensors.list.unselect_all();
+        session.model.borrow_mut().state.power.enabled = true;
+        sync_controls(session);
+        show_page(session, 1);
+        assert!(session.built.power.limits.is_visible());
+        session.built.power.stapm.scale.set_value(35.0);
+        assert!(session.built.power.apply.is_sensitive(), "power changes enable Apply");
+        assert!(session.built.power.stapm.value.text().ends_with(" W"));
+        session.built.power.stapm.value.set_text("42 W");
+        session.built.power.stapm.value.update();
+        assert_eq!(paint::round_i32(session.built.power.stapm.scale.value()), 42, "numeric suffix prevents editing");
+        snapshot_ui(session, "power-enabled");
+        session.model.borrow_mut().select_fan_mode(FanMode::Custom);
+        refresh_view(session);
+        show_page(session, 2);
+        snapshot_ui(session, "fans-custom");
+        show_page(session, 3);
+        for effect in ["off", "wave", "cycle"] {
+            let index = session.built.keyboard.effect_ids.iter().position(|id| id == effect).unwrap();
+            session.built.keyboard.effect_buttons[index].emit_clicked();
+            let expects_color = effect == "wave";
+            assert_eq!(session.built.keyboard.color_box.is_visible(), expects_color);
+            assert_eq!(session.built.keyboard.color2_box.is_visible(), expects_color);
+            assert_eq!(session.built.keyboard.zone_row.is_visible(), expects_color);
+            assert_eq!(session.built.keyboard.speed_row.is_visible(), effect != "off");
+            snapshot_ui(session, &format!("keyboard-{effect}"));
+        }
+        let old_color = session.model.borrow().state.lighting.color.clone();
+        session.built.keyboard.hex.set_text("GGGGGG");
+        session.built.keyboard.hex.emit_activate();
+        assert_eq!(session.model.borrow().state.lighting.color, old_color, "invalid hex editing changes the lighting policy");
+        let hue = session.strip_hue.get();
+        session.built.keyboard.hex.set_text("808080");
+        session.built.keyboard.hex.emit_activate();
+        assert_eq!(session.strip_hue.get().to_bits(), hue.to_bits(), "an achromatic color loses the shade strip's hue");
+        session.light_at.set(None);
+        session.fan_at.set(None);
+        *session.model.borrow_mut() = original;
+        sync_controls(session);
+        show_page(session, 0);
+    }
+
+    fn verify_hardware_variants(app: &libadwaita::Application) {
+        for (intel, zones, name) in [(true, 1, "intel-single"), (false, 4, "amd-mux")] {
+            let mut model = Model::offline(zones);
+            model.host.intel = intel;
+            model.host.frequency = Some(crate::FrequencyWindow { lower: 400_000, upper: 5_000_000, minimum: 800_000, maximum: 4_200_000, policies: 8, mixed: true });
+            model.host.product = "HP Victus (test board)".into();
+            model.host.gpu_name = "NVIDIA GeForce RTX 4060".into();
+            model.host.mux = vec![crate::MuxChoice { label: "Hybrid".into(), index: 0 }, crate::MuxChoice { label: "Discrete".into(), index: 1 }];
+            model.host.mux_index = 0;
+            model.state.lighting.enabled = true;
+            model.state.power.enabled = true;
+            let model = Rc::new(RefCell::new(model));
+            let (_, wake) = UnixStream::pair().unwrap();
+            let session = build_ui(app, &model, &Arc::new(AtomicUsize::new(0)), &Arc::new(AtomicBool::new(true)),
+                &Arc::new(AtomicBool::new(false)), &Rc::new(RefCell::new(None)), &Arc::new(Mutex::new(Vec::new())),
+                &Arc::new(wake), &Rc::new(RefCell::new(None)), &Arc::new((Mutex::new(0), Condvar::new())));
+            assert_eq!(session.built.power.stapm.row.is_visible(), !intel);
+            assert_eq!(session.built.power.tctl.row.is_visible(), !intel);
+            assert_eq!(session.built.power.uv_wrap.is_visible(), intel);
+            assert_eq!(session.built.keyboard.zone_row.is_visible(), zones > 1);
+            assert_eq!(session.built.home.gpu_name.text(), "RTX 4060");
+            assert_eq!(session.built.home.footer_left.text(), "HP Victus");
+            assert!(session.built.power.freq_note.text().contains("all 8 CPU policies"));
+            assert!(session.built.power.freq_note.text().contains("Current limits differ"));
+            for index in [0, 1, 3, 5] {
+                show_page(&session, index);
+                snapshot_ui(&session, &format!("{name}-{}", PAGE_NAMES[index]));
+                assert_eq!(session.window.width(), page_width(index));
+            }
+            session.built.keyboard.idle_enabled.set_active(true);
+            assert!(session.built.keyboard.idle.is_sensitive());
+            session.built.keyboard.idle.set_value(45.0);
+            assert_eq!(model.borrow().state.lighting.idle_timeout, 45);
+            session.built.keyboard.idle_enabled.set_active(false);
+            assert_eq!(model.borrow().state.lighting.idle_timeout, 0);
+            session.built.power.slow.scale.set_value(45.0);
+            if intel { assert_eq!(paint::round_i32(session.built.power.fast.scale.value()), 45); }
+            assert!(session.built.power.apply.is_sensitive());
+            control_result(&session, ControlRequest::Power(power_form(&session)), Ok(String::new()));
+            assert!(!session.built.power.apply.is_sensitive(), "Apply stays disabled after a successful save");
+            maintenance::show_release(&session, Release::Current);
+            assert!(session.built.settings.update_status.is_visible());
+            assert!(session.built.settings.update_status.has_css_class("ok"));
+            maintenance::show_release(&session, Release::Failed);
+            assert!(!session.built.settings.update_status.has_css_class("ok"));
+            let response = Rc::new(Cell::new(None));
+            let received = Rc::clone(&response);
+            let dialog = widgets::message_dialog(&session.window, "Parity dialog", "Match Qt's compact modal layout.",
+                &[("Cancel", gtk4::ResponseType::Cancel), ("Apply", gtk4::ResponseType::Accept)]);
+            dialog.set_default_response(gtk4::ResponseType::Cancel);
+            dialog.connect_response(move |window, id| { received.set(Some(id)); window.close(); });
+            dialog.present();
+            settle_ui();
+            let window = gtk4::Window::list_toplevels().into_iter().filter_map(|widget| widget.downcast::<gtk4::Window>().ok())
+                .find(|window| window.title().as_deref() == Some("Parity dialog")).unwrap();
+            window.default_widget().and_downcast::<gtk4::Button>().unwrap().emit_clicked();
+            assert_eq!(response.get(), Some(gtk4::ResponseType::Cancel));
+            session.sensor_menu.borrow_mut().take().unwrap().unparent();
+            quit(&session);
+        }
     }
 
     #[test]

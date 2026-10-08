@@ -38,15 +38,20 @@ pub fn nav_page(keyboard: bool, height: f64, x: f64, y: f64) -> Option<usize> {
 }
 
 pub fn sidebar(cr: &Context, width: f64, height: f64, keyboard: bool, selected: usize, hover: Option<usize>) {
+    sidebar_with_pill(cr, width, height, keyboard, selected, hover, None);
+}
+
+pub fn sidebar_with_pill(cr: &Context, width: f64, height: f64, keyboard: bool, selected: usize, hover: Option<usize>, pill_y: Option<f64>) {
     let _ = cr.set_source_rgb(15.0 / 255.0, 15.0 / 255.0, 15.0 / 255.0);
     let _ = cr.rectangle(0.0, 0.0, width, height);
     let _ = cr.fill();
-    for button in nav_buttons(keyboard, height) {
-        if button.page == selected {
-            let _ = cr.set_source_rgb(32.0 / 255.0, 32.0 / 255.0, 32.0 / 255.0);
-            rounded(cr, button.x, button.y, BUTTON, BUTTON, 12.0);
-            let _ = cr.fill();
-        }
+    let buttons = nav_buttons(keyboard, height);
+    if let Some(button) = buttons.iter().find(|button| button.page == selected) {
+        let _ = cr.set_source_rgb(32.0 / 255.0, 32.0 / 255.0, 32.0 / 255.0);
+        rounded(cr, button.x, pill_y.unwrap_or(button.y), BUTTON, BUTTON, 12.0);
+        let _ = cr.fill();
+    }
+    for button in buttons {
         let color = if button.page == selected {
             "#EDEDED"
         } else if hover == Some(button.page) {
@@ -236,10 +241,7 @@ pub fn insert_point(points: &mut Vec<FanPoint>, temp: i32, _speed: i32) -> Optio
 
 pub fn chart(cr: &Context, width: f64, height: f64, temp_max: i32, points: &[FanPoint], accent: (f64, f64, f64), selected: Option<usize>, hover: Option<usize>, current: Option<f64>) {
     let plot = Plot::new(width, height, temp_max);
-    let _ = cr.set_source_rgb(15.0 / 255.0, 15.0 / 255.0, 15.0 / 255.0);
-    rounded(cr, plot.left, plot.top, plot.width, plot.height, 8.0);
-    let _ = cr.fill();
-    let _ = cr.select_font_face("IBM Plex Sans", cairo::FontSlant::Normal, cairo::FontWeight::Normal);
+    let _ = cr.select_font_face("IBM Plex Mono", cairo::FontSlant::Normal, cairo::FontWeight::Normal);
     let _ = cr.set_font_size(11.0);
     source_hex(cr, "#848484");
     for speed in [0, 25, 50, 75, 100] {
@@ -251,7 +253,8 @@ pub fn chart(cr: &Context, width: f64, height: f64, temp_max: i32, points: &[Fan
         let _ = cr.stroke();
         let label = format!("{speed}");
         source_hex(cr, "#848484");
-        let _ = cr.move_to(4.0, y + 4.0);
+        let label_width = cr.text_extents(&label).map_or(0.0, |text| text.x_advance());
+        let _ = cr.move_to(plot.left - 6.0 - label_width, y + 4.0);
         let _ = cr.show_text(&label);
     }
     for temp in (TEMP_MIN_C..=temp_max).step_by(10) {
@@ -261,8 +264,10 @@ pub fn chart(cr: &Context, width: f64, height: f64, temp_max: i32, points: &[Fan
         cr.line_to(x, plot.top + plot.height);
         let _ = cr.stroke();
         source_hex(cr, "#848484");
-        cr.move_to(x - 10.0, plot.top + plot.height + 18.0);
-        let _ = cr.show_text(&format!("{temp}°"));
+        let label = format!("{temp}°");
+        let label_width = cr.text_extents(&label).map_or(0.0, |text| text.x_advance());
+        cr.move_to(x - label_width / 2.0, plot.top + plot.height + 16.0);
+        let _ = cr.show_text(&label);
     }
     if points.len() >= 2 {
         let first = plot.xy(points[0].temp, points[0].speed);
@@ -281,6 +286,8 @@ pub fn chart(cr: &Context, width: f64, height: f64, temp_max: i32, points: &[Fan
         }
         let _ = cr.set_source_rgb(accent.0, accent.1, accent.2);
         let _ = cr.set_line_width(2.0);
+        let _ = cr.set_line_cap(cairo::LineCap::Round);
+        let _ = cr.set_line_join(cairo::LineJoin::Round);
         let _ = cr.stroke();
     }
     if let Some(temp) = current {
@@ -293,22 +300,22 @@ pub fn chart(cr: &Context, width: f64, height: f64, temp_max: i32, points: &[Fan
     for (index, point) in points.iter().enumerate() {
         let (x, y) = plot.xy(point.temp, point.speed);
         source_hex(cr, "#161616");
-        let _ = cr.arc(x, y, if selected == Some(index) { 6.0 } else { 4.0 }, 0.0, std::f64::consts::TAU);
+        let _ = cr.arc(x, y, 5.0, 0.0, std::f64::consts::TAU);
         let _ = cr.fill_preserve();
         cr.set_source_rgb(accent.0, accent.1, accent.2);
         cr.set_line_width(2.0);
         let _ = cr.stroke();
         if selected == Some(index) {
-            source_hex(cr, "#161616");
-            let _ = cr.arc(x, y, 2.5, 0.0, std::f64::consts::TAU);
+            source_hex(cr, "#ffffff");
+            let _ = cr.arc(x, y, 3.0, 0.0, std::f64::consts::TAU);
             let _ = cr.fill();
         }
     }
     if let Some(point) = hover.and_then(|index| points.get(index)) {
         let (x, y) = plot.xy(point.temp, point.speed);
         let label = format!("{}°C @ {}%", point.temp, point.speed);
-        let tip_width = cr.text_extents(&label).map(|text| text.width()).unwrap_or(100.0) + 12.0;
-        let left = (x + 14.0).min(plot.left + plot.width - tip_width).max(plot.left);
+        let tip_width = label.chars().count() as f64 * 7.0 + 12.0;
+        let left = (x + 14.0).min(plot.left + plot.width - tip_width);
         let top = (y - 28.0).max(plot.top);
         source_hex(cr, "#181818");
         rounded(cr, left, top, tip_width, 22.0, 4.0);
@@ -317,6 +324,8 @@ pub fn chart(cr: &Context, width: f64, height: f64, temp_max: i32, points: &[Fan
         cr.set_line_width(1.0);
         let _ = cr.stroke();
         source_hex(cr, "#ededed");
+        cr.select_font_face("monospace", cairo::FontSlant::Normal, cairo::FontWeight::Normal);
+        cr.set_font_size(12.0);
         cr.move_to(left + 6.0, top + 15.0);
         let _ = cr.show_text(&label);
     }
@@ -456,12 +465,14 @@ fn key_boxes(width: f64, height: f64, compact: bool) -> Vec<KeyBox> {
 
 pub fn keyboard(cr: &Context, width: f64, height: f64, compact: bool, zones: i32, enabled: bool, colors: &[RgbColor]) {
     let radius = if compact { 3.0 } else { 6.0 };
-    let _ = cr.select_font_face("IBM Plex Sans", cairo::FontSlant::Normal, cairo::FontWeight::Normal);
+    let layout = pangocairo::functions::create_layout(cr);
+    let mut font = gtk4::pango::FontDescription::new();
+    font.set_family("IBM Plex Sans");
     for key in key_boxes(width, height, compact) {
         let color = key_color(key.label, key.center_units, zones, enabled, colors);
         let bright = i32::from(color.red) * 299 + i32::from(color.green) * 587 + i32::from(color.blue) * 114;
-        if enabled && bright / 1000 > 30 && !compact {
-            let _ = cr.set_source_rgba(f64::from(color.red) / 255.0, f64::from(color.green) / 255.0, f64::from(color.blue) / 255.0, 0.14);
+        if enabled && color.red.max(color.green).max(color.blue) > 30 && !compact {
+            let _ = cr.set_source_rgba(f64::from(color.red) / 255.0, f64::from(color.green) / 255.0, f64::from(color.blue) / 255.0, 36.0 / 255.0);
             rounded(cr, key.x - 1.0, key.y - 1.0, key.w + 2.0, key.h + 2.0, radius + 1.0);
             let _ = cr.fill();
         }
@@ -469,8 +480,10 @@ pub fn keyboard(cr: &Context, width: f64, height: f64, compact: bool, zones: i32
         rounded(cr, key.x, key.y, key.w, key.h, radius);
         let _ = cr.fill();
         if !compact && !key.label.is_empty() {
-            let size = (key.h * if key.label.chars().count() <= 1 { 0.34 } else { 0.22 }).max(7.0);
-            let _ = cr.set_font_size(size);
+            let size = (key.h * if key.label.chars().count() <= 1 { 0.34 } else { 0.22 }).floor().max(7.0);
+            font.set_absolute_size(size * f64::from(gtk4::pango::SCALE));
+            layout.set_font_description(Some(&font));
+            layout.set_text(key.label);
             if !enabled {
                 source_hex(cr, "#5C5C5C");
             } else if bright / 1000 > 150 {
@@ -478,10 +491,9 @@ pub fn keyboard(cr: &Context, width: f64, height: f64, compact: bool, zones: i32
             } else {
                 source_hex(cr, "#EDEDED");
             }
-            if let Ok(extents) = cr.text_extents(key.label) {
-                let _ = cr.move_to(key.x + (key.w - extents.width()) / 2.0 - extents.x_bearing(), key.y + (key.h + extents.height()) / 2.0);
-                let _ = cr.show_text(key.label);
-            }
+            let (text_width, text_height) = layout.pixel_size();
+            cr.move_to(key.x + (key.w - f64::from(text_width)) / 2.0, key.y + (key.h - f64::from(text_height)) / 2.0);
+            pangocairo::functions::show_layout(cr, &layout);
         }
     }
 }
@@ -513,23 +525,27 @@ pub fn shade_strip(cr: &Context, width: f64, height: f64, hue: f64, current: (f6
 }
 
 fn paint_strip(cr: &Context, width: f64, height: f64, current: (f64, f64, f64), color: impl Fn(i32, i32) -> (f64, f64, f64)) {
+    let _ = cr.save();
+    cr.set_antialias(cairo::Antialias::None);
     let steps = 36;
     let mut nearest = (0, f64::INFINITY);
     for index in 0..steps {
         let (red, green, blue) = color(index, steps);
+        let (red, green, blue) = (f64::from(unit_channel(red)) / 255.0, f64::from(unit_channel(green)) / 255.0, f64::from(unit_channel(blue)) / 255.0);
         let distance = (red - current.0).powi(2) + (green - current.1).powi(2) + (blue - current.2).powi(2);
         if distance < nearest.1 { nearest = (index, distance); }
         let _ = cr.set_source_rgb(red, green, blue);
-        let x = width * f64::from(index) / f64::from(steps);
-        let _ = cr.rectangle(x, 0.0, width / f64::from(steps) + 1.0, height);
+        let x = (width * f64::from(index) / f64::from(steps)).floor();
+        let _ = cr.rectangle(x, 0.0, (width / f64::from(steps) + 1.0).floor(), height);
         let _ = cr.fill();
     }
     if nearest.1 <= 1200.0 / (255.0 * 255.0) {
         source_hex(cr, "#fcfaf9");
         cr.set_line_width(2.0);
-        cr.rectangle(f64::from(nearest.0) * width / f64::from(steps) + 1.0, 1.0, (width / f64::from(steps) - 2.0).max(1.0), height - 2.0);
+        cr.rectangle((f64::from(nearest.0) * width / f64::from(steps) + 1.0).floor(), 1.0, (width / f64::from(steps) - 2.0).floor().max(1.0), height - 2.0);
         let _ = cr.stroke();
     }
+    let _ = cr.restore();
 }
 
 pub fn hsl_to_rgb(hue: f64, saturation: f64, lightness: f64) -> (f64, f64, f64) {
@@ -560,8 +576,14 @@ mod regression_tests {
 
 pub fn chip(cr: &Context, width: f64, height: f64, hex: &str) {
     source_hex(cr, hex);
-    rounded(cr, 0.0, 0.0, width, height, 8.0);
+    rounded(cr, 0.0, 0.0, width, height, if width <= 34.0 { 4.0 } else { 0.0 });
     let _ = cr.fill();
+    if width <= 34.0 {
+        source_hex(cr, "#2c2c2c");
+        rounded(cr, 0.5, 0.5, width - 1.0, height - 1.0, 4.0);
+        cr.set_line_width(1.0);
+        let _ = cr.stroke();
+    }
 }
 
 struct Step {
@@ -726,7 +748,7 @@ fn source_hex(cr: &Context, hex: &str) {
     let _ = cr.set_source_rgb(red, green, blue);
 }
 
-fn rounded(cr: &Context, x: f64, y: f64, width: f64, height: f64, radius: f64) {
+pub(super) fn rounded(cr: &Context, x: f64, y: f64, width: f64, height: f64, radius: f64) {
     let radius = radius.min(width / 2.0).min(height / 2.0).max(0.0);
     let _ = cr.new_sub_path();
     let _ = cr.arc(x + width - radius, y + radius, radius, -std::f64::consts::FRAC_PI_2, 0.0);

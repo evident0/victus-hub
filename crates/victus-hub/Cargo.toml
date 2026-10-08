@@ -18,6 +18,7 @@ path = "src/main.rs"
 victus-core = { path = "../victus-core" }
 victus-hw = { path = "../victus-hw" }
 gtk4.workspace = true
+pangocairo = "0.21"
 libadwaita.workspace = true
 serde_json.workspace = true
 # KSNI backend. The default feature pulls GTK 3, which cannot share this process.

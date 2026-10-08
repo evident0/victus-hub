@@ -9,7 +9,7 @@ use super::{
     apply_fan_mode, apply_frequency, apply_power, apply_undervolt, begin_fan_drag,
     chart_size, confirm_mux, curve_points, delete_fan_point, end_fan_drag,
     fan_mode_from_key, on_click, paint, refresh_view, schedule_fan_if_custom,
-    select_profile, show_page, update_fan_drag, widgets, Session,
+    select_profile, show_page, update_fan_drag, widgets, refresh_power_actions, Session,
 };
 
 pub(super) fn wire(session: &Rc<Session>) {
@@ -44,6 +44,7 @@ fn wire_sidebar(session: &Rc<Session>) {
         let Some(session) = weak.upgrade() else { return };
         session.hover.set(None);
         session.built.sidebar.set_cursor_from_name(None);
+        session.built.sidebar.set_tooltip_text(None);
         session.built.sidebar.queue_draw();
     });
     session.built.sidebar.add_controller(motion);
@@ -56,6 +57,7 @@ fn sidebar_hover(weak: &Weak<Session>, x: f64, y: f64) {
     let hover = paint::nav_page(keyboard, height, x, y);
     if session.hover.replace(hover) != hover {
         session.built.sidebar.set_cursor_from_name(hover.map(|_| "pointer"));
+        session.built.sidebar.set_tooltip_text(hover.map(|page| crate::PAGES[page]));
         session.built.sidebar.queue_draw();
     }
 }
@@ -92,6 +94,10 @@ fn wire_power(session: &Rc<Session>) {
         (&session.built.power.tctl, "°C"), (&session.built.power.reapply, "s"), (&session.built.power.freq_min, "MHz"),
         (&session.built.power.freq_max, "MHz"), (&session.built.power.uv_core, "mV"), (&session.built.power.uv_cache, "mV")] {
         bind_power_label(slider, unit);
+        let weak = Rc::downgrade(session);
+        slider.scale.connect_value_changed(move |_| {
+            if let Some(session) = weak.upgrade().filter(|session| !session.suppress.get()) { refresh_power_actions(&session); }
+        });
     }
     couple_limits(session, &session.built.power.freq_min.scale, &session.built.power.freq_max.scale);
     if session.model.borrow().host.intel { couple_limits(session, &session.built.power.slow.scale, &session.built.power.fast.scale); }
@@ -110,6 +116,7 @@ fn wire_power(session: &Rc<Session>) {
 
 fn bind_power_label(slider: &widgets::Slider, unit: &'static str) {
     slider.unit.set_text(unit);
+    widgets::spin_suffix(&slider.value, unit);
     let value = slider.value.clone();
     let divisor = slider.divisor;
     slider.scale.connect_value_changed(move |scale| {
@@ -141,9 +148,14 @@ fn wire_fans(session: &Rc<Session>) {
     }
     for (button, cpu) in [(&session.built.fans.cpu_link, true), (&session.built.fans.gpu_link, false)] {
         on_click(session, button, move |session| {
+            if session.curve_cpu.get() == cpu { return; }
+            let mut selections = session.curve_selections.get();
+            selections[usize::from(!session.curve_cpu.get())] = session.selected_point.get();
+            session.curve_selections.set(selections);
             session.curve_cpu.set(cpu);
             session.drag.set(None);
-            session.selected_point.set(None);
+            session.selected_point.set(selections[usize::from(!cpu)]);
+            session.fan_hover.set(None);
             refresh_view(session);
         });
     }

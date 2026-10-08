@@ -181,7 +181,7 @@ your UI from the updated installation. It requests sudo for system changes and
 leaves kernel modules and the RyzenAdj installation in place. The UI runs in
 the terminal; the daemon stays running after it closes.
 
-For UI-only development, `./scripts/ui-test 3` runs the Rust panel with
+For UI-only development, `./scripts/ui-test` runs the Rust panel with
 offline sensor graphs and emulated RGB, without hardware writes or connecting
 to the installed daemon.
 
@@ -189,8 +189,8 @@ The app logs to the terminal it was launched from (so run it from a
 terminal or check the desktop entry's output). The daemon logs via
 `journalctl -u victus-hubd`.
 
-`scripts/ui-test` accepts an optional terminal debug level; for the installed
-app, set `VICTUS_HUB_DEBUG_LEVEL`:
+`scripts/ui-test` takes no arguments. For the installed app, set
+`VICTUS_HUB_DEBUG_LEVEL`:
 
 | Level | Terminal messages |
 | --- | --- |
@@ -211,6 +211,23 @@ Environment=VICTUS_HUB_DEBUG_LEVEL=1
 Save, then apply it and follow the logs:
 sudo systemctl restart victus-hubd
 journalctl -u victus-hubd -f -o cat
+
+## UI regression checks
+
+Run the model/backend tests with `cargo test --workspace`. The GTK regression
+test also exercises all six pages, AMD/Intel controls, single-/multi-zone
+keyboards, numeric editing, and the sensor context menu. It needs a display:
+
+```bash
+xvfb-run -a env GDK_BACKEND=x11 GSK_RENDERER=cairo G_DEBUG=fatal-warnings cargo test -p victus-hub \
+  gtk_controls_preserve_pending_edits_and_wire_lighting_and_navigation \
+  -- --ignored --nocapture
+```
+
+To save page screenshots for comparison with the Python/Qt reference, add
+`VICTUS_HUB_UI_SNAPSHOTS=/tmp/victus-ui-snapshots` to the environment in that
+command. Screenshots include default pages and alternate power, fan, lighting,
+and hardware configurations.
 
 ## Project Structure
 

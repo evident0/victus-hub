@@ -35,6 +35,7 @@ pub(super) fn wire(session: &Rc<Session>) {
         let Some(session) = weak.upgrade() else { return };
         let percent = paint::round_i32(scale.value() / 255.0 * 100.0).clamp(0, 100);
         session.built.keyboard.brightness_value.set_text(&format!("{percent}%"));
+        scale.set_tooltip_text(Some(&format!("Backlight brightness: {}/255", paint::round_i32(scale.value()))));
         if session.suppress.get() { return; }
         session.model.borrow_mut().state.lighting.brightness = paint::round_i32(scale.value()).clamp(0, 255);
         schedule(&session, true);
@@ -44,6 +45,7 @@ pub(super) fn wire(session: &Rc<Session>) {
         let Some(session) = weak.upgrade() else { return };
         let speed = paint::round_i32(scale.value()).clamp(1, 100);
         session.built.keyboard.speed_value.set_text(&speed.to_string());
+        scale.set_tooltip_text(Some(&format!("Effect speed: {speed}/100")));
         if session.suppress.get() { return; }
         session.model.borrow_mut().state.lighting.speed = speed;
         schedule(&session, true);
@@ -63,20 +65,6 @@ pub(super) fn wire(session: &Rc<Session>) {
         session.model.borrow_mut().state.lighting.idle_timeout = if switch.is_active() { paint::round_i32(session.built.keyboard.idle.value()).clamp(1, 600) } else { 0 };
         schedule(&session, true);
     });
-    let click = gtk4::GestureClick::new();
-    click.set_button(1);
-    let weak = Rc::downgrade(session);
-    click.connect_pressed(move |_, _, x, y| {
-        let Some(session) = weak.upgrade() else { return };
-        let width = f64::from(session.built.keyboard.visual.width());
-        let height = f64::from(session.built.keyboard.visual.height());
-        if let Some(zone) = paint::key_zone(width, height, x, y) {
-            session.zone_target.set(if session.model.borrow().zones <= 1 { 0 } else { i32::try_from(zone).unwrap_or(0) });
-            refresh_view(&session);
-            sync_color_entries(&session);
-        }
-    });
-    session.built.keyboard.visual.add_controller(click);
     for (area, secondary) in [(&session.built.keyboard.chip, false), (&session.built.keyboard.chip2, true)] {
         let click = gtk4::GestureClick::new();
         click.set_button(1);
@@ -102,20 +90,26 @@ pub(super) fn wire(session: &Rc<Session>) {
 
 fn bind_hex(session: &Rc<Session>, entry: &gtk4::Entry, secondary: bool) {
     let weak = Rc::downgrade(session);
-    entry.connect_changed(move |entry| {
-        let Some(session) = weak.upgrade() else { return };
-        if session.suppress.get() { return; }
-        let text = entry.text().to_string();
-        if text.len() == 6 && text.chars().all(|ch| ch.is_ascii_hexdigit()) {
-            assign_hex(&session, &format!("#{text}"), secondary, true);
-        }
+    entry.connect_activate(move |entry| {
+        if let Some(session) = weak.upgrade() { commit_hex_entry(&session, entry, secondary); }
     });
-    let weak = Rc::downgrade(session);
-    entry.connect_activate(move |_| { if let Some(session) = weak.upgrade() { sync_color_entries(&session); } });
     let focus = gtk4::EventControllerFocus::new();
     let weak = Rc::downgrade(session);
-    focus.connect_leave(move |_| { if let Some(session) = weak.upgrade() { sync_color_entries(&session); } });
+    let entry_weak = entry.downgrade();
+    focus.connect_leave(move |_| {
+        if let (Some(session), Some(entry)) = (weak.upgrade(), entry_weak.upgrade()) { commit_hex_entry(&session, &entry, secondary); }
+    });
     entry.add_controller(focus);
+}
+
+fn commit_hex_entry(session: &Session, entry: &gtk4::Entry, secondary: bool) {
+    if session.suppress.get() { return; }
+    let text = entry.text();
+    let text = text.trim().trim_start_matches('#');
+    if text.len() == 6 && text.chars().all(|ch| ch.is_ascii_hexdigit()) {
+        assign_hex(session, &format!("#{}", text.to_ascii_uppercase()), secondary, true);
+    }
+    sync_color_entries(session);
 }
 
 fn bind_strip(session: &Rc<Session>, area: &DrawingArea, hue_strip: bool) {
@@ -140,7 +134,7 @@ fn bind_strip(session: &Rc<Session>, area: &DrawingArea, hue_strip: bool) {
 fn set_strip_color(session: &Session, hue_strip: bool, x: f64) {
     let area = if hue_strip { &session.built.keyboard.hue } else { &session.built.keyboard.shade };
     let cell = ((x / f64::from(area.width()).max(1.0)) * 36.0).floor().clamp(0.0, 35.0);
-    let hue = hsv_parts(&active_color(&session.model.borrow(), session.zone_target.get())).0;
+    let hue = session.strip_hue.get();
     let (red, green, blue) = if hue_strip {
         paint::hsl_to_rgb(cell / 36.0, 0.85, 0.55)
     } else {
@@ -154,6 +148,8 @@ pub(super) fn sync_color_entries(session: &Session) {
     session.suppress.set(true);
     let model = session.model.borrow();
     let primary = digits(&active_color(&model, session.zone_target.get()));
+    let (hue, saturation, _) = hsv_parts(&format!("#{primary}"));
+    if saturation > 0.0 { session.strip_hue.set(hue); }
     let secondary = digits(&model.state.lighting.color2);
     drop(model);
     session.built.keyboard.hex.set_text(&primary);
@@ -185,6 +181,10 @@ fn assign_hex(session: &Session, hex: &str, secondary: bool, from_entry: bool) {
         session.suppress.set(true);
         entry.set_text(&digits(hex));
         session.suppress.set(false);
+    }
+    if !secondary {
+        let (hue, saturation, _) = hsv_parts(hex);
+        if saturation > 0.0 { session.strip_hue.set(hue); }
     }
     for area in [&session.built.keyboard.chip, &session.built.keyboard.chip2, &session.built.keyboard.hue, &session.built.keyboard.shade] {
         area.queue_draw();

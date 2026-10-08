@@ -176,13 +176,20 @@ impl Chart {
         let scale = Box::new(Orientation::Vertical, 0);
         scale.add_css_class("graph-scale");
         scale.set_size_request(60, -1);
+        let scale_inner = Box::new(Orientation::Vertical, 0);
+        scale_inner.set_margin_start(2);
+        scale_inner.set_margin_end(2);
+        scale_inner.set_margin_top(2);
+        scale_inner.set_margin_bottom(2);
+        scale_inner.set_vexpand(true);
         let max_entry = range_entry(meta.max);
         let min_entry = range_entry(meta.min);
         let gap = Box::new(Orientation::Vertical, 0);
         gap.set_vexpand(true);
-        scale.append(&max_entry);
-        scale.append(&gap);
-        scale.append(&min_entry);
+        scale_inner.append(&max_entry);
+        scale_inner.append(&gap);
+        scale_inner.append(&min_entry);
+        scale.append(&scale_inner);
         content.append(&scale);
         root.append(&content);
         window.set_child(Some(&root));
@@ -299,7 +306,8 @@ fn range_entry(value: f64) -> Entry {
     let entry = Entry::new();
     entry.set_text(&range_text(value));
     gtk4::prelude::EditableExt::set_alignment(&entry, 0.5);
-    entry.set_max_width_chars(6);
+    entry.set_width_chars(1);
+    entry.set_max_width_chars(1);
     entry
 }
 

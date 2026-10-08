@@ -1,7 +1,7 @@
 //! Page trees. Callbacks are attached after the session exists.
 
 use gtk4::prelude::*;
-use gtk4::{Align, Box, Button, DrawingArea, DropDown, Entry, FlowBox, Grid, Label, ListBox, Orientation, Scale, SelectionMode, SpinButton, Stack, Switch};
+use gtk4::{Align, Box, Button, DrawingArea, DropDown, Entry, Grid, Label, ListBox, Orientation, Scale, SelectionMode, SpinButton, Stack, Switch};
 use victus_core::{effects_for_zone_count, ExtraSensor, PROGRAM_VERSION};
 use std::cell::RefCell;
 use std::collections::HashSet;
@@ -37,6 +37,7 @@ pub struct Home {
 
 pub struct Power {
     pub head_status: Label,
+    pub status: Label,
     pub enabled: Switch,
     pub note: Label,
     pub limits: Box,
@@ -128,7 +129,6 @@ pub struct Settings {
     pub update: Button,
     pub update_status: Label,
     pub diagnostics: Button,
-    pub quit: Button,
 }
 
 pub struct Built {
@@ -243,6 +243,7 @@ pub fn build(model: &crate::Model) -> Built {
     let sidebar = DrawingArea::new();
     sidebar.set_content_width(62);
     sidebar.set_vexpand(true);
+    sidebar.set_focusable(true);
     let stack = Stack::new();
     stack.set_hhomogeneous(false);
     stack.set_vhomogeneous(false);
@@ -274,6 +275,7 @@ pub fn build(model: &crate::Model) -> Built {
     content.append(&status);
     content.set_hexpand(true);
     let root = Box::new(Orientation::Horizontal, 0);
+    root.add_css_class("victus-root");
     root.append(&sidebar);
     root.append(&content);
     Built { root, sidebar, stack, status, home, power, fans, keyboard, sensors, settings }
@@ -329,14 +331,14 @@ fn home(model: &crate::Model) -> (Box, Home) {
     curve_row.append(&curve);
     page.append(&curve_row);
     let mux_labels = model.host.mux.iter().map(|choice| choice.label.as_str()).collect::<Vec<_>>();
-    let (mux_buttons_row, mux_buttons) = widgets::segment(&mux_labels);
+    let (mux_buttons_row, mux_buttons) = widgets::compact_segment(&mux_labels);
     let mux_wrap = Box::new(Orientation::Vertical, 8);
     mux_wrap.set_margin_top(20);
     let graphics = Label::new(Some("Graphics"));
     graphics.add_css_class("row-title");
     graphics.set_halign(Align::Start);
     let graphics_row = Box::new(Orientation::Horizontal, 8);
-    let gpu_name = Label::new(Some(&model.host.gpu_name));
+    let gpu_name = Label::new(Some(model.host.gpu_name.trim_start_matches("NVIDIA GeForce ")));
     gpu_name.add_css_class("sub");
     graphics_row.append(&graphics);
     graphics_row.append(&gpu_name);
@@ -348,13 +350,13 @@ fn home(model: &crate::Model) -> (Box, Home) {
     power.set_margin_top(20);
     page.append(&power);
     let (light_row, light_sub, mini) = light_jump();
-    light_row.set_margin_top(8);
+    light_row.set_margin_top(20);
     page.append(&light_row);
     let spacer = Box::new(Orientation::Vertical, 0);
     spacer.set_vexpand(true);
     page.append(&spacer);
     let (footer, footer_left, footer_right) = widgets::footer();
-    footer_left.set_text(if model.host.product.is_empty() { "HP Laptop" } else { &model.host.product });
+    footer_left.set_text(if model.host.product.is_empty() { "HP Laptop" } else { model.host.product.split('(').next().unwrap_or_default().trim() });
     page.append(&footer);
     let home = Home {
         title,
@@ -387,6 +389,8 @@ fn home(model: &crate::Model) -> (Box, Home) {
 fn jump_row(title: &str, subtitle: &str) -> (Button, Label) {
     let button = Button::new();
     button.add_css_class("row-link");
+    button.add_css_class("home-jump");
+    button.set_cursor_from_name(Some("pointer"));
     let row = Box::new(Orientation::Horizontal, 12);
     let label = Label::new(Some(title));
     label.add_css_class("row-title");
@@ -396,6 +400,7 @@ fn jump_row(title: &str, subtitle: &str) -> (Button, Label) {
     sub.add_css_class("sub");
     let arrow = Label::new(Some("→"));
     arrow.add_css_class("accent");
+    arrow.add_css_class("jump-arrow");
     row.append(&label);
     row.append(&sub);
     row.append(&arrow);
@@ -405,16 +410,23 @@ fn jump_row(title: &str, subtitle: &str) -> (Button, Label) {
 
 fn light_jump() -> (Button, Label, DrawingArea) {
     let button = Button::new();
+    button.set_vexpand(false);
     button.add_css_class("row-link");
+    button.add_css_class("home-jump");
+    button.set_cursor_from_name(Some("pointer"));
     let row = Box::new(Orientation::Horizontal, 12);
+    row.set_vexpand(false);
     let text = Box::new(Orientation::Vertical, 3);
     text.set_hexpand(true);
+    text.set_vexpand(false);
     let label = Label::new(Some("Lighting"));
     label.add_css_class("row-title");
     label.set_halign(Align::Start);
+    label.set_vexpand(true);
     let sub = Label::new(Some("Off"));
     sub.add_css_class("sub");
     sub.set_halign(Align::Start);
+    sub.set_vexpand(true);
     text.append(&label);
     text.append(&sub);
     let mini = DrawingArea::new();
@@ -422,6 +434,7 @@ fn light_jump() -> (Button, Label, DrawingArea) {
     mini.set_content_height(64);
     let arrow = Label::new(Some("→"));
     arrow.add_css_class("accent");
+    arrow.add_css_class("jump-arrow");
     row.append(&text);
     row.append(&mini);
     row.append(&arrow);
@@ -432,17 +445,18 @@ fn light_jump() -> (Button, Label, DrawingArea) {
 fn power(intel: bool) -> (Box, Power) {
     let page = column();
     let (head_row, _, head_status) = head("Power");
+    head_status.set_max_width_chars(54);
     head_status.set_text("CPU — W · Freq — MHz");
     page.append(&head_row);
     let enabled = widgets::switch();
     let enable_row = Box::new(Orientation::Horizontal, 12);
     enable_row.set_margin_top(24);
     let enable_label = Label::new(Some("Enable power limits"));
-    enable_label.add_css_class("row-title");
-    enable_label.set_hexpand(true);
+    enable_label.add_css_class("small-title");
     enable_label.set_halign(Align::Start);
-    enable_row.append(&enable_label);
     enable_row.append(&enabled);
+    enable_row.append(&enable_label);
+    enable_row.set_halign(Align::Start);
     page.append(&enable_row);
     let note = Label::new(Some("To reset power limits to firmware defaults a reboot is required."));
     note.add_css_class("sub");
@@ -464,61 +478,66 @@ fn power(intel: bool) -> (Box, Power) {
     else { limits.append(&fast.row); limits.append(&slow.row); }
     limits.append(&tctl.row);
     limits.append(&reapply.row);
-    page.append(&limits);
     let apply = accent("Apply");
     apply.set_margin_top(16);
-    page.append(&apply);
-    let freq_min = slider("Minimum", 400_000.0, 6_000_000.0, 100_000.0);
-    let freq_max = slider("Maximum", 400_000.0, 6_000_000.0, 100_000.0);
+    limits.append(&apply);
+    let status = Label::new(None);
+    status.add_css_class("sub");
+    status.set_wrap(true);
+    status.set_xalign(0.0);
+    status.set_margin_top(8);
+    status.set_visible(intel);
+    limits.append(&status);
+    page.append(&limits);
+    let freq_min = slider("CPU min", 400_000.0, 6_000_000.0, 1000.0);
+    let freq_max = slider("CPU max", 400_000.0, 6_000_000.0, 1000.0);
     let freq_note = Label::new(None);
     freq_note.add_css_class("sub");
     freq_note.set_wrap(true);
     freq_note.set_halign(Align::Start);
     freq_note.set_xalign(0.0);
+    freq_note.set_margin_top(8);
     let freq_apply = accent("Apply CPU frequency");
     let freq_sliders = Box::new(Orientation::Vertical, 0);
     freq_sliders.append(&freq_min.row);
     freq_sliders.append(&freq_max.row);
     freq_sliders.append(&freq_apply);
-    let freq_wrap = Box::new(Orientation::Vertical, 8);
-    freq_wrap.set_margin_top(12);
-    let freq_title = Label::new(Some("CPU frequency"));
-    freq_title.add_css_class("title");
-    freq_title.set_halign(Align::Start);
+    let freq_wrap = Box::new(Orientation::Vertical, 0);
+    freq_wrap.set_margin_top(16);
     freq_wrap.append(&widgets::hairline());
-    freq_wrap.append(&freq_title);
-    freq_wrap.append(&freq_note);
     freq_wrap.append(&freq_sliders);
+    freq_wrap.append(&freq_note);
     page.append(&freq_wrap);
-    let uv_core = slider("Core", -250.0, 0.0, 1.0);
-    let uv_cache = slider("Cache", -250.0, 0.0, 1.0);
+    let uv_core = slider("Core offset", -250.0, 0.0, 1.0);
+    let uv_cache = slider("Cache offset", -250.0, 0.0, 1.0);
     let uv_apply = accent("Apply undervolt");
     let uv_status = Label::new(None);
-    uv_status.set_text("Set both offsets to 0 mV to reset. Requires the msr kernel module and firmware voltage-control support. Saved offsets are applied only when you click Apply undervolt.");
+    uv_status.set_text("Intel core/cache offsets. Set both to 0 mV to reset. Requires the msr kernel module and firmware voltage-control support. Saved offsets are applied only when you click Apply undervolt.");
     uv_status.add_css_class("sub");
     uv_status.set_halign(Align::Start);
+    uv_status.set_xalign(0.0);
     uv_status.set_wrap(true);
-    let uv_wrap = Box::new(Orientation::Vertical, 8);
-    uv_wrap.set_margin_top(12);
-    let uv_title = Label::new(Some("Intel undervolt"));
-    uv_title.add_css_class("title");
-    uv_title.set_halign(Align::Start);
+    uv_status.set_margin_top(8);
+    let uv_wrap = Box::new(Orientation::Vertical, 0);
+    uv_wrap.set_margin_top(16);
     uv_wrap.append(&widgets::hairline());
-    uv_wrap.append(&uv_title);
     uv_wrap.append(&uv_core.row);
     uv_wrap.append(&uv_cache.row);
     uv_wrap.append(&uv_apply);
     uv_wrap.append(&uv_status);
     uv_wrap.set_visible(intel);
     page.append(&uv_wrap);
-    let power = Power { head_status, enabled, note, limits, stapm, fast, slow, tctl, reapply, apply, freq_wrap, freq_sliders, freq_min, freq_max, freq_note, freq_apply, uv_wrap, uv_core, uv_cache, uv_apply, uv_status };
+    let spacer = Box::new(Orientation::Vertical, 0);
+    spacer.set_vexpand(true);
+    page.append(&spacer);
+    let power = Power { head_status, status, enabled, note, limits, stapm, fast, slow, tctl, reapply, apply, freq_wrap, freq_sliders, freq_min, freq_max, freq_note, freq_apply, uv_wrap, uv_core, uv_cache, uv_apply, uv_status };
     (page, power)
 }
 
 fn fans(modes: &[String]) -> (Box, Fans) {
     let page = column();
     let (head_row, _, head_status) = head("Fans");
-    head_status.set_max_width_chars(42);
+    head_status.set_max_width_chars(60);
     page.append(&head_row);
     let pairs = fan_pairs(modes);
     let mode_keys = pairs.iter().map(|(key, _, _)| (*key).to_owned()).collect::<Vec<_>>();
@@ -534,10 +553,11 @@ fn fans(modes: &[String]) -> (Box, Fans) {
     let cpu_link = curve_buttons.pop().expect("cpu curve link");
     let hint = Label::new(Some("Left-click to add points · Right-click to remove points"));
     hint.add_css_class("mono");
+    hint.add_css_class("chart-hint");
     hint.set_halign(Align::End);
     hint.set_hexpand(true);
     hint.set_wrap(true);
-    let links_row = Box::new(Orientation::Horizontal, 16);
+    let links_row = Box::new(Orientation::Horizontal, 24);
     links_row.set_margin_top(24);
     links_row.append(&curve_links);
     links_row.append(&hint);
@@ -551,11 +571,10 @@ fn fans(modes: &[String]) -> (Box, Fans) {
     let response = widgets::dropdown(&["Smooth", "Aggressive"]);
     let response_row = settings_row("Fan response", "How quickly fan speed follows temperature", &response);
     let min_change = widgets::spin(0.0, 20.0, 0.5);
+    min_change.set_width_chars(10);
+    widgets::spin_suffix(&min_change, "%");
     let min_wrap = Box::new(Orientation::Horizontal, 6);
-    min_wrap.append(&min_change);
-    let percent = Label::new(Some("%"));
-    percent.add_css_class("sub");
-    min_wrap.append(&percent);
+    min_wrap.append(&widgets::stepper(&min_change));
     let min_row = settings_row("Minimum fan change", "Ignore smaller PWM steps", &min_wrap);
     let editor = Box::new(Orientation::Vertical, 0);
     editor.set_vexpand(true);
@@ -569,7 +588,8 @@ fn fans(modes: &[String]) -> (Box, Fans) {
     info.set_halign(Align::Start);
     info.set_xalign(0.0);
     info.set_margin_top(24);
-    info.add_css_class("row-title");
+    info.set_vexpand(true);
+    info.set_yalign(0.0);
     page.append(&info);
     let fans = Fans { head_status, mode_keys, mode_buttons, editor, info, cpu_link, gpu_link, chart, response, min_change };
     (page, fans)
@@ -577,6 +597,7 @@ fn fans(modes: &[String]) -> (Box, Fans) {
 
 fn keyboard(zones: i32) -> (Box, Keyboard) {
     let page = column();
+    page.set_margin_bottom(24);
     let (head_row, _, head_status) = head("Keyboard");
     let zone_status = if zones > 1 { format!("{zones} zones") } else { "Single zone".to_owned() };
     head_status.set_text(&zone_status);
@@ -587,93 +608,109 @@ fn keyboard(zones: i32) -> (Box, Keyboard) {
         effect_ids.push((*id).to_owned());
         effect_labels.push((*label).to_owned());
     }
-    let flow = FlowBox::new();
-    flow.set_selection_mode(SelectionMode::None);
-    flow.set_column_spacing(8);
-    flow.set_row_spacing(4);
-    flow.set_max_children_per_line(6);
-    flow.set_margin_top(24);
-    flow.set_hexpand(true);
+    let effects = Box::new(Orientation::Vertical, 10);
+    effects.set_margin_top(24);
     let mut effect_buttons = Vec::new();
-    for label in &effect_labels {
-        let button = Button::with_label(label);
-        button.add_css_class("linkish");
-        button.add_css_class("selection-link");
-        flow.append(&button);
-        effect_buttons.push(button);
+    let chunk = if effect_labels.len() > 7 { 6 } else { effect_labels.len() };
+    for labels in effect_labels.chunks(chunk) {
+        let (row, buttons) = widgets::links(labels);
+        row.set_halign(Align::Start);
+        effects.append(&row);
+        effect_buttons.extend(buttons);
     }
-    page.append(&flow);
+    page.append(&effects);
     let mut zone_labels = victus_core::ZONE_NAMES.iter().take(usize::try_from(zones.max(1)).unwrap_or(1)).map(|name| (*name).to_owned()).collect::<Vec<_>>();
     if zones > 1 {
         zone_labels.push("All".to_owned());
     }
-    let (zone_buttons_row, zone_buttons) = widgets::segment(&zone_labels);
+    let (zone_buttons_row, zone_buttons) = widgets::compact_segment(&zone_labels);
+    zone_buttons_row.set_halign(Align::Start);
+    zone_buttons_row.set_hexpand(false);
     let zone_row = Box::new(Orientation::Horizontal, 10);
     zone_row.set_margin_top(22);
     let select = Label::new(Some("Select"));
-    select.add_css_class("sub");
+    select.add_css_class("select-label");
     zone_row.append(&select);
     zone_row.append(&zone_buttons_row);
+    let zone_spacer = Box::new(Orientation::Horizontal, 0);
+    zone_spacer.set_hexpand(true);
+    zone_row.append(&zone_spacer);
     zone_row.set_visible(zones > 1);
     page.append(&zone_row);
     let visual = DrawingArea::new();
-    visual.set_content_height(220);
+    visual.set_content_height(200);
     visual.set_vexpand(true);
     visual.set_hexpand(true);
     visual.set_margin_top(22);
     page.append(&visual);
-    page.append(&widgets::hairline());
+    let editor_rule = widgets::hairline();
+    editor_rule.set_margin_top(22);
+    page.append(&editor_rule);
     let chip = DrawingArea::new();
     chip.set_cursor_from_name(Some("pointer"));
     chip.set_content_width(40);
-    chip.set_content_height(34);
+    chip.set_content_height(32);
     let hex = widgets::hex_entry();
     let hue = DrawingArea::new();
     hue.set_cursor_from_name(Some("crosshair"));
     hue.set_content_height(33);
+    hue.set_vexpand(false);
+    hue.set_valign(Align::Start);
     hue.set_hexpand(true);
     let shade = DrawingArea::new();
     shade.set_cursor_from_name(Some("crosshair"));
     shade.set_content_height(33);
+    shade.set_vexpand(false);
+    shade.set_valign(Align::Start);
     shade.set_hexpand(true);
     let strips = Box::new(Orientation::Vertical, 0);
     strips.set_hexpand(true);
     strips.append(&hue);
     strips.append(&shade);
     let color_box = Box::new(Orientation::Horizontal, 12);
-    color_box.set_margin_top(18);
+    color_box.set_margin_top(30);
+    color_box.set_valign(Align::Start);
     let color_left = Box::new(Orientation::Vertical, 6);
     color_left.set_size_request(210, -1);
+    color_left.set_hexpand(false);
     let hex_row = Box::new(Orientation::Horizontal, 0);
+    hex_row.add_css_class("hex-field");
+    hex_row.set_valign(Align::Start);
     hex_row.append(&chip);
     let hash = Label::new(Some("  #"));
     hash.add_css_class("mono");
     hex_row.append(&hash);
     hex_row.append(&hex);
+    hex.set_hexpand(true);
+    hex.set_width_chars(6);
+    hex.set_max_width_chars(6);
     color_left.append(&hex_row);
     color_box.append(&color_left);
     color_box.append(&strips);
     page.append(&color_box);
     let chip2 = DrawingArea::new();
     chip2.set_cursor_from_name(Some("pointer"));
-    chip2.set_content_width(40);
-    chip2.set_content_height(34);
+    chip2.set_content_width(34);
+    chip2.set_content_height(28);
     let hex2 = widgets::hex_entry();
-    let color2_box = Box::new(Orientation::Horizontal, 12);
+    let color2_box = Box::new(Orientation::Horizontal, 8);
     color2_box.set_margin_top(12);
-    let color2_label = Label::new(Some("Second color"));
-    color2_label.add_css_class("sub");
+    let color2_label = Label::new(Some("Color 2"));
+    color2_label.add_css_class("small-title");
     color2_box.append(&color2_label);
     color2_box.append(&chip2);
-    color2_box.append(&hex2);
+    hex2.set_visible(false);
     page.append(&color2_box);
     let brightness = Scale::with_range(Orientation::Horizontal, 0.0, 255.0, 1.0);
     brightness.set_draw_value(false);
     brightness.set_hexpand(true);
     let brightness_value = Label::new(Some("100%"));
     brightness_value.add_css_class("mono");
-    brightness_value.set_width_chars(5);
-    let brightness_row = Box::new(Orientation::Horizontal, 12);
+    brightness_value.add_css_class("hex-value");
+    brightness_value.add_css_class("head-status");
+    brightness_value.set_size_request(36, -1);
+    brightness_value.set_xalign(1.0);
+    let brightness_row = Box::new(Orientation::Horizontal, 8);
     brightness_row.append(&brightness);
     brightness_row.append(&brightness_value);
     color_left.append(&brightness_row);
@@ -682,24 +719,29 @@ fn keyboard(zones: i32) -> (Box, Keyboard) {
     speed.set_hexpand(true);
     let speed_value = Label::new(Some("50"));
     speed_value.add_css_class("mono");
-    speed_value.set_width_chars(4);
-    let speed_row = Box::new(Orientation::Horizontal, 12);
-    speed_row.set_margin_top(8);
+    speed_value.add_css_class("hex-value");
+    speed_value.set_size_request(32, -1);
+    speed_value.set_xalign(1.0);
+    let speed_row = Box::new(Orientation::Horizontal, 16);
+    speed_row.set_margin_top(12);
     let speed_label = Label::new(Some("Speed"));
-    speed_label.add_css_class("row-title");
-    speed_label.set_width_chars(12);
+    speed_label.add_css_class("small-title");
     speed_label.set_halign(Align::Start);
     speed_row.append(&speed_label);
     speed_row.append(&speed);
     speed_row.append(&speed_value);
     page.append(&speed_row);
     let idle = widgets::spin(1.0, 600.0, 1.0);
+    idle.set_width_chars(7);
     idle.set_digits(0);
     idle.set_value(30.0);
     let idle_enabled = widgets::switch();
+    idle_enabled.add_css_class("small-switch");
     let idle_control = Box::new(Orientation::Horizontal, 10);
-    idle_control.append(&Label::new(Some("s")));
-    idle_control.append(&idle);
+    let seconds = Label::new(Some("s"));
+    seconds.add_css_class("sub");
+    idle_control.append(&seconds);
+    idle_control.append(&widgets::stepper(&idle));
     idle_control.append(&idle_enabled);
     page.append(&settings_row("Idle timeout", "Dim the backlight when you stop typing", &idle_control));
     let keyboard = Keyboard {
@@ -730,78 +772,106 @@ fn keyboard(zones: i32) -> (Box, Keyboard) {
 
 fn sensors() -> (Box, Sensors) {
     let page = column();
+    page.set_margin_end(16);
+    page.set_margin_bottom(16);
     let (head_row, _, _) = head("Sensors");
     page.append(&head_row);
-    page.append(&widgets::sensor_header());
+    let card = Box::new(Orientation::Vertical, 0);
+    card.set_margin_start(6);
+    card.set_margin_end(6);
+    card.set_margin_top(22);
+    card.set_margin_bottom(6);
+    card.set_vexpand(true);
+    card.append(&widgets::sensor_header());
     let list = ListBox::new();
     list.add_css_class("sensors");
     list.set_selection_mode(SelectionMode::Single);
     let collapsed = Rc::new(RefCell::new(HashSet::new()));
     let rows = fill_sensors(&list, &[], &collapsed);
-    page.append(&list);
+    list.unselect_all();
+    card.append(&widgets::scroll(&list));
+    page.append(&card);
     (page, Sensors { list, rows, collapsed })
 }
 
 fn settings(product: &str) -> (Box, Settings) {
-    let page = column();
+    let page = Box::new(Orientation::Vertical, 0);
+    page.add_css_class("victus-page");
+    page.set_vexpand(true);
+    page.set_hexpand(true);
+    let header = column();
+    header.set_vexpand(false);
+    header.set_margin_bottom(16);
     let (head_row, _, head_status) = head("Settings");
     head_status.set_text(product);
-    page.append(&head_row);
+    header.append(&head_row);
+    page.append(&header);
+    let body = column();
+    body.set_margin_top(4);
+    body.set_margin_end(16);
+    body.set_margin_bottom(8);
     let battery = widgets::switch();
     let nvidia = widgets::switch();
     let hardware = widgets::switch();
-    page.append(&settings_row(
+    body.append(&settings_row(
         "Power save on battery",
         "Switch to Power Save on battery; restore the previous mode on AC unless you manually change modes while Victus Hub is running",
         &battery,
     ));
-    page.append(&widgets::hairline());
-    page.append(&settings_row(
+    body.append(&widgets::hairline());
+    body.append(&settings_row(
         "Disable NVIDIA GPU queries",
         "Skip NVIDIA sensors and GPU-name detection, including NVML and nvidia-smi, to avoid waking the GPU and save battery. Only applies in Power Save mode.",
         &nvidia,
     ));
-    page.append(&widgets::hairline());
-    page.append(&settings_row(
+    body.append(&widgets::hairline());
+    body.append(&settings_row(
         "Keyboard control shortcuts",
         "Left Ctrl + Left Shift + ↑ / ↓: brightness in 25% steps\nLeft Ctrl + Left Shift + ← / →: previous / next lighting effect (including Off)\nLeft Ctrl + Left Shift + M: cycle performance mode",
         &hardware,
     ));
-    page.append(&widgets::hairline());
+    body.append(&widgets::hairline());
     let shortcut = Label::new(Some("Not set"));
     shortcut.add_css_class("mono");
     shortcut.add_css_class("sunken-chip");
+    shortcut.set_size_request(120, -1);
+    shortcut.set_xalign(0.0);
     let shortcut_set = pill("Set");
     let shortcut_clear = pill("Clear");
     let controls = Box::new(Orientation::Horizontal, 8);
     controls.append(&shortcut);
     controls.append(&shortcut_set);
     controls.append(&shortcut_clear);
-    page.append(&settings_row("Program shortcut", "Opens Victus Hub from a key, including the Omen key.", &controls));
-    page.append(&widgets::hairline());
+    body.append(&settings_row("Program shortcut", "Ctrl/Alt/Super + key, or a function/OMEN key; capture with this window focused", &controls));
+    body.append(&widgets::hairline());
     let update = pill("Check for updates");
     let update_status = Label::new(None);
     update_status.add_css_class("sub");
     update_status.set_halign(Align::Start);
     update_status.set_wrap(true);
-    let update_box = Box::new(Orientation::Vertical, 6);
-    update_box.set_halign(Align::End);
-    update_box.append(&update);
-    update_box.append(&update_status);
-    page.append(&settings_row("Updates", "Check GitHub for a newer Victus Hub release.", &update_box));
-    page.append(&widgets::hairline());
-    let diagnostics = pill("Diagnostics");
-    let quit = pill("Quit");
-    let actions = Box::new(Orientation::Horizontal, 8);
-    actions.set_margin_top(18);
+    update_status.set_xalign(0.0);
+    update_status.set_visible(false);
+    body.append(&settings_row("Updates", "Check GitHub releases and reinstall Victus Hub", &update));
+    body.append(&update_status);
+    let spacer = Box::new(Orientation::Vertical, 0);
+    spacer.set_vexpand(true);
+    body.append(&spacer);
+    page.append(&widgets::scroll(&body));
+    let diagnostics = Button::with_label("Diagnostics");
+    diagnostics.add_css_class("linkish");
+    diagnostics.add_css_class("footer-link");
+    diagnostics.set_cursor_from_name(Some("pointer"));
+    let actions = Box::new(Orientation::Horizontal, 22);
+    actions.add_css_class("settings-footer");
     actions.append(&diagnostics);
-    actions.append(&quit);
-    page.append(&actions);
-    let version = Label::new(Some(&format!("Version {PROGRAM_VERSION}")));
+    let gap = Box::new(Orientation::Horizontal, 0);
+    gap.set_hexpand(true);
+    actions.append(&gap);
+    let version = Label::new(Some(&format!("v{PROGRAM_VERSION}")));
     version.add_css_class("mono");
-    version.set_halign(Align::Start);
-    version.set_margin_top(16);
-    page.append(&version);
-    let settings = Settings { head_status, battery, nvidia, hardware, shortcut, shortcut_set, shortcut_clear, update, update_status, diagnostics, quit };
+    version.add_css_class("footer-text");
+    actions.append(&version);
+    page.append(&actions);
+    let settings = Settings { head_status, battery, nvidia, hardware, shortcut, shortcut_set, shortcut_clear, update, update_status, diagnostics };
     (page, settings)
 }
