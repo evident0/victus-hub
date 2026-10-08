@@ -9,7 +9,10 @@ use gtk4::prelude::*;
 use victus_core::{acpi_error_line, filter_journal_lines, kernel_module_error_line, PROGRAM_VERSION};
 
 use crate::{parse_release_tag, update_choice, update_shell, UpdateChoice, RELEASE_URL};
-use super::{gpu_name, quit, widgets, BackgroundEvent, Session};
+use super::host::gpu_name;
+use super::session::{BackgroundEvent, Session};
+use super::shell::quit;
+use super::widgets;
 
 pub(super) enum Release {
     Failed,

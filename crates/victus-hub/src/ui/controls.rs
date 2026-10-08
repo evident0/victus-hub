@@ -5,12 +5,18 @@ use std::rc::{Rc, Weak};
 use gtk4::prelude::*;
 use victus_core::{FanMode, CURVE_RESPONSE_AGGRESSIVE, CURVE_RESPONSE_SMOOTH};
 
-use super::{
-    apply_fan_mode, apply_frequency, apply_power, apply_undervolt, begin_fan_drag,
-    chart_size, confirm_mux, curve_points, delete_fan_point, end_fan_drag,
-    fan_mode_from_key, on_click, paint, refresh_view, schedule_fan_if_custom,
-    select_profile, show_page, update_fan_drag, widgets, refresh_power_actions, Session,
+use super::actions::{
+    apply_fan_mode, apply_frequency, apply_power, apply_undervolt, confirm_mux, refresh_power_actions,
+    select_profile, show_page,
 };
+use super::curve::{
+    begin_fan_drag, chart_size, delete_fan_point, end_fan_drag, schedule_fan_if_custom, update_fan_drag,
+};
+use super::labels::{curve_points, fan_mode_from_key};
+use super::session::Session;
+use super::shell::on_click;
+use super::view::refresh_view;
+use super::{paint, widgets};
 
 pub(super) fn wire(session: &Rc<Session>) {
     wire_sidebar(session);

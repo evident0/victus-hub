@@ -1,4 +1,25 @@
+use std::cell::{Cell, RefCell};
+use std::os::unix::net::UnixStream;
+use std::path::PathBuf;
+use std::rc::Rc;
+use std::sync::atomic::{AtomicBool, AtomicUsize};
+use std::sync::{Arc, Condvar, Mutex};
+use std::time::{Duration, Instant};
+
+use gtk4::gio::ApplicationFlags;
+use gtk4::glib;
+use gtk4::prelude::*;
+use victus_core::FanMode;
+
+use super::actions::*;
+use super::host::*;
+use super::maintenance::Release;
+use super::session::*;
+use super::shell::*;
+use super::view::*;
+use super::wiring::*;
 use super::*;
+use crate::Model;
 
 #[test]
 #[ignore = "requires a GTK display; run under Xvfb"]

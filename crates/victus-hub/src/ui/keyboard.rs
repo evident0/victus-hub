@@ -7,7 +7,11 @@ use gtk4::DrawingArea;
 use victus_core::{lighting_frames, normalize_lighting_settings};
 
 use crate::Model;
-use super::{on_click, paint, refresh_view, schedule, Session};
+use super::actions::schedule;
+use super::session::Session;
+use super::shell::on_click;
+use super::view::refresh_view;
+use super::paint;
 
 pub(super) fn wire(session: &Rc<Session>) {
     for (button, id) in session.built.keyboard.effect_buttons.iter().zip(session.built.keyboard.effect_ids.clone()) {

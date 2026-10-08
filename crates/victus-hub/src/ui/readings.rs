@@ -2,7 +2,7 @@
 
 use victus_core::{SensorReading, SensorSnapshot};
 
-use super::mode_name;
+use super::labels::mode_name;
 
 pub(super) fn ram_status(snapshot: &SensorSnapshot) -> String {
     match (snapshot.ram_used_gb, snapshot.ram_total_gb) {
