@@ -1,4 +1,4 @@
-use std::io::{Read, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::os::unix::net::UnixStream;
 use std::path::Path;
 use std::time::Duration;
@@ -21,25 +21,9 @@ pub fn transact(socket: &Path, request: &str, timeout: Duration) -> HubResult<St
     }
     stream.write_all(line.as_bytes()).map_err(|error| HubError::new(format!("daemon write: {error}")))?;
     let mut buffer = Vec::new();
-    let mut byte = [0_u8; 1];
-    loop {
-        match stream.read(&mut byte) {
-            Ok(0) => break,
-            Ok(_) => {
-                buffer.push(byte[0]);
-                if byte[0] == b'\n' {
-                    break;
-                }
-                if buffer.len() > 1_048_576 {
-                    return Err(HubError::new("daemon response is too large"));
-                }
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock || error.kind() == std::io::ErrorKind::TimedOut => {
-                return Err(HubError::new("daemon timed out"));
-            }
-            Err(error) => return Err(HubError::new(format!("daemon read: {error}"))),
-        }
-    }
+    BufReader::new(stream).take(1_048_577).read_until(b'\n', &mut buffer)
+        .map_err(|error| HubError::new(format!("daemon read: {error}")))?;
+    if buffer.len() > 1_048_576 { return Err(HubError::new("daemon response is too large")); }
     if buffer.is_empty() {
         return Err(HubError::new("empty response"));
     }

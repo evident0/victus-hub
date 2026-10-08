@@ -6,37 +6,42 @@
 #![allow(clippy::cognitive_complexity, clippy::similar_names, clippy::cast_possible_wrap, clippy::wildcard_imports)]
 #![allow(clippy::items_after_statements, clippy::too_many_lines, clippy::option_if_let_else)]
 
+pub mod graph;
 pub mod pages;
 pub mod paint;
+pub mod tray;
 pub mod widgets;
 
 use std::cell::{Cell, RefCell};
+use std::io::{BufRead, BufReader, Read, Write};
+use std::os::fd::AsRawFd;
+use std::os::unix::net::UnixStream;
 use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{mpsc, Arc};
+use std::sync::{mpsc, Arc, Condvar, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use gtk4::gdk::{Key, ModifierType};
 use gtk4::gio::ApplicationFlags;
 use gtk4::glib::{self, ControlFlow, Propagation};
 use gtk4::prelude::*;
-use gtk4::{DrawingArea, ListBox, ListBoxRow};
+use gtk4::DrawingArea;
 use libadwaita::prelude::*;
 use victus_core::{
     acpi_error_line, config_to_value, effect_is_animated, fan_mode_steps, filter_journal_lines, is_modifier,
     kernel_module_error_line, keybind_label, lighting_frames, normalize_fan_points, normalize_lighting_settings,
     parse_sensors_response, parse_status_response, power_to_value, step_increment, transact, validate_frequency,
     validate_shortcut, validate_undervolt, ExtraSensor, FanConfig, FanMode, FanPoint,
-    SensorSnapshot, CPU_TEMP_MAX_C, CURVE_RESPONSE_AGGRESSIVE, CURVE_RESPONSE_SMOOTH, GPU_TEMP_MAX_C, KEY_LEFTALT,
-    KEY_LEFTCTRL, KEY_LEFTMETA, KEY_LEFTSHIFT, PROGRAM_VERSION,
+    request_key_for_graph, SensorSnapshot, CPU_TEMP_MAX_C, CURVE_RESPONSE_AGGRESSIVE, CURVE_RESPONSE_SMOOTH, GPU_TEMP_MAX_C,
+    KEY_LEFTALT, KEY_LEFTCTRL, KEY_LEFTMETA, KEY_LEFTSHIFT, PROGRAM_VERSION,
 };
 
 use crate::{
-    connects_to_socket, diagnostics_from_logs, fan_requests, lighting_request, parse_release_tag, power_status_line,
-    sensor_request, update_choice, update_shell, upsert_program_shortcut, Model, UpdateChoice, RELEASE_URL,
+    connects_to_socket, fan_requests, lighting_request, parse_release_tag, power_status_line,
+    update_choice, update_shell, upsert_program_shortcut, Model, UpdateChoice, RELEASE_URL,
 };
 
 use self::pages::SensorRow;
@@ -49,6 +54,7 @@ window.victus {
   background: #161616;
   color: #ededed;
   font-family: "IBM Plex Sans", Cantarell, sans-serif;
+  font-size: 13px;
 }
 window.victus .victus-page,
 window.victus .victus-scroll,
@@ -71,6 +77,9 @@ window.victus .unit {
   color: #969696;
   font-size: 13px;
 }
+window.victus .temp-unit { font-size: 18px; }
+window.victus .rpm-unit { font-size: 15px; }
+window.victus .hot { color: #ff4444; }
 window.victus .caption,
 window.victus .sub,
 window.victus .row-sub {
@@ -78,34 +87,72 @@ window.victus .row-sub {
   font-size: 12px;
 }
 window.victus .row-title {
-  font-weight: 600;
+  font-size: 14px;
+  font-weight: 400;
 }
+window.victus .sensor-group-title { font-weight: 700; }
+window.victus .heartbeat { font-size: 8px; }
 window.victus .mono {
   font-family: "IBM Plex Mono", monospace;
   color: #8a8a8a;
   font-size: 12px;
 }
 window.victus .ok { color: #4ac06c; }
-window.victus .accent { color: var(--accent, #3f8cff); }
+window.victus .accent { color: #3f8cff; }
 window.victus .hairline { background: #2c2c2c; }
 window.victus .seg {
   background: #0f0f0f;
-  border-radius: 12px;
-  padding: 3px;
+  border-radius: 10px;
+  padding: 4px;
 }
-window.victus .seg-btn {
+window.victus button.seg-btn {
   background: transparent;
   color: #a8a8a8;
   border: none;
   box-shadow: none;
-  border-radius: 9px;
-  padding: 6px 8px;
+  border-radius: 8px;
+  padding: 9px 6px;
+  min-height: 16px;
+  font-size: 13px;
+  font-weight: 400;
+}
+window.victus button.seg-btn.on {
+  background: #3f8cff;
+  color: #ffffff;
+  font-weight: 600;
+}
+window.graph-win {
+  background: #161616;
+  color: #ededed;
+}
+window.graph-win .graph-name { color: #cfcfcf; font-size: 11px; }
+window.graph-win .graph-value { color: #ffffff; font-size: 11px; font-weight: 800; }
+window.graph-win .graph-source { color: #969696; font-size: 11px; }
+window.graph-win .graph-scale { background: #3d3d3d; }
+window.graph-win entry {
+  background: #303030;
+  color: #ffffff;
+  border: 1px solid #555555;
+  border-radius: 2px;
+  min-height: 22px;
+  padding: 0 4px;
+  font-size: 11px;
+}
+popover.sensor-menu {
+  background: #202020;
+  color: #ededed;
+}
+popover.sensor-menu button {
+  background: transparent;
+  color: #ededed;
+  border: none;
+  box-shadow: none;
+  padding: 6px 18px;
   min-height: 0;
+  font-size: 13px;
 }
-window.victus .seg-btn.on {
-  background: var(--accent, #3f8cff);
-  color: #161616;
-}
+popover.sensor-menu button:disabled { color: #6a6a6a; }
+popover.sensor-menu button:hover { background: #303030; }
 window.victus .linkish {
   background: transparent;
   color: #a8a8a8;
@@ -114,7 +161,7 @@ window.victus .linkish {
   padding: 0;
   min-height: 0;
 }
-window.victus .linkish.on { color: var(--accent, #3f8cff); }
+window.victus .linkish.on { color: #3f8cff; }
 window.victus .pill {
   background: #202020;
   color: #ededed;
@@ -150,14 +197,14 @@ window.victus scale trough {
   border-radius: 99px;
   min-height: 6px;
 }
-window.victus scale highlight { background: var(--accent, #3f8cff); }
+window.victus scale highlight { background: #3f8cff; }
 window.victus scale slider {
   background: #ededed;
   border-radius: 99px;
   min-width: 16px;
   min-height: 16px;
 }
-window.victus switch:checked { background: var(--accent, #3f8cff); }
+window.victus switch:checked { background: #3f8cff; }
 window.victus list row:selected { background: #202020; }
 "#;
 
@@ -196,7 +243,34 @@ enum Release {
 
 enum BackgroundEvent {
     Release(Release),
-    Diagnostics(PathBuf),
+    Diagnostics(Result<PathBuf, String>),
+    State(serde_json::Value),
+    Frequency(Result<crate::FrequencyWindow, String>),
+    Control(ControlRequest, Result<String, String>),
+}
+
+enum ControlRequest {
+    Power(victus_core::PowerPolicy),
+    Frequency(i32, i32),
+    Undervolt(i32, i32),
+}
+
+struct SensorUpdate {
+    snapshot: SensorSnapshot,
+    keys: Vec<String>,
+    frequency: Option<Result<crate::FrequencyWindow, String>>,
+}
+
+#[derive(Clone)]
+struct EventSender {
+    tx: mpsc::SyncSender<BackgroundEvent>,
+    wake: Arc<UnixStream>,
+}
+
+impl EventSender {
+    fn send(&self, event: BackgroundEvent) {
+        if self.tx.try_send(event).is_ok() { let _ = (&*self.wake).write(&[1]); }
+    }
 }
 
 struct Session {
@@ -205,7 +279,7 @@ struct Session {
     page: Arc<AtomicUsize>,
     visible: Arc<AtomicBool>,
     stop: Arc<AtomicBool>,
-    window: libadwaita::ApplicationWindow,
+    window: gtk4::ApplicationWindow,
     built: pages::Built,
     accent: gtk4::CssProvider,
     hover: Cell<Option<usize>>,
@@ -218,16 +292,30 @@ struct Session {
     zone_target: Cell<i32>,
     applied_power: RefCell<AppliedPower>,
     applied_freq: Cell<Option<(i32, i32)>>,
-    applied_uv: Cell<(i32, i32)>,
+    last_frequency: RefCell<Option<crate::FrequencyWindow>>,
+    applied_uv: Cell<Option<(i32, i32)>>,
+    captured_mods: RefCell<Vec<i32>>,
+    selected_point: Cell<Option<usize>>,
+    fan_hover: Cell<Option<usize>>,
+    self_weak: RefCell<Weak<Session>>,
+    timer: RefCell<Option<glib::SourceId>>,
+    timer_due: Cell<Option<Instant>>,
+    state_instance: RefCell<String>,
+    state_revision: Cell<u64>,
+    accent_profile: Cell<Option<i32>>,
+    wake: Arc<UnixStream>,
+    sensor_signal: Arc<(Mutex<u64>, Condvar)>,
     stats: RefCell<HashMap<String, Running>>,
-    history: RefCell<HashMap<String, VecDeque<f64>>>,
+    log: RefCell<VecDeque<String>>,
     sensor_rows: RefCell<Vec<SensorRow>>,
     extra_sig: RefCell<String>,
-    graph_key: RefCell<String>,
-    graph_window: RefCell<Option<gtk4::Window>>,
-    popout: RefCell<Option<DrawingArea>>,
-    sensor_rx: RefCell<Option<mpsc::Receiver<SensorSnapshot>>>,
-    events_tx: mpsc::Sender<BackgroundEvent>,
+    charts: Rc<graph::Charts>,
+    tray: RefCell<Option<tray::Tray>>,
+    sensor_menu: RefCell<Option<gtk4::Popover>>,
+    preview_at: Cell<Instant>,
+    preview_step: Cell<u64>,
+    sensor_rx: RefCell<Option<mpsc::Receiver<SensorUpdate>>>,
+    events_tx: EventSender,
     events_rx: RefCell<mpsc::Receiver<BackgroundEvent>>,
 }
 
@@ -235,11 +323,26 @@ pub fn start(model: Model, own_bus: bool) -> Result<(), String> {
     if !have_display() {
         return Ok(());
     }
-    prepare_fonts();
+    let _fonts = prepare_fonts();
+    let (reader, wake) = UnixStream::pair().map_err(|error| error.to_string())?;
+    reader.set_nonblocking(true).map_err(|error| error.to_string())?;
+    wake.set_nonblocking(true).map_err(|error| error.to_string())?;
+    let wake = Arc::new(wake);
+    let reader = Rc::new(RefCell::new(Some(reader)));
     let page = Arc::new(AtomicUsize::new(model.page));
     let visible = Arc::new(AtomicBool::new(true));
     let stop = Arc::new(AtomicBool::new(false));
-    let sensor_rx = Rc::new(RefCell::new(spawn_sensor_thread(&model, Arc::clone(&page), Arc::clone(&visible), Arc::clone(&stop))));
+    let graph_keys = Arc::new(Mutex::new(Vec::new()));
+    let sensor_signal = Arc::new((Mutex::new(0_u64), Condvar::new()));
+    let sensor_rx = Rc::new(RefCell::new(spawn_sensor_thread(
+        &model,
+        Arc::clone(&page),
+        Arc::clone(&visible),
+        Arc::clone(&stop),
+        Arc::clone(&graph_keys),
+        Arc::clone(&wake),
+        Arc::clone(&sensor_signal),
+    )));
     let model = Rc::new(RefCell::new(model));
     let flags = if own_bus { ApplicationFlags::empty() } else { ApplicationFlags::NON_UNIQUE };
     let app = libadwaita::Application::new(Some("io.github.evident0.VictusHub"), flags);
@@ -248,12 +351,16 @@ pub fn start(model: Model, own_bus: bool) -> Result<(), String> {
     let page_for_activate = Arc::clone(&page);
     let visible_for_activate = Arc::clone(&visible);
     let stop_for_activate = Arc::clone(&stop);
+    let graphs_for_activate = Arc::clone(&graph_keys);
+    let current = Rc::new(RefCell::new(Weak::<Session>::new()));
     app.connect_activate(move |app| {
-        if reveal_existing(app, &visible_for_activate) {
+        if let Some(session) = current.borrow().upgrade() {
+            reveal(&session);
             return;
         }
         libadwaita::StyleManager::default().set_color_scheme(libadwaita::ColorScheme::ForceDark);
-        build_ui(app, &model, &page_for_activate, &visible_for_activate, &stop_for_activate, &sensor_rx);
+        let session = build_ui(app, &model, &page_for_activate, &visible_for_activate, &stop_for_activate, &sensor_rx, &graphs_for_activate, &wake, &reader, &sensor_signal);
+        *current.borrow_mut() = Rc::downgrade(&session);
     });
     let code = app.run();
     stop.store(true, Ordering::Relaxed);
@@ -284,13 +391,19 @@ fn have_display() -> bool {
         || std::env::var_os("DISPLAY").is_some_and(|value| !value.is_empty())
 }
 
-fn prepare_fonts() {
+struct FontFiles(Option<PathBuf>);
+impl Drop for FontFiles { fn drop(&mut self) { if let Some(path) = &self.0 { let _ = std::fs::remove_dir_all(path); } } }
+
+fn prepare_fonts() -> FontFiles {
     if std::env::var_os("FONTCONFIG_FILE").is_some() {
-        return;
+        return FontFiles(std::env::var_os("VICTUS_HUB_FONT_DIR").map(PathBuf::from).filter(|path| {
+            path.parent() == Some(std::env::temp_dir().as_path())
+                && path.file_name().is_some_and(|name| name.to_string_lossy().starts_with("victus-hub-fonts-"))
+        }));
     }
     let dir = std::env::temp_dir().join(format!("victus-hub-fonts-{}", std::process::id()));
     if std::fs::create_dir_all(&dir).is_err() {
-        return;
+        return FontFiles(None);
     }
     let fonts: &[(&str, &[u8])] = &[
         ("IBMPlexSans-Regular.ttf", include_bytes!("../../../../victus_hub/resources/fonts/IBMPlexSans-Regular.ttf")),
@@ -308,17 +421,18 @@ fn prepare_fonts() {
         dir.display()
     );
     if std::fs::write(&conf, xml).is_err() {
-        return;
+        return FontFiles(Some(dir));
     }
     // `std::env::set_var` is unsafe on this toolchain, and this crate forbids
     // unsafe. Restart once so fontconfig reads the bundled faces.
-    let Ok(exe) = std::env::current_exe() else { return };
+    let Ok(exe) = std::env::current_exe() else { return FontFiles(Some(dir)) };
     let mut command = Command::new(exe);
     command.args(std::env::args_os().skip(1));
     command.env("FONTCONFIG_FILE", &conf);
-    if let Ok(status) = command.status() {
-        std::process::exit(status.code().unwrap_or(1));
-    }
+    command.env("VICTUS_HUB_FONT_DIR", &dir);
+    use std::os::unix::process::CommandExt;
+    eprintln!("font setup: {}", command.exec());
+    FontFiles(Some(dir))
 }
 
 fn spawn_sensor_thread(
@@ -326,33 +440,63 @@ fn spawn_sensor_thread(
     page: Arc<AtomicUsize>,
     visible: Arc<AtomicBool>,
     stop: Arc<AtomicBool>,
-) -> Option<mpsc::Receiver<SensorSnapshot>> {
+    graph_keys: Arc<Mutex<Vec<String>>>,
+    wake: Arc<UnixStream>,
+    signal: Arc<(Mutex<u64>, Condvar)>,
+) -> Option<mpsc::Receiver<SensorUpdate>> {
     let socket = connects_to_socket(model)?.to_path_buf();
-    let (tx, rx) = mpsc::channel();
+    let (tx, rx) = mpsc::sync_channel(2);
     let _ = std::thread::Builder::new().name("victus-sensors".into()).spawn(move || {
+        let mut had_requests = false;
         while !stop.load(Ordering::Relaxed) {
-            if visible.load(Ordering::Relaxed) {
+            let gate = signal.0.lock().expect("sensor wake");
+            let generation = *gate;
+            let active = visible.load(Ordering::Relaxed);
+            drop(gate);
+            let mut requested = false;
+            if active {
                 let index = page.load(Ordering::Relaxed);
-                if let Some(request) = sensor_request(index) {
+                let extra = graph_keys.lock().map(|keys| keys.clone()).unwrap_or_default();
+                if let Some(request) = sensor_request_with(index, &extra) {
+                    requested = true;
+                    had_requests = true;
                     if let Ok(response) = transact(&socket, &request, Duration::from_secs(2)) {
                         if let Ok(snapshot) = parse_sensors_response(&response) {
-                            let _ = tx.send(snapshot);
+                            let keys = request.split_once('\t').map(|(_, body)| body.split(',').map(str::to_owned).collect()).unwrap_or_default();
+                            let frequency = (index == 1).then(|| read_frequency_window());
+                            if tx.try_send(SensorUpdate { snapshot, keys, frequency }).is_ok() { let _ = (&*wake).write(&[1]); }
                         }
                     }
+                } else if had_requests {
+                    let _ = transact(&socket, "sensors", Duration::from_secs(1));
+                    had_requests = false;
                 }
+            } else if had_requests {
+                let _ = transact(&socket, "sensors", Duration::from_secs(1));
+                had_requests = false;
             }
-            std::thread::sleep(Duration::from_secs(1));
+            let gate = signal.0.lock().expect("sensor wake");
+            if stop.load(Ordering::Relaxed) { break; }
+            if *gate != generation { continue; }
+            if active && requested && visible.load(Ordering::Relaxed) {
+                drop(signal.1.wait_timeout(gate, Duration::from_secs(1)).expect("sensor wake"));
+            } else {
+                drop(signal.1.wait(gate).expect("sensor wake"));
+            }
         }
     });
     Some(rx)
 }
 
-fn reveal_existing(app: &libadwaita::Application, visible: &AtomicBool) -> bool {
-    let Some(window) = app.windows().into_iter().next() else { return false };
-    visible.store(true, Ordering::Relaxed);
-    window.set_visible(true);
-    window.present();
-    true
+fn sensor_request_with(page: usize, extra: &[String]) -> Option<String> {
+    let mut keys: Vec<String> = victus_core::keys_for_page(page).into_iter().map(str::to_owned).collect();
+    for key in extra {
+        let mapped = request_key_for_graph(key);
+        if !keys.iter().any(|item| item == mapped) {
+            keys.push(mapped.to_owned());
+        }
+    }
+    if keys.is_empty() { None } else { Some(format!("sensors\t{}", keys.join(","))) }
 }
 
 fn build_ui(
@@ -361,20 +505,29 @@ fn build_ui(
     page: &Arc<AtomicUsize>,
     visible: &Arc<AtomicBool>,
     stop: &Arc<AtomicBool>,
-    sensor_rx: &Rc<RefCell<Option<mpsc::Receiver<SensorSnapshot>>>>,
-) {
+    sensor_rx: &Rc<RefCell<Option<mpsc::Receiver<SensorUpdate>>>>,
+    graph_keys: &Arc<Mutex<Vec<String>>>,
+    wake: &Arc<UnixStream>,
+    wake_reader: &Rc<RefCell<Option<UnixStream>>>,
+    sensor_signal: &Arc<(Mutex<u64>, Condvar)>,
+) -> Rc<Session> {
     let mut built = pages::build(&model.borrow());
     let rows = std::mem::take(&mut built.sensors.rows);
-    let window = libadwaita::ApplicationWindow::new(app);
+    // AdwApplicationWindow has no titlebar, so the compositor draws no frame.
+    // A plain application window keeps the desktop's window decorations.
+    let window = gtk4::ApplicationWindow::new(app);
     window.set_title(Some("Victus Hub"));
+    window.set_icon_name(Some("victus-hub"));
+    window.set_decorated(true);
     window.set_default_size(460, 680);
     window.set_size_request(420, 680);
     window.set_hide_on_close(true);
     window.add_css_class("victus");
     let accent = gtk4::CssProvider::new();
     install_css(&window, &accent);
-    window.set_content(Some(&built.root));
-    let (events_tx, events_rx) = mpsc::channel();
+    window.set_child(Some(&built.root));
+    let (tx, events_rx) = mpsc::sync_channel(64);
+    let events_tx = EventSender { tx, wake: Arc::clone(wake) };
     let session = Rc::new(Session {
         model: Rc::clone(model),
         suppress: Cell::new(false),
@@ -394,18 +547,33 @@ fn build_ui(
         zone_target: Cell::new(-1),
         applied_power: RefCell::new(AppliedPower { enabled: false, stapm: 0, fast: 0, slow: 0, tctl: 0, reapply: 0 }),
         applied_freq: Cell::new(None),
-        applied_uv: Cell::new((0, 0)),
+        last_frequency: RefCell::new(None),
+        applied_uv: Cell::new(None),
+        captured_mods: RefCell::new(Vec::new()),
+        selected_point: Cell::new(None),
+        fan_hover: Cell::new(None),
+        self_weak: RefCell::new(Weak::new()),
+        timer: RefCell::new(None),
+        timer_due: Cell::new(None),
+        state_instance: RefCell::new(String::new()),
+        state_revision: Cell::new(0),
+        accent_profile: Cell::new(None),
+        wake: Arc::clone(wake),
+        sensor_signal: Arc::clone(sensor_signal),
         stats: RefCell::new(HashMap::new()),
-        history: RefCell::new(HashMap::new()),
+        log: RefCell::new(VecDeque::new()),
         sensor_rows: RefCell::new(rows),
         extra_sig: RefCell::new(String::new()),
-        graph_key: RefCell::new("cpu-temp".into()),
-        graph_window: RefCell::new(None),
-        popout: RefCell::new(None),
+        charts: graph::Charts::new(Arc::clone(graph_keys), Arc::clone(sensor_signal)),
+        tray: RefCell::new(None),
+        sensor_menu: RefCell::new(None),
+        preview_at: Cell::new(Instant::now() + Duration::from_secs(1)),
+        preview_step: Cell::new(graph::preview_origin()),
         sensor_rx: RefCell::new(sensor_rx.borrow_mut().take()),
         events_tx,
         events_rx: RefCell::new(events_rx),
     });
+    *session.self_weak.borrow_mut() = Rc::downgrade(&session);
     wire(&session);
     sync_controls(&session);
     show_page(&session, 0);
@@ -413,22 +581,153 @@ fn build_ui(
     session.window.connect_close_request(move |window| {
         let Some(session) = weak.upgrade() else { return Propagation::Proceed };
         if window.hides_on_close() {
+            session.charts.hide_all();
             session.visible.store(false, Ordering::Relaxed);
+            notify_sensors(&session);
         } else {
             session.stop.store(true, Ordering::Relaxed);
         }
         Propagation::Proceed
     });
-    let tick = Rc::clone(&session);
-    retain(glib::timeout_add_local(Duration::from_millis(50), move || {
-        if tick.stop.load(Ordering::Relaxed) {
-            return ControlFlow::Break;
+    if let Some(mut reader) = wake_reader.borrow_mut().take() {
+        let tick = Rc::clone(&session);
+        let fd = reader.as_raw_fd();
+        retain(glib::source::unix_fd_add_local(fd, glib::IOCondition::IN, move |_, _| {
+            let mut bytes = [0_u8; 256];
+            while reader.read(&mut bytes).is_ok_and(|count| count > 0) {}
+            if tick.stop.load(Ordering::Relaxed) { return ControlFlow::Break; }
+            on_tick(&tick);
+            deliver_events(&tick);
+            arm_tick(&tick);
+            ControlFlow::Continue
+        }));
+    }
+    spawn_state_stream(&session);
+    install_tray(&session);
+    let weak = Rc::downgrade(&session);
+    session.window.connect_realize(move |window| {
+        if let Some(surface) = window.surface().and_downcast::<gtk4::gdk::Toplevel>() {
+            let weak = weak.clone();
+            surface.connect_state_notify(move |surface| {
+                if let Some(session) = weak.upgrade() {
+                    session.visible.store(session.window.is_visible() && !surface.state().contains(gtk4::gdk::ToplevelState::MINIMIZED), Ordering::Relaxed);
+                    notify_sensors(&session);
+                    arm_tick(&session);
+                }
+            });
         }
-        on_tick(&tick);
-        deliver_events(&tick);
-        ControlFlow::Continue
-    }));
+    });
     session.window.present();
+    session
+}
+
+fn notify_sensors(session: &Session) { let mut guard = session.sensor_signal.0.lock().expect("sensor wake"); *guard = guard.wrapping_add(1); session.sensor_signal.1.notify_all(); }
+
+fn spawn_state_stream(session: &Session) {
+    let Some(socket) = connects_to_socket(&session.model.borrow()).map(Path::to_path_buf) else { return };
+    let tx = session.events_tx.clone();
+    let stop = Arc::clone(&session.stop);
+    std::thread::spawn(move || {
+        while !stop.load(Ordering::Relaxed) {
+            if let Ok(mut stream) = UnixStream::connect(&socket) {
+                stream.set_read_timeout(Some(Duration::from_secs(1))).ok();
+                stream.set_write_timeout(Some(Duration::from_secs(1))).ok();
+                if stream.write_all(b"shortcut-events\n").is_ok() {
+                    let mut reader = BufReader::new(stream);
+                    let mut line = String::new();
+                    while !stop.load(Ordering::Relaxed) {
+                        match reader.read_line(&mut line) {
+                            Ok(0) => break,
+                            Ok(_) => {
+                                if line.len() > 65_536 { break; }
+                                if line.trim() == "OK\tshortcut-events" { reader.get_ref().set_read_timeout(None).ok(); }
+                                if let Some(body) = line.strip_prefix("STATE\t") {
+                                    if let Ok(value) = serde_json::from_str(body.trim()) { tx.send(BackgroundEvent::State(value)); }
+                                } else if line.starts_with("ERR\t") { break; }
+                                line.clear();
+                            }
+                            Err(error) if matches!(error.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut) => {},
+                            Err(_) => break,
+                        }
+                    }
+                }
+            }
+            std::thread::sleep(Duration::from_secs(2));
+        }
+    });
+}
+
+pub fn frequency_window(policies: &[victus_hw::FrequencyPolicy]) -> Result<crate::FrequencyWindow, String> {
+    let first = policies.first().ok_or("CPU frequency control is unavailable")?;
+    let lower = policies.iter().map(|policy| policy.hardware_min).max().unwrap_or(first.hardware_min);
+    let upper = policies.iter().map(|policy| policy.hardware_max).min().unwrap_or(first.hardware_max);
+    if lower > upper { return Err("CPU policies have no common frequency range".into()); }
+    let minimum = policies.iter().map(|policy| policy.minimum).max().unwrap_or(lower).clamp(lower, upper);
+    let maximum = policies.iter().map(|policy| policy.maximum).min().unwrap_or(upper).clamp(minimum, upper);
+    Ok(crate::FrequencyWindow { lower, upper, minimum, maximum, policies: policies.len(), mixed: policies.iter().any(|policy| (policy.minimum, policy.maximum) != (first.minimum, first.maximum)) })
+}
+
+fn refresh_frequency(session: &Session) {
+    let tx = session.events_tx.clone();
+    std::thread::spawn(move || {
+        let result = read_frequency_window();
+        tx.send(BackgroundEvent::Frequency(result));
+    });
+}
+
+fn read_frequency_window() -> Result<crate::FrequencyWindow, String> {
+    victus_hw::read_policies(Path::new("/sys/devices/system/cpu/cpufreq"))
+        .map_err(|error| error.to_string()).and_then(|policies| frequency_window(&policies))
+}
+
+pub fn gpu_name() -> String {
+    let Ok(entries) = std::fs::read_dir("/proc/driver/nvidia/gpus") else { return String::new() };
+    for entry in entries.flatten() {
+        if let Ok(text) = std::fs::read_to_string(entry.path().join("information")) {
+            if let Some(name) = text.lines().find_map(|line| line.strip_prefix("Model:")) {
+                return name.trim().trim_start_matches("NVIDIA GeForce ").to_owned();
+            }
+        }
+    }
+    String::new()
+}
+
+fn arm_tick(session: &Session) {
+    if session.stop.load(Ordering::Relaxed) { return; }
+    let model = session.model.borrow();
+    let animated = session.visible.load(Ordering::Relaxed) && matches!(model.page, 0 | 3)
+        && model.state.lighting.enabled && effect_is_animated(&model.state.lighting.effect);
+    let preview = model.offline && session.charts.has_visible();
+    drop(model);
+    let delay = if animated || session.light_at.get().is_some() || session.fan_at.get().is_some() { Duration::from_millis(50) }
+        else if preview { Duration::from_secs(1) } else { return };
+    let due = Instant::now() + delay;
+    if session.timer_due.get().is_some_and(|existing| existing <= due) { return; }
+    if let Some(id) = session.timer.borrow_mut().take() { id.remove(); }
+    session.timer_due.set(Some(due));
+    let weak = session.self_weak.borrow().clone();
+    let id = glib::timeout_add_local_once(delay, move || {
+        if let Some(session) = weak.upgrade() {
+            session.timer.borrow_mut().take();
+            session.timer_due.set(None);
+            on_tick(&session);
+            arm_tick(&session);
+        }
+    });
+    *session.timer.borrow_mut() = Some(id);
+}
+
+fn install_tray(session: &Rc<Session>) {
+    let (profile, fan_mode, modes) = {
+        let model = session.model.borrow();
+        let mode = fan_mode_key(FanMode::from_config(&model.state.fan)).to_owned();
+        let modes = pages::fan_pairs(&model.host.fan_modes).into_iter().map(|(key, label, _)| (key.to_owned(), label.to_owned())).collect::<Vec<_>>();
+        (model.profile, mode, modes)
+    };
+    match tray::Tray::install(profile, &fan_mode, &modes, Arc::clone(&session.wake)) {
+        Ok(icon) => *session.tray.borrow_mut() = Some(icon),
+        Err(error) => eprintln!("tray icon: {error}"),
+    }
 }
 
 #[allow(clippy::forget_non_drop)]
@@ -441,7 +740,7 @@ fn install_css(window: &impl IsA<gtk4::Widget>, accent: &gtk4::CssProvider) {
     provider.load_from_string(CSS);
     let display = window.display();
     gtk4::style_context_add_provider_for_display(&display, &provider, gtk4::STYLE_PROVIDER_PRIORITY_USER);
-    accent.load_from_string("window.victus { --accent: #3F8CFF; }");
+    accent.load_from_string("");
     gtk4::style_context_add_provider_for_display(&display, accent, gtk4::STYLE_PROVIDER_PRIORITY_USER + 1);
 }
 
@@ -536,21 +835,22 @@ fn wire_home(session: &Rc<Session>) {
 }
 
 fn wire_power(session: &Rc<Session>) {
-    bind_power_label(session, &session.built.power.stapm.scale, &session.built.power.stapm.value, "W");
-    bind_power_label(session, &session.built.power.fast.scale, &session.built.power.fast.value, "W");
-    bind_power_label(session, &session.built.power.slow.scale, &session.built.power.slow.value, "W");
-    bind_power_label(session, &session.built.power.tctl.scale, &session.built.power.tctl.value, "°C");
-    bind_power_label(session, &session.built.power.reapply.scale, &session.built.power.reapply.value, "s");
-    bind_power_label(session, &session.built.power.freq_min.scale, &session.built.power.freq_min.value, "MHz");
-    bind_power_label(session, &session.built.power.freq_max.scale, &session.built.power.freq_max.value, "MHz");
-    bind_power_label(session, &session.built.power.uv_core.scale, &session.built.power.uv_core.value, "mV");
-    bind_power_label(session, &session.built.power.uv_cache.scale, &session.built.power.uv_cache.value, "mV");
+    for (slider, unit) in [(&session.built.power.stapm, "W"), (&session.built.power.fast, "W"), (&session.built.power.slow, "W"),
+        (&session.built.power.tctl, "°C"), (&session.built.power.reapply, "s"), (&session.built.power.freq_min, "MHz"),
+        (&session.built.power.freq_max, "MHz"), (&session.built.power.uv_core, "mV"), (&session.built.power.uv_cache, "mV")] {
+        bind_power_label(slider, unit);
+    }
+    couple_limits(session, &session.built.power.freq_min.scale, &session.built.power.freq_max.scale);
+    if session.model.borrow().host.intel { couple_limits(session, &session.built.power.slow.scale, &session.built.power.fast.scale); }
     let weak = Rc::downgrade(session);
     session.built.power.enabled.connect_active_notify(move |switch| {
         let Some(session) = weak.upgrade() else { return };
         let on = switch.is_active();
         session.built.power.limits.set_visible(on);
         session.built.power.note.set_visible(!on);
+        if !session.suppress.get() {
+            apply_power(&session);
+        }
     });
     let weak = Rc::downgrade(session);
     session.built.power.apply.connect_clicked(move |_| {
@@ -569,12 +869,28 @@ fn wire_power(session: &Rc<Session>) {
     });
 }
 
-fn bind_power_label(session: &Rc<Session>, scale: &gtk4::Scale, label: &gtk4::Label, unit: &'static str) {
-    let _ = session;
-    let label = label.clone();
-    let unit = unit.to_owned();
-    scale.connect_value_changed(move |scale| {
-        label.set_text(&scale_text(scale.value(), &unit));
+fn bind_power_label(slider: &widgets::Slider, unit: &'static str) {
+    slider.unit.set_text(unit);
+    let value = slider.value.clone();
+    let divisor = slider.divisor;
+    slider.scale.connect_value_changed(move |scale| {
+        value.set_range(scale.adjustment().lower() / divisor, scale.adjustment().upper() / divisor);
+        value.set_value(scale.value() / divisor);
+    });
+    let scale = slider.scale.clone();
+    slider.value.connect_value_changed(move |spin| scale.set_value(spin.value() * divisor));
+}
+
+fn couple_limits(session: &Rc<Session>, lower: &gtk4::Scale, upper: &gtk4::Scale) {
+    let weak = Rc::downgrade(session);
+    let other = upper.clone();
+    lower.connect_value_changed(move |scale| {
+        if weak.upgrade().is_some_and(|session| !session.suppress.get()) && scale.value() > other.value() { other.set_value(scale.value()); }
+    });
+    let weak = Rc::downgrade(session);
+    let other = lower.clone();
+    upper.connect_value_changed(move |scale| {
+        if weak.upgrade().is_some_and(|session| !session.suppress.get()) && scale.value() < other.value() { other.set_value(scale.value()); }
     });
 }
 
@@ -592,6 +908,7 @@ fn wire_fans(session: &Rc<Session>) {
         let Some(session) = weak.upgrade() else { return };
         session.curve_cpu.set(true);
         session.drag.set(None);
+        session.selected_point.set(None);
         refresh_view(&session);
     });
     let weak = Rc::downgrade(session);
@@ -599,6 +916,7 @@ fn wire_fans(session: &Rc<Session>) {
         let Some(session) = weak.upgrade() else { return };
         session.curve_cpu.set(false);
         session.drag.set(None);
+        session.selected_point.set(None);
         refresh_view(&session);
     });
     let weak = Rc::downgrade(session);
@@ -649,6 +967,18 @@ fn wire_fans(session: &Rc<Session>) {
         delete_fan_point(&session, x, y);
     });
     session.built.fans.chart.add_controller(click);
+    let motion = gtk4::EventControllerMotion::new();
+    let weak = Rc::downgrade(session);
+    motion.connect_motion(move |_, x, y| {
+        let Some(session) = weak.upgrade() else { return };
+        let (width, height, maximum) = chart_size(&session);
+        let model = session.model.borrow();
+        let hover = paint::Plot::new(width, height, maximum).nearest(curve_points(&model.state.fan, model.profile, session.curve_cpu.get()), x, y);
+        if hover != session.fan_hover.get() { session.fan_hover.set(hover); session.built.fans.chart.queue_draw(); }
+    });
+    let weak = Rc::downgrade(session);
+    motion.connect_leave(move |_| { if let Some(session) = weak.upgrade() { session.fan_hover.set(None); session.built.fans.chart.queue_draw(); } });
+    session.built.fans.chart.add_controller(motion);
 }
 
 fn wire_keyboard(session: &Rc<Session>) {
@@ -687,7 +1017,7 @@ fn wire_keyboard(session: &Rc<Session>) {
             return;
         }
         session.model.borrow_mut().state.lighting.brightness = paint::round_i32(scale.value()).clamp(0, 255);
-        schedule(&session.light_at);
+            schedule(&session, true);
     });
     let weak = Rc::downgrade(session);
     session.built.keyboard.speed.connect_value_changed(move |scale| {
@@ -698,7 +1028,7 @@ fn wire_keyboard(session: &Rc<Session>) {
             return;
         }
         session.model.borrow_mut().state.lighting.speed = speed;
-        schedule(&session.light_at);
+        schedule(&session, true);
     });
     let weak = Rc::downgrade(session);
     session.built.keyboard.idle.connect_value_changed(move |spin| {
@@ -706,8 +1036,17 @@ fn wire_keyboard(session: &Rc<Session>) {
         if session.suppress.get() {
             return;
         }
-        session.model.borrow_mut().state.lighting.idle_timeout = paint::round_i32(spin.value()).clamp(0, 3600);
-        schedule(&session.light_at);
+        if !session.built.keyboard.idle_enabled.is_active() { return; }
+        session.model.borrow_mut().state.lighting.idle_timeout = paint::round_i32(spin.value()).clamp(1, 600);
+        schedule(&session, true);
+    });
+    let weak = Rc::downgrade(session);
+    session.built.keyboard.idle_enabled.connect_active_notify(move |switch| {
+        let Some(session) = weak.upgrade() else { return };
+        session.built.keyboard.idle.set_sensitive(switch.is_active());
+        if session.suppress.get() { return; }
+        session.model.borrow_mut().state.lighting.idle_timeout = if switch.is_active() { paint::round_i32(session.built.keyboard.idle.value()).clamp(1, 600) } else { 0 };
+        schedule(&session, true);
     });
     let click = gtk4::GestureClick::new();
     click.set_button(1);
@@ -717,12 +1056,33 @@ fn wire_keyboard(session: &Rc<Session>) {
         let width = f64::from(session.built.keyboard.visual.width());
         let height = f64::from(session.built.keyboard.visual.height());
         if let Some(zone) = paint::key_zone(width, height, x, y) {
-            session.zone_target.set(i32::try_from(zone).unwrap_or(0));
+            session.zone_target.set(if session.model.borrow().zones <= 1 { 0 } else { i32::try_from(zone).unwrap_or(0) });
             refresh_view(&session);
             sync_color_entries(&session);
         }
     });
     session.built.keyboard.visual.add_controller(click);
+    for (area, secondary) in [(&session.built.keyboard.chip, false), (&session.built.keyboard.chip2, true)] {
+        let click = gtk4::GestureClick::new();
+        click.set_button(1);
+        let weak = Rc::downgrade(session);
+        click.connect_pressed(move |_, _, _, _| {
+            let Some(session) = weak.upgrade() else { return };
+            let hex = if secondary { session.model.borrow().state.lighting.color2.clone() } else { active_color(&session.model.borrow(), session.zone_target.get()) };
+            let initial = gtk4::gdk::RGBA::parse(&hex).ok();
+            let dialog = gtk4::ColorDialog::new();
+            dialog.set_title(if secondary { "Secondary Color" } else { "Keyboard Color" });
+            dialog.set_with_alpha(false);
+            let weak = Rc::downgrade(&session);
+            dialog.choose_rgba(Some(&session.window), initial.as_ref(), None::<&gtk4::gio::Cancellable>, move |result| {
+                if let (Some(session), Ok(color)) = (weak.upgrade(), result) {
+                    let hex = paint::hex_from_unit(f64::from(color.red()), f64::from(color.green()), f64::from(color.blue()));
+                    assign_hex(&session, &hex, secondary, false);
+                }
+            });
+        });
+        area.add_controller(click);
+    }
 }
 
 fn bind_hex(session: &Rc<Session>, entry: &gtk4::Entry, secondary: bool) {
@@ -737,6 +1097,12 @@ fn bind_hex(session: &Rc<Session>, entry: &gtk4::Entry, secondary: bool) {
             assign_hex(&session, &format!("#{text}"), secondary, true);
         }
     });
+    let weak = Rc::downgrade(session);
+    entry.connect_activate(move |_| { if let Some(session) = weak.upgrade() { sync_color_entries(&session); } });
+    let focus = gtk4::EventControllerFocus::new();
+    let weak = Rc::downgrade(session);
+    focus.connect_leave(move |_| { if let Some(session) = weak.upgrade() { sync_color_entries(&session); } });
+    entry.add_controller(focus);
 }
 
 fn bind_strip(session: &Rc<Session>, area: &DrawingArea, hue_strip: bool) {
@@ -746,42 +1112,120 @@ fn bind_strip(session: &Rc<Session>, area: &DrawingArea, hue_strip: bool) {
     click.connect_pressed(move |_, _, x, _| {
         let Some(session) = weak.upgrade() else { return };
         let width = f64::from(if hue_strip { session.built.keyboard.hue.width() } else { session.built.keyboard.shade.width() }).max(1.0);
-        let fraction = (x / width).clamp(0.0, 1.0);
+        let cell = ((x / width) * 36.0).floor().clamp(0.0, 35.0);
+        let fraction = if hue_strip { cell / 36.0 } else { cell / 35.0 };
         let current = {
             let model = session.model.borrow();
             active_color(&model, session.zone_target.get())
         };
         let (hue, _, _) = hsv_parts(&current);
         let (red, green, blue) = if hue_strip {
-            paint::hsv_to_rgb(fraction, 1.0, 1.0)
+            paint::hsl_to_rgb(fraction, 0.85, 0.55)
         } else {
-            paint::hsv_to_rgb(hue, 1.0, fraction)
+            paint::hsl_to_rgb(hue, 0.28 + fraction * 0.6, 0.95 - fraction * 0.76)
         };
         assign_hex(&session, &paint::hex_from_unit(red, green, blue), false, false);
     });
     area.add_controller(click);
+    let drag = gtk4::GestureDrag::new();
+    drag.set_button(1);
+    let weak = Rc::downgrade(session);
+    drag.connect_drag_update(move |gesture, dx, _| {
+        let Some(session) = weak.upgrade() else { return };
+        let Some((origin, _)) = gesture.start_point() else { return };
+        let area = if hue_strip { &session.built.keyboard.hue } else { &session.built.keyboard.shade };
+        let cell = (((origin + dx) / f64::from(area.width()).max(1.0)) * 36.0).floor().clamp(0.0, 35.0);
+        let hue = hsv_parts(&active_color(&session.model.borrow(), session.zone_target.get())).0;
+        let rgb = if hue_strip { paint::hsl_to_rgb(cell / 36.0, 0.85, 0.55) } else { let t = cell / 35.0; paint::hsl_to_rgb(hue, 0.28 + t * 0.6, 0.95 - t * 0.76) };
+        assign_hex(&session, &paint::hex_from_unit(rgb.0, rgb.1, rgb.2), false, false);
+    });
+    area.add_controller(drag);
+}
+
+struct GraphPick {
+    key: String,
+    name: String,
+    group: String,
+    unit: String,
+    min: f64,
+    max: f64,
+    graphable: bool,
 }
 
 fn wire_sensors(session: &Rc<Session>) {
+    let menu = gtk4::Popover::new();
+    menu.set_parent(&session.window);
+    menu.set_has_arrow(false);
+    menu.add_css_class("sensor-menu");
+    let item = gtk4::Button::with_label("Graph");
+    menu.set_child(Some(&item));
+    *session.sensor_menu.borrow_mut() = Some(menu);
+
+    let pending = Rc::new(RefCell::new(None::<GraphPick>));
+    let click = gtk4::GestureClick::new();
+    click.set_button(3);
+    click.set_propagation_phase(gtk4::PropagationPhase::Capture);
     let weak = Rc::downgrade(session);
-    session.built.sensors.list.connect_row_selected(move |_, row| {
+    let pending_click = Rc::clone(&pending);
+    click.connect_pressed(move |gesture, _, x, y| {
+        gesture.set_state(gtk4::EventSequenceState::Claimed);
         let Some(session) = weak.upgrade() else { return };
-        let Some(row) = row else { return };
+        let Some(y_px) = finite_i32(y) else { return };
+        let Some(row) = session.built.sensors.list.row_at_y(y_px) else { return };
         let key = row.widget_name().to_string();
         if key.is_empty() {
             return;
         }
-        *session.graph_key.borrow_mut() = key;
-        session.built.sensors.graph.queue_draw();
-        if let Some(area) = session.popout.borrow().as_ref() {
-            area.queue_draw();
+        let pick = {
+            let rows = session.sensor_rows.borrow();
+            let Some(sensor) = rows.iter().find(|item| item.key == key) else { return };
+            GraphPick {
+                key: sensor.key.clone(),
+                name: sensor.name.clone(),
+                group: sensor.group.clone(),
+                unit: sensor.unit.clone(),
+                min: sensor.min,
+                max: sensor.max,
+                graphable: sensor.graphable,
+            }
+        };
+        let graphable = pick.graphable;
+        *pending_click.borrow_mut() = Some(pick);
+        let Some(menu) = session.sensor_menu.borrow().clone() else { return };
+        if let Some(button) = menu.child().and_downcast::<gtk4::Button>() {
+            button.set_sensitive(graphable);
+            button.set_tooltip_text(if graphable { None } else { Some("Not graphable") });
         }
-        refresh_graph_button(&session);
+        let Some(x_px) = finite_i32(x) else { return };
+        let Some(point) = session.built.sensors.list.compute_point(
+            &session.window,
+            &gtk4::graphene::Point::new(x_px as f32, y_px as f32),
+        ) else {
+            return;
+        };
+        let origin_x = finite_i32(f64::from(point.x())).unwrap_or(0);
+        let origin_y = finite_i32(f64::from(point.y())).unwrap_or(0);
+        menu.set_pointing_to(Some(&gtk4::gdk::Rectangle::new(origin_x, origin_y, 1, 1)));
+        menu.popup();
     });
+    session.built.sensors.list.add_controller(click);
+
     let weak = Rc::downgrade(session);
-    session.built.sensors.open.connect_clicked(move |_| {
+    item.connect_clicked(move |_| {
         let Some(session) = weak.upgrade() else { return };
-        open_graph(&session);
+        if let Some(menu) = session.sensor_menu.borrow().as_ref() {
+            menu.popdown();
+        }
+        let Some(pick) = pending.borrow_mut().take() else { return };
+        if !pick.graphable {
+            return;
+        }
+        let offline = session.model.borrow().offline;
+        session.charts.open(
+            graph::Meta { key: pick.key, name: pick.name, group: pick.group, unit: pick.unit, min: pick.min, max: pick.max },
+            offline,
+        );
+        arm_tick(&session);
     });
 }
 
@@ -798,6 +1242,7 @@ fn wire_settings(session: &Rc<Session>) {
             show_shortcut(&session, None);
         } else {
             session.capturing.set(true);
+            session.captured_mods.borrow_mut().clear();
             session.built.settings.shortcut_set.set_label("Press a key…");
             session.built.settings.shortcut.set_text("(waiting)");
         }
@@ -830,6 +1275,10 @@ fn wire_settings(session: &Rc<Session>) {
     keys.connect_key_pressed(move |_, keyval, keycode, state| {
         let Some(session) = weak.upgrade() else { return Propagation::Proceed };
         if !session.capturing.get() {
+            if session.page.load(Ordering::Relaxed) == 2 && session.built.fans.chart.has_focus() && keyval == Key::Delete {
+                delete_selected_point(&session);
+                return Propagation::Stop;
+            }
             return Propagation::Proceed;
         }
         if keyval == Key::Escape {
@@ -842,10 +1291,19 @@ fn wire_settings(session: &Rc<Session>) {
             return Propagation::Proceed;
         }
         let code = i32::try_from(keycode).unwrap_or(0) - 8;
-        if code <= 0 || is_modifier(code) {
+        if is_modifier(code) {
+            let mut mods = session.captured_mods.borrow_mut();
+            if !mods.contains(&code) { mods.push(code); }
+            return Propagation::Stop;
+        }
+        if code <= 0 {
             return Propagation::Proceed;
         }
-        let mods = modifier_codes(state);
+        let mut mods = session.captured_mods.borrow().clone();
+        for fallback in modifier_codes(state) {
+            let side = match fallback { 29 => 97, 42 => 54, 56 => 100, 125 => 126, other => other };
+            if !mods.contains(&fallback) && !mods.contains(&side) { mods.push(fallback); }
+        }
         session.capturing.set(false);
         session.built.settings.shortcut_set.set_label("Set");
         match validate_shortcut(&mods, code) {
@@ -853,6 +1311,24 @@ fn wire_settings(session: &Rc<Session>) {
             Err(error) => session.built.settings.shortcut.set_text(&error.to_string()),
         }
         Propagation::Stop
+    });
+    let weak = Rc::downgrade(session);
+    keys.connect_key_released(move |_, _, keycode, _| {
+        if let Some(session) = weak.upgrade() {
+            let code = i32::try_from(keycode).unwrap_or(0) - 8;
+            session.captured_mods.borrow_mut().retain(|held| *held != code);
+        }
+    });
+    let weak = Rc::downgrade(session);
+    session.window.connect_is_active_notify(move |window| {
+        if !window.is_active() {
+            if let Some(session) = weak.upgrade() {
+                session.capturing.set(false);
+                session.captured_mods.borrow_mut().clear();
+                session.built.settings.shortcut_set.set_label("Set");
+                show_shortcut(&session, None);
+            }
+        }
     });
     session.window.add_controller(keys);
 }
@@ -937,20 +1413,14 @@ fn wire_draws(session: &Rc<Session>) {
     session.built.keyboard.hue.set_draw_func(move |_, cr, width, height| {
         let Some(session) = weak.upgrade() else { return };
         let hex = active_color(&session.model.borrow(), session.zone_target.get());
-        let (hue, _, _) = hsv_parts(&hex);
-        paint::hue_strip(cr, f64::from(width), f64::from(height), hue);
+        paint::hue_strip(cr, f64::from(width), f64::from(height), paint::unit_rgb(&hex));
     });
     let weak = Rc::downgrade(session);
     session.built.keyboard.shade.set_draw_func(move |_, cr, width, height| {
         let Some(session) = weak.upgrade() else { return };
         let hex = active_color(&session.model.borrow(), session.zone_target.get());
-        let (hue, _, value) = hsv_parts(&hex);
-        paint::shade_strip(cr, f64::from(width), f64::from(height), hue, value);
-    });
-    let weak = Rc::downgrade(session);
-    session.built.sensors.graph.set_draw_func(move |_, cr, width, height| {
-        let Some(session) = weak.upgrade() else { return };
-        paint_graph(&session, cr, width, height);
+        let (hue, _, _) = hsv_parts(&hex);
+        paint::shade_strip(cr, f64::from(width), f64::from(height), hue, paint::unit_rgb(&hex));
     });
 }
 
@@ -975,7 +1445,7 @@ fn sync_controls(session: &Session) {
     session.built.power.limits.set_visible(power.enabled);
     session.built.power.note.set_visible(!power.enabled);
     if let Some(window) = model.host.frequency.clone() {
-        let step = if window.upper - window.lower >= 100_000 { 100_000.0 } else { 1.0 };
+        let step = 1000.0;
         configure_scale(&session.built.power.freq_min.scale, f64::from(window.lower), f64::from(window.upper), step);
         configure_scale(&session.built.power.freq_max.scale, f64::from(window.lower), f64::from(window.upper), step);
         let (mut minimum, mut maximum) = model.state.cpu_frequency.unwrap_or((window.minimum, window.maximum));
@@ -987,9 +1457,9 @@ fn sync_controls(session: &Session) {
         }
         set_scale(&session.built.power.freq_min.scale, f64::from(minimum));
         set_scale(&session.built.power.freq_max.scale, f64::from(maximum));
-        session.applied_freq.set(Some((minimum, maximum)));
+        session.applied_freq.set(Some((window.minimum, window.maximum)));
         session.built.power.freq_sliders.set_visible(true);
-        let note = if window.mixed { "CPU policies disagree. The sliders follow the first policy." } else { "" };
+        let note = if window.mixed { "CPU policies disagree. The sliders use their common hardware range." } else { "" };
         session.built.power.freq_note.set_text(note);
     } else {
         session.built.power.freq_sliders.set_visible(false);
@@ -1000,9 +1470,9 @@ fn sync_controls(session: &Session) {
         };
         session.built.power.freq_note.set_text(note);
     }
-    set_scale(&session.built.power.uv_core.scale, 0.0);
-    set_scale(&session.built.power.uv_cache.scale, 0.0);
-    session.applied_uv.set((0, 0));
+    set_scale(&session.built.power.uv_core.scale, f64::from(model.host.undervolt.0));
+    set_scale(&session.built.power.uv_cache.scale, f64::from(model.host.undervolt.1));
+    session.applied_uv.set(None);
     session.built.settings.battery.set_active(model.state.battery_power_save);
     session.built.settings.nvidia.set_active(model.state.disable_nvidia_queries);
     session.built.settings.hardware.set_active(model.state.hardware_shortcuts);
@@ -1012,13 +1482,12 @@ fn sync_controls(session: &Session) {
     let lighting = normalize_lighting_settings(&model.state.lighting, model.zones);
     set_scale(&session.built.keyboard.brightness, f64::from(lighting.brightness));
     set_scale(&session.built.keyboard.speed, f64::from(lighting.speed));
-    session.built.keyboard.idle.set_value(f64::from(lighting.idle_timeout));
+    session.built.keyboard.idle_enabled.set_active(lighting.idle_timeout > 0);
+    session.built.keyboard.idle.set_sensitive(lighting.idle_timeout > 0);
+    if lighting.idle_timeout > 0 { session.built.keyboard.idle.set_value(f64::from(lighting.idle_timeout)); }
     drop(model);
     session.suppress.set(false);
     sync_color_entries(session);
-    if let Some(row) = find_row(&session.built.sensors.list, "cpu-temp") {
-        session.built.sensors.list.select_row(Some(&row));
-    }
     refresh_view(session);
 }
 
@@ -1042,13 +1511,17 @@ fn show_page(session: &Session, page: usize) {
     session.model.borrow_mut().page = page;
     session.built.stack.set_visible_child_name(PAGE_NAMES[page]);
     session.built.root.set_size_request(page_width(page), -1);
+    session.window.set_default_size(page_width(page), 680);
     session.built.sidebar.queue_draw();
+    notify_sensors(session);
+    if page == 1 { refresh_frequency(session); }
+    arm_tick(session);
 }
 
 fn page_width(page: usize) -> i32 {
     match page {
         2 | 3 | 4 => 700,
-        _ => 460,
+        _ => 480,
     }
 }
 
@@ -1067,6 +1540,10 @@ fn select_profile(session: &Session, profile: i32) {
 }
 
 fn apply_fan_mode(session: &Session, mode: FanMode) {
+    if FanMode::from_config(&session.model.borrow().state.fan) == mode {
+        refresh_view(session);
+        return;
+    }
     session.fan_at.set(None);
     session.drag.set(None);
     let requests = {
@@ -1090,6 +1567,7 @@ fn apply_fan_mode(session: &Session, mode: FanMode) {
 }
 
 fn apply_power(session: &Session) {
+    if !session.built.power.apply.is_sensitive() { return; }
     let form = power_form(session);
     if form == *session.applied_power.borrow() {
         return;
@@ -1103,17 +1581,16 @@ fn apply_power(session: &Session) {
         reapply_seconds: form.reapply,
     };
     let request = format!("power-config\t{}", power_to_value(&policy));
-    if commit(session, &request) {
-        session.model.borrow_mut().state.power = policy;
-        *session.applied_power.borrow_mut() = form;
-    }
-    refresh_view(session);
+    session.built.power.apply.set_sensitive(false);
+    session.built.power.enabled.set_sensitive(false);
+    submit_control(session, request, ControlRequest::Power(policy));
 }
 
 fn apply_frequency(session: &Session) {
+    if !session.built.power.freq_apply.is_sensitive() { return; }
     let minimum = paint::round_i32(session.built.power.freq_min.scale.value());
     let maximum = paint::round_i32(session.built.power.freq_max.scale.value());
-    if session.applied_freq.get() == Some((minimum, maximum)) {
+    if session.applied_freq.get() == Some((minimum, maximum)) && session.model.borrow().state.cpu_frequency == Some((minimum, maximum)) {
         return;
     }
     if let Err(error) = validate_frequency(minimum, maximum) {
@@ -1121,30 +1598,80 @@ fn apply_frequency(session: &Session) {
         show_status(session);
         return;
     }
-    if commit(session, &format!("cpu-frequency-config\t{minimum}\t{maximum}")) {
-        session.model.borrow_mut().state.cpu_frequency = Some((minimum, maximum));
-        session.applied_freq.set(Some((minimum, maximum)));
-    }
-    show_status(session);
+    session.built.power.freq_apply.set_sensitive(false);
+    submit_control(session, format!("cpu-frequency-config\t{minimum}\t{maximum}"), ControlRequest::Frequency(minimum, maximum));
 }
 
 fn apply_undervolt(session: &Session) {
+    if !session.built.power.uv_apply.is_sensitive() { return; }
     let core = paint::round_i32(session.built.power.uv_core.scale.value()).clamp(-250, 0);
     let cache = paint::round_i32(session.built.power.uv_cache.scale.value()).clamp(-250, 0);
-    if session.applied_uv.get() == (core, cache) {
-        return;
-    }
     if let Err(error) = validate_undervolt(core, cache) {
         session.built.power.uv_status.set_text(&error.to_string());
         return;
     }
-    if commit(session, &format!("intel-undervolt\t{core}\t{cache}")) {
-        session.applied_uv.set((core, cache));
+    session.built.power.uv_apply.set_sensitive(false);
+    session.built.power.uv_status.set_text("Applying Intel undervolt…");
+    submit_control(session, format!("intel-undervolt\t{core}\t{cache}"), ControlRequest::Undervolt(core, cache));
+}
+
+fn submit_control(session: &Session, request: String, kind: ControlRequest) {
+    let socket = connects_to_socket(&session.model.borrow()).map(Path::to_path_buf);
+    let tx = session.events_tx.clone();
+    std::thread::spawn(move || {
+        let result = match socket {
+            Some(socket) => transact(&socket, &request, Duration::from_secs(10)).and_then(|line| parse_status_response(&line)).map_err(|error| error.to_string()),
+            None => Ok("Offline preview".into()),
+        };
+        tx.send(BackgroundEvent::Control(kind, result));
+    });
+}
+
+fn control_result(session: &Session, kind: ControlRequest, result: Result<String, String>) {
+    let success = result.is_ok();
+    session.model.borrow_mut().status = result.as_ref().err().cloned().unwrap_or_default();
+    match kind {
+        ControlRequest::Power(policy) => {
+            session.built.power.apply.set_sensitive(true);
+            session.built.power.enabled.set_sensitive(true);
+            if success {
+                *session.applied_power.borrow_mut() = AppliedPower { enabled: policy.enabled, stapm: policy.stapm_limit, fast: policy.fast_limit,
+                    slow: policy.slow_limit, tctl: policy.tctl_temp, reapply: policy.reapply_seconds };
+                session.model.borrow_mut().state.power = policy;
+            } else {
+                session.suppress.set(true);
+                session.built.power.enabled.set_active(session.model.borrow().state.power.enabled);
+                session.suppress.set(false);
+            }
+            refresh_view(session);
+        }
+        ControlRequest::Frequency(minimum, maximum) => {
+            session.built.power.freq_apply.set_sensitive(true);
+            if success { session.model.borrow_mut().state.cpu_frequency = Some((minimum, maximum)); session.applied_freq.set(Some((minimum, maximum))); }
+            session.last_frequency.borrow_mut().take();
+            refresh_frequency(session);
+        }
+        ControlRequest::Undervolt(core, cache) => {
+            session.built.power.uv_apply.set_sensitive(true);
+            if !success { session.built.power.uv_status.set_text(result.as_ref().err().map(String::as_str).unwrap_or("Undervolt failed")); show_status(session); return; }
+        session.applied_uv.set(Some((core, cache)));
+        let path = {
+            let mut model = session.model.borrow_mut();
+            model.host.undervolt = (core, cache);
+            if model.offline { PathBuf::new() } else { model.host.conf_path.clone() }
+        };
+        if !path.as_os_str().is_empty() {
+            let existing = std::fs::read_to_string(&path).unwrap_or_default();
+            if let Some(parent) = path.parent() { let _ = std::fs::create_dir_all(parent); }
+            if let Err(error) = std::fs::write(&path, crate::upsert_undervolt(&existing, core, cache)) {
+                session.built.power.uv_status.set_text(&format!("Undervolt applied; could not save offsets: {error}"));
+                return;
+            }
+        }
         session.built.power.uv_status.set_text("Undervolt applied.");
-    } else {
-        let status = session.model.borrow().status.clone();
-        session.built.power.uv_status.set_text(&status);
+        }
     }
+    show_status(session);
 }
 
 fn power_form(session: &Session) -> AppliedPower {
@@ -1196,7 +1723,7 @@ fn select_effect(session: &Session, id: &str) {
             model.state.lighting.effect = id.to_owned();
         }
     }
-    schedule(&session.light_at);
+    schedule(session, true);
     refresh_view(session);
 }
 
@@ -1223,7 +1750,7 @@ fn assign_hex(session: &Session, hex: &str, secondary: bool, from_entry: bool) {
     session.built.keyboard.chip2.queue_draw();
     session.built.keyboard.hue.queue_draw();
     session.built.keyboard.shade.queue_draw();
-    schedule(&session.light_at);
+    schedule(session, true);
 }
 
 fn assign_color(model: &mut Model, target: i32, hex: String) {
@@ -1251,11 +1778,12 @@ fn assign_color(model: &mut Model, target: i32, hex: String) {
 fn schedule_fan_if_custom(session: &Session) {
     let custom = FanMode::from_config(&session.model.borrow().state.fan) == FanMode::Custom;
     if custom {
-        schedule(&session.fan_at);
+        schedule(session, false);
     }
 }
 
 fn begin_fan_drag(session: &Session, x: f64, y: f64) {
+    session.built.fans.chart.grab_focus();
     let (width, height, temp_max) = chart_size(session);
     let plot = paint::Plot::new(width, height, temp_max);
     let mut model = session.model.borrow_mut();
@@ -1270,6 +1798,7 @@ fn begin_fan_drag(session: &Session, x: f64, y: f64) {
     };
     drop(model);
     session.drag.set(index);
+    session.selected_point.set(index);
     session.built.fans.chart.queue_draw();
 }
 
@@ -1310,8 +1839,23 @@ fn delete_fan_point(session: &Session, x: f64, y: f64) {
         return;
     }
     points.remove(index);
+    session.selected_point.set(None);
     drop(model);
     session.drag.set(None);
+    normalize_curve(session);
+    schedule_fan_if_custom(session);
+    session.built.fans.chart.queue_draw();
+}
+
+fn delete_selected_point(session: &Session) {
+    let Some(index) = session.selected_point.get() else { return };
+    let mut model = session.model.borrow_mut();
+    let profile = model.profile;
+    let points = curve_points_mut(&mut model.state.fan, profile, session.curve_cpu.get());
+    if index == 0 || index + 1 >= points.len() { return; }
+    points.remove(index);
+    drop(model);
+    session.selected_point.set(None);
     normalize_curve(session);
     schedule_fan_if_custom(session);
     session.built.fans.chart.queue_draw();
@@ -1345,7 +1889,7 @@ fn save_shortcut(session: &Session, mods: &[i32], key: i32) {
         let mut model = session.model.borrow_mut();
         model.host.shortcut_mods = mods.to_vec();
         model.host.shortcut_key = key;
-        model.host.conf_path.clone()
+        if model.offline { PathBuf::new() } else { model.host.conf_path.clone() }
     };
     if !path.as_os_str().is_empty() {
         let existing = std::fs::read_to_string(&path).unwrap_or_default();
@@ -1450,6 +1994,7 @@ fn launch_update() -> Result<(), &'static str> {
     for (name, args) in terminals {
         let Some(program) = which(name) else { continue };
         let mut command = Command::new(program);
+        command.env_remove("FONTCONFIG_FILE").env_remove("VICTUS_HUB_FONT_DIR");
         command.args(*args).arg("/bin/bash").arg("-c").arg(&shell);
         if command.spawn().is_ok() {
             return Ok(());
@@ -1461,13 +2006,25 @@ fn launch_update() -> Result<(), &'static str> {
 fn collect_diagnostics(session: &Rc<Session>) {
     session.built.settings.diagnostics.set_sensitive(false);
     let tx = session.events_tx.clone();
+    let state = victus_core::state_to_value(&session.model.borrow().state);
+    let logs = session.log.borrow().iter().cloned().collect::<Vec<_>>();
     let _ = std::thread::Builder::new().name("victus-diagnostics".into()).spawn(move || {
-        let _ = tx.send(BackgroundEvent::Diagnostics(write_diagnostics()));
+        tx.send(BackgroundEvent::Diagnostics(write_diagnostics(&state, &logs)));
     });
 }
 
-fn show_diagnostics(session: &Rc<Session>, path: PathBuf) {
+fn show_diagnostics(session: &Rc<Session>, result: Result<PathBuf, String>) {
     session.built.settings.diagnostics.set_sensitive(true);
+    let path = match result {
+        Ok(path) => path,
+        Err(error) => {
+            let dialog = libadwaita::AlertDialog::new(Some("Diagnostics"), Some(&format!("Could not save diagnostics:\n{error}")));
+            dialog.add_response("ok", "OK");
+            dialog.set_close_response("ok");
+            dialog.present(Some(&session.window));
+            return;
+        }
+    };
     let body = format!("Report saved to:\n{}", path.display());
     let dialog = libadwaita::AlertDialog::new(Some("Diagnostics"), Some(&body));
     dialog.add_response("open", "Open");
@@ -1484,33 +2041,52 @@ fn show_diagnostics(session: &Rc<Session>, path: PathBuf) {
     dialog.present(Some(&session.window));
 }
 
-fn write_diagnostics() -> PathBuf {
-    let kernel = command_output("journalctl", &["-k", "-b", "--no-pager"]);
-    let daemon = command_output("journalctl", &["-u", "victus-hubd", "-b", "--no-pager"]);
+fn write_diagnostics(state: &serde_json::Value, logs: &[String]) -> Result<PathBuf, String> {
+    let kernel = command_output("journalctl", &["-k", "-n", "8000", "--no-pager", "-o", "short-iso"]);
+    let daemon = command_output("journalctl", &["-u", "victus-hubd", "-n", "400", "--no-pager", "-o", "short-iso"]);
     let modules = filter_journal_lines(kernel.as_deref(), kernel_module_error_line, 80);
     let acpi = filter_journal_lines(kernel.as_deref(), acpi_error_line, 80);
-    let report = diagnostics_from_logs(modules.as_deref(), acpi.as_deref(), daemon.as_deref());
-    let path = report_path();
-    let _ = std::fs::write(&path, report);
-    path
+    let level = std::env::var("VICTUS_HUB_DEBUG_LEVEL").ok().and_then(|text| victus_core::debug_level_from_value(&text).ok()).unwrap_or(0);
+    let daemon = daemon.as_deref().and_then(|text| victus_core::filter_daemon_journal(text, level, 80));
+    let read = |path: &str| std::fs::read_to_string(path).map(|text| text.trim().to_owned()).unwrap_or_else(|_| "unknown".into());
+    let mut system = vec![("Program version".to_owned(), PROGRAM_VERSION.to_owned()), ("Kernel".into(), read("/proc/sys/kernel/osrelease")),
+        ("OS".into(), read("/etc/os-release")), ("CPU".into(), read("/proc/cpuinfo").lines().find_map(|line| line.strip_prefix("model name").and_then(|text| text.split_once(':').map(|(_, value)| value.trim().to_owned()))).unwrap_or_else(|| "unknown".into())),
+        ("GPU".into(), gpu_name()), ("Daemon policy".into(), state.to_string())];
+    for (name, attribute) in [("Vendor", "sys_vendor"), ("Model", "product_name"), ("SKU", "product_sku"), ("Board", "board_name"), ("BIOS", "bios_version"), ("BIOS date", "bios_date")] {
+        system.push((name.into(), read(&format!("/sys/class/dmi/id/{attribute}"))));
+    }
+    let caps = victus_hw::detect_capabilities(Path::new("/sys/class/hwmon"), Path::new("/sys/class/leds"), Path::new("/sys/devices/platform/hp-wmi"));
+    let capabilities = vec![
+        victus_core::Capability { name: "Fan control".into(), available: caps.fan_modes.len() > 1, details: caps.fan_modes.join(", ") },
+        victus_core::Capability { name: "Keyboard RGB".into(), available: caps.keyboard_lighting, details: format!("{} zones", victus_hw::keyboard_zone_count(Path::new("/sys/devices/platform/hp-kbd-rgb"), None)) },
+        victus_core::Capability { name: "GPU MUX".into(), available: caps.gpu_mux.is_some(), details: caps.gpu_mux.map(|mux| format!("current {}; {}", mux.current_index, mux.modes.iter().map(|mode| mode.name.clone()).collect::<Vec<_>>().join(", "))).unwrap_or_default() },
+        victus_core::Capability { name: "CPU frequency".into(), available: victus_hw::read_policies(Path::new("/sys/devices/system/cpu/cpufreq")).is_ok(), details: "/sys/devices/system/cpu/cpufreq".into() },
+        victus_core::Capability { name: "Daemon socket".into(), available: Path::new(victus_core::DEFAULT_SOCKET).exists(), details: victus_core::DEFAULT_SOCKET.into() },
+    ];
+    let kernel_modules = ["hp_wmi", "hp_kbd_rgb", "nvidia", "amdgpu"].map(|name| (name, Path::new("/sys/module").join(name).is_dir()));
+    let rows = system.iter().map(|(key, value)| (key.as_str(), value.as_str())).collect::<Vec<_>>();
+    let generated = command_output("date", &["--iso-8601=seconds"]).unwrap_or_else(|| "unknown".into());
+    let report = victus_core::render_markdown(generated.trim(), &rows, &capabilities, &kernel_modules, logs, daemon.as_deref(), modules.as_deref(), acpi.as_deref());
+    let path = report_path()?;
+    std::fs::write(&path, report).map_err(|error| format!("{}: {error}", path.display()))?;
+    Ok(path)
 }
 
-fn report_path() -> PathBuf {
+fn report_path() -> Result<PathBuf, String> {
     let stamp = SystemTime::now().duration_since(UNIX_EPOCH).map(|elapsed| elapsed.as_secs()).unwrap_or(0);
     let name = format!("victus-hub-diagnostics-{stamp}.md");
-    if let Some(home) = std::env::var_os("HOME") {
-        let downloads = PathBuf::from(home).join("Downloads");
-        if downloads.is_dir() || std::fs::create_dir_all(&downloads).is_ok() {
-            return downloads.join(name);
-        }
-    }
-    std::env::temp_dir().join(name)
+    let folder = command_output("xdg-user-dir", &["DOCUMENTS"]).map(|path| PathBuf::from(path.trim()))
+        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join("Documents")))
+        .unwrap_or_else(std::env::temp_dir);
+    std::fs::create_dir_all(&folder).map_err(|error| format!("{}: {error}", folder.display()))?;
+    Ok(folder.join(name))
 }
 
 fn command_output(name: &str, args: &[&str]) -> Option<String> {
     let program = which(name)?;
-    let output = Command::new(program).args(args).output().ok()?;
-    String::from_utf8(output.stdout).ok().filter(|text| !text.is_empty())
+    let args = args.iter().map(|arg| (*arg).to_owned()).collect::<Vec<_>>();
+    let output = victus_hw::run_command_timeout(&program, &args, Duration::from_secs(5)).ok()?;
+    (output.status == 0).then_some(output.stdout).filter(|text| !text.is_empty())
 }
 
 fn which(name: &str) -> Option<PathBuf> {
@@ -1520,6 +2096,10 @@ fn which(name: &str) -> Option<PathBuf> {
 fn quit(session: &Session) {
     session.stop.store(true, Ordering::Relaxed);
     session.visible.store(false, Ordering::Relaxed);
+    notify_sensors(session);
+    if let Some(id) = session.timer.borrow_mut().take() { id.remove(); }
+    session.charts.close_all();
+    session.tray.borrow_mut().take();
     session.window.set_hide_on_close(false);
     session.window.close();
     if let Some(app) = session.window.application() {
@@ -1538,8 +2118,12 @@ fn on_tick(session: &Session) {
         }
         latest
     };
-    if let Some(snapshot) = latest {
-        apply_snapshot(session, snapshot);
+    if let Some(SensorUpdate { snapshot, keys, frequency }) = latest {
+        let page = session.page.load(Ordering::Relaxed);
+        if victus_core::keys_for_page(page).iter().all(|key| keys.iter().any(|requested| requested == key)) {
+            apply_snapshot(session, snapshot, &keys);
+            if page == 1 { if let Some(frequency) = frequency { apply_frequency_view(session, frequency); } }
+        }
     }
     if take_due(&session.light_at) {
         flush_lighting(session);
@@ -1550,7 +2134,44 @@ fn on_tick(session: &Session) {
     if session.visible.load(Ordering::Relaxed) {
         tick_animation(session);
     }
+    if session.model.borrow().offline && Instant::now() >= session.preview_at.get() {
+        session.preview_at.set(Instant::now() + Duration::from_secs(1));
+        let step = session.preview_step.get();
+        session.charts.preview(step);
+        session.preview_step.set(step.saturating_add(1));
+    }
+    for action in tray::Tray::poll() {
+        match action {
+            tray::Action::Show => reveal(session),
+            tray::Action::Toggle => {
+                if session.visible.load(Ordering::Relaxed) {
+                    session.charts.hide_all();
+                    session.window.set_visible(false);
+                    session.visible.store(false, Ordering::Relaxed);
+                    notify_sensors(session);
+                } else {
+                    reveal(session);
+                }
+            }
+            tray::Action::Quit => quit(session),
+            tray::Action::Profile(index) => select_profile(session, index),
+            tray::Action::Fan(key) => {
+                if let Some(mode) = fan_mode_from_key(&key) {
+                    apply_fan_mode(session, mode);
+                }
+            }
+        }
+    }
     show_status(session);
+}
+
+fn reveal(session: &Session) {
+    session.window.unminimize();
+    session.window.present();
+    session.charts.show_all();
+    session.visible.store(true, Ordering::Relaxed);
+    notify_sensors(session);
+    arm_tick(session);
 }
 
 fn deliver_events(session: &Rc<Session>) {
@@ -1566,27 +2187,27 @@ fn deliver_events(session: &Rc<Session>) {
         match event {
             BackgroundEvent::Release(release) => show_release(session, release),
             BackgroundEvent::Diagnostics(path) => show_diagnostics(session, path),
+            BackgroundEvent::State(value) => apply_remote_state(session, &value),
+            BackgroundEvent::Frequency(result) => apply_frequency_view(session, result),
+            BackgroundEvent::Control(kind, result) => control_result(session, kind, result),
         }
     }
 }
 
-fn apply_snapshot(session: &Session, snapshot: SensorSnapshot) {
+fn apply_snapshot(session: &Session, snapshot: SensorSnapshot, requested: &[String]) {
     let profile = session.model.borrow().profile;
     let signature = extra_signature(&snapshot.extra_sensors);
-    if signature != *session.extra_sig.borrow() {
+    if session.page.load(Ordering::Relaxed) == 4 && signature != *session.extra_sig.borrow() {
         *session.extra_sig.borrow_mut() = signature;
         pages::clear_list(&session.built.sensors.list);
-        let rows = pages::fill_sensors(&session.built.sensors.list, &snapshot.extra_sensors);
+        let rows = pages::fill_sensors(&session.built.sensors.list, &snapshot.extra_sensors, &session.built.sensors.collapsed);
         *session.sensor_rows.borrow_mut() = rows;
-        let key = session.graph_key.borrow().clone();
-        if let Some(row) = find_row(&session.built.sensors.list, &key) {
-            session.built.sensors.list.select_row(Some(&row));
-        }
     }
     {
         let mut stats = session.stats.borrow_mut();
-        let mut history = session.history.borrow_mut();
         for row in session.sensor_rows.borrow().iter() {
+            if !requested.iter().any(|key| key == request_key_for_graph(&row.key)) && row.key != "profile" { continue; }
+            row.row.set_tooltip_text(Some(&reading_source(&snapshot, &row.key)));
             if row.key == "profile" {
                 row.current.set_text(mode_name(profile));
                 continue;
@@ -1595,26 +2216,28 @@ fn apply_snapshot(session: &Session, snapshot: SensorSnapshot) {
                 row.current.set_text(&current_text(&snapshot, &row.key, profile));
                 continue;
             };
-            if row.graphable {
+            if row.graphable && session.page.load(Ordering::Relaxed) == 4 {
                 let stat = stats.entry(row.key.clone()).or_insert(Running { min: value, max: value, sum: 0.0, count: 0 });
                 stat.min = stat.min.min(value);
                 stat.max = stat.max.max(value);
                 stat.sum += value;
                 stat.count = stat.count.saturating_add(1);
-                let samples = history.entry(row.key.clone()).or_default();
-                samples.push_back(value);
-                while samples.len() > 120 {
-                    samples.pop_front();
-                }
-                row.maximum.set_text(&format_stat(stat.max));
-                row.minimum.set_text(&format_stat(stat.min));
+                row.maximum.set_text(&format_stat_unit(stat.max, &row.unit));
+                row.minimum.set_text(&format_stat_unit(stat.min, &row.unit));
                 let count = f64::from(stat.count.max(1));
-                row.average.set_text(&format_stat(stat.sum / count));
+                row.average.set_text(&format_stat_unit(stat.sum / count, &row.unit));
             }
             row.current.set_text(&current_text(&snapshot, &row.key, profile));
+            if row.unit == "°C" && value > 95.0 { row.current.add_css_class("hot"); } else { row.current.remove_css_class("hot"); }
         }
     }
-    session.model.borrow_mut().snapshot = snapshot;
+    session.charts.apply(|key| requested.iter().any(|requested| requested == request_key_for_graph(key)).then(|| graph::Sample {
+        value: sample_value(&snapshot, key),
+        text: current_text(&snapshot, key, profile),
+        source: reading_source(&snapshot, key),
+        ram_total: snapshot.ram_total_gb,
+    }));
+    merge_snapshot(&mut session.model.borrow_mut().snapshot, snapshot, requested);
     refresh_view(session);
 }
 
@@ -1643,7 +2266,7 @@ fn tick_animation(session: &Session) {
         let model = session.model.borrow();
         (model.state.lighting.enabled, model.state.lighting.effect.clone(), model.state.lighting.speed)
     };
-    if enabled && effect_is_animated(&effect) {
+    if matches!(session.page.load(Ordering::Relaxed), 0 | 3) && enabled && effect_is_animated(&effect) {
         session.anim.set(session.anim.get() + step_increment(speed, 0.05));
         session.built.keyboard.visual.queue_draw();
         session.built.home.mini.queue_draw();
@@ -1668,6 +2291,7 @@ fn refresh_view(session: &Session) {
     session.built.home.power_sub.set_text(&power_subtitle(&model));
     session.built.home.light_sub.set_text(&light_subtitle(&model));
     session.built.home.light_row.set_visible(keyboard);
+    session.built.home.gpu_name.set_visible(!(model.state.disable_nvidia_queries && model.profile == 0));
     session.built.home.footer_right.set_text(&power_status_line(&model.host.power_supply));
     session.built.fans.head_status.set_text(&format!(
         "{} · CPU {} · GPU {}",
@@ -1679,6 +2303,9 @@ fn refresh_view(session: &Session) {
     session.built.power.head_status.set_text(&power_head(&model.snapshot));
     let mux_index = model.host.mux.iter().position(|choice| choice.index == model.host.mux_index);
     drop(model);
+    if let Some(icon) = session.tray.borrow().as_ref() {
+        icon.sync(profile, fan_mode_key(mode));
+    }
     widgets::mark(&session.built.home.profile_buttons, usize::try_from(profile.clamp(0, 2)).ok());
     mark_key(&session.built.home.fan_buttons, &session.built.home.fan_keys, fan_mode_key(mode));
     mark_key(&session.built.fans.mode_buttons, &session.built.fans.mode_keys, fan_mode_key(mode));
@@ -1702,9 +2329,15 @@ fn refresh_view(session: &Session) {
     widgets::mark(&session.built.keyboard.zone_buttons, zone_index);
     let animated = enabled && effect_is_animated(&effect);
     session.built.keyboard.color_box.set_visible(enabled && !ignores_color(&effect));
+    session.built.keyboard.zone_row.set_visible(enabled && !ignores_color(&effect) && session.model.borrow().zones > 1);
+    session.built.keyboard.head_status.set_text(&if enabled { format!("{} zone{} · {}", session.model.borrow().zones, if session.model.borrow().zones == 1 { "" } else { "s" }, effect.replace('_', " ")) } else { "off".into() });
     session.built.keyboard.color2_box.set_visible(enabled && needs_color2(&effect));
     session.built.keyboard.speed_row.set_visible(animated);
-    session.accent.load_from_string(&format!("window.victus {{ --accent: {}; }}", accent_hex(profile)));
+    if session.accent_profile.get() != Some(profile) {
+        let color = accent_hex(profile);
+        session.accent.load_from_string(&format!("window.victus button.seg-btn.on {{ background: {color}; }} window.victus .linkish.on, window.victus .accent {{ color: {color}; }} window.victus scale highlight, window.victus switch:checked {{ background: {color}; }}"));
+        session.accent_profile.set(Some(profile));
+    }
     session.built.home.mini.queue_draw();
     session.built.keyboard.visual.queue_draw();
     session.built.keyboard.chip.queue_draw();
@@ -1712,55 +2345,9 @@ fn refresh_view(session: &Session) {
     session.built.keyboard.hue.queue_draw();
     session.built.keyboard.shade.queue_draw();
     session.built.fans.chart.queue_draw();
-    session.built.sensors.graph.queue_draw();
     session.built.sidebar.queue_draw();
-    if let Some(area) = session.popout.borrow().as_ref() {
-        area.queue_draw();
-    }
-    refresh_graph_button(session);
     show_status(session);
-}
-
-fn refresh_graph_button(session: &Session) {
-    let key = session.graph_key.borrow().clone();
-    let graphable = session.sensor_rows.borrow().iter().any(|row| row.key == key && row.graphable);
-    session.built.sensors.open.set_sensitive(graphable);
-}
-
-fn open_graph(session: &Rc<Session>) {
-    if session.sensor_rows.borrow().iter().any(|row| row.key == *session.graph_key.borrow() && !row.graphable) {
-        return;
-    }
-    if let Some(window) = session.graph_window.borrow().as_ref() {
-        window.present();
-        return;
-    }
-    let title = {
-        let key = session.graph_key.borrow().clone();
-        session.sensor_rows.borrow().iter().find(|row| row.key == key).map(|row| row.name.clone()).unwrap_or(key)
-    };
-    let window = gtk4::Window::new();
-    window.set_title(Some(&title));
-    window.set_default_size(720, 360);
-    window.set_transient_for(Some(&session.window));
-    let area = DrawingArea::new();
-    area.set_hexpand(true);
-    area.set_vexpand(true);
-    let weak = Rc::downgrade(session);
-    area.set_draw_func(move |_, cr, width, height| {
-        let Some(session) = weak.upgrade() else { return };
-        paint_graph(&session, cr, width, height);
-    });
-    let weak = Rc::downgrade(session);
-    window.connect_destroy(move |_| {
-        let Some(session) = weak.upgrade() else { return };
-        session.graph_window.borrow_mut().take();
-        session.popout.borrow_mut().take();
-    });
-    window.set_child(Some(&area));
-    *session.popout.borrow_mut() = Some(area);
-    window.present();
-    *session.graph_window.borrow_mut() = Some(window);
+    arm_tick(session);
 }
 
 fn paint_chart(session: &Session, cr: &gtk4::cairo::Context, width: i32, height: i32) {
@@ -1769,10 +2356,10 @@ fn paint_chart(session: &Session, cr: &gtk4::cairo::Context, width: i32, height:
     let temp_max = if cpu { CPU_TEMP_MAX_C } else { GPU_TEMP_MAX_C };
     let points = curve_points(&model.state.fan, model.profile, cpu).to_vec();
     let accent = if cpu { accent_rgb(model.profile) } else { paint::unit_rgb("#E2572C") };
-    let current = if cpu { model.snapshot.cpu_temp_c } else { model.snapshot.gpu_temp_c };
-    let selected = session.drag.get();
+    let current = None;
+    let selected = session.selected_point.get();
     drop(model);
-    paint::chart(cr, f64::from(width), f64::from(height), temp_max, &points, accent, selected, current);
+    paint::chart(cr, f64::from(width), f64::from(height), temp_max, &points, accent, selected, session.fan_hover.get(), current);
 }
 
 fn paint_keys(session: &Session, cr: &gtk4::cairo::Context, width: i32, height: i32, compact: bool) {
@@ -1783,14 +2370,6 @@ fn paint_keys(session: &Session, cr: &gtk4::cairo::Context, width: i32, height: 
     let enabled = settings.enabled;
     drop(model);
     paint::keyboard(cr, f64::from(width), f64::from(height), compact, zones, enabled, &frames);
-}
-
-fn paint_graph(session: &Session, cr: &gtk4::cairo::Context, width: i32, height: i32) {
-    let key = session.graph_key.borrow().clone();
-    let samples = session.history.borrow().get(&key).map(|samples| samples.iter().copied().collect::<Vec<_>>()).unwrap_or_default();
-    let (min, max) = session.sensor_rows.borrow().iter().find(|row| row.key == key).map(|row| (row.min, row.max)).unwrap_or((0.0, 100.0));
-    let profile = session.model.borrow().profile;
-    paint::sparkline(cr, f64::from(width), f64::from(height), &samples, min, max, accent_rgb(profile));
 }
 
 fn commit(session: &Session, request: &str) -> bool {
@@ -1828,12 +2407,18 @@ fn dispatch(model: &mut Model, request: &str) -> bool {
 
 fn show_status(session: &Session) {
     let status = session.model.borrow().status.clone();
+    if !status.is_empty() && status != "Offline preview" {
+        let mut log = session.log.borrow_mut();
+        if log.back() != Some(&status) { log.push_back(status.clone()); while log.len() > 80 { log.pop_front(); } }
+    }
     session.built.status.set_visible(!status.is_empty());
     session.built.status.set_text(&status);
 }
 
-fn schedule(slot: &Cell<Option<Instant>>) {
+fn schedule(session: &Session, lighting: bool) {
+    let slot = if lighting { &session.light_at } else { &session.fan_at };
     slot.set(Some(Instant::now() + DEBOUNCE));
+    arm_tick(session);
 }
 
 fn take_due(slot: &Cell<Option<Instant>>) -> bool {
@@ -1933,7 +2518,7 @@ fn active_color(model: &Model, target: i32) -> String {
 }
 
 fn digits(hex: &str) -> String {
-    hex.trim().trim_start_matches('#').to_owned()
+    hex.trim().trim_start_matches('#').to_ascii_uppercase()
 }
 
 fn curve_points(fan: &FanConfig, profile: i32, cpu: bool) -> &[FanPoint] {
@@ -2048,10 +2633,10 @@ fn power_head(snapshot: &SensorSnapshot) -> String {
 fn current_text(snapshot: &SensorSnapshot, key: &str, profile: i32) -> String {
     match key {
         "profile" => mode_name(profile).to_owned(),
-        "cpu-temp" => snapshot.cpu_temp.value.clone(),
+        "cpu-temp" => snapshot.cpu_temp.value.replace(" C", " °C"),
         "cpu-usage" => snapshot.cpu_usage.value.clone(),
         "cpu-power" => snapshot.cpu_power.value.clone(),
-        "gpu-temp" => snapshot.gpu_temp.value.clone(),
+        "gpu-temp" => snapshot.gpu_temp.value.replace(" C", " °C"),
         "gpu-usage" => snapshot.gpu_usage.value.clone(),
         "gpu-power" => snapshot.gpu_power.value.clone(),
         "cpu-fan" => snapshot.cpu_fan.value.clone(),
@@ -2066,6 +2651,27 @@ fn current_text(snapshot: &SensorSnapshot, key: &str, profile: i32) -> String {
             .map(|extra| extra.reading.value.clone())
             .unwrap_or_else(|| "—".into()),
     }
+}
+
+fn reading_source(snapshot: &SensorSnapshot, key: &str) -> String {
+    let reading = match key {
+        "cpu-temp" => &snapshot.cpu_temp,
+        "cpu-usage" => &snapshot.cpu_usage,
+        "cpu-power" => &snapshot.cpu_power,
+        "gpu-temp" => &snapshot.gpu_temp,
+        "gpu-usage" => &snapshot.gpu_usage,
+        "gpu-power" => &snapshot.gpu_power,
+        "cpu-fan" => &snapshot.cpu_fan,
+        "gpu-fan" => &snapshot.gpu_fan,
+        "pwm-value" => &snapshot.pwm_value,
+        "pwm-mode" => &snapshot.pwm_mode,
+        "ram-usage" => &snapshot.ram_usage,
+        "profile" => return String::new(),
+        other => {
+            return snapshot.extra_sensors.iter().find(|extra| extra.key == other).map(|extra| extra.reading.source.clone()).unwrap_or_default();
+        }
+    };
+    reading.source.clone()
 }
 
 fn sample_value(snapshot: &SensorSnapshot, key: &str) -> Option<f64> {
@@ -2094,35 +2700,127 @@ fn leading_f64(value: &str) -> Option<f64> {
     value.split_whitespace().next().and_then(|token| token.parse().ok())
 }
 
-fn format_stat(value: f64) -> String {
-    if value.abs() >= 100.0 { format!("{value:.0}") } else { format!("{value:.1}") }
+fn format_stat_unit(value: f64, unit: &str) -> String {
+    let number = match unit { "RPM" | "PWM" => format!("{value:.0}"), "V" | "A" => format!("{value:.2}"), _ => format!("{value:.1}") };
+    if unit.is_empty() { number } else { format!("{number} {unit}") }
+}
+
+fn merge_snapshot(target: &mut SensorSnapshot, incoming: SensorSnapshot, keys: &[String]) {
+    for key in keys {
+        match key.as_str() {
+            "cpu-temp" => { target.cpu_temp = incoming.cpu_temp.clone(); target.cpu_temp_c = incoming.cpu_temp_c; }
+            "cpu-usage" => { target.cpu_usage = incoming.cpu_usage.clone(); target.cpu_usage_pct = incoming.cpu_usage_pct; }
+            "gpu-temp" => { target.gpu_temp = incoming.gpu_temp.clone(); target.gpu_temp_c = incoming.gpu_temp_c; }
+            "gpu-usage" => { target.gpu_usage = incoming.gpu_usage.clone(); target.gpu_usage_pct = incoming.gpu_usage_pct; }
+            "cpu-power" => target.cpu_power = incoming.cpu_power.clone(),
+            "gpu-power" => target.gpu_power = incoming.gpu_power.clone(),
+            "cpu-fan" => target.cpu_fan = incoming.cpu_fan.clone(),
+            "gpu-fan" => target.gpu_fan = incoming.gpu_fan.clone(),
+            "pwm-value" => target.pwm_value = incoming.pwm_value.clone(),
+            "pwm-mode" => target.pwm_mode = incoming.pwm_mode.clone(),
+            "ram-usage" => { target.ram_usage = incoming.ram_usage.clone(); target.ram_usage_pct = incoming.ram_usage_pct; target.ram_used_gb = incoming.ram_used_gb; target.ram_total_gb = incoming.ram_total_gb; }
+            "cpu-frequency" | "lm-sensors" => {
+                let prefix = if key == "cpu-frequency" { "cpu-frequency-" } else { "lm-" };
+                target.extra_sensors.retain(|sensor| !sensor.key.starts_with(prefix));
+                target.extra_sensors.extend(incoming.extra_sensors.iter().filter(|sensor| sensor.key.starts_with(prefix)).cloned());
+            }
+            _ => {},
+        }
+    }
+}
+
+fn apply_remote_state(session: &Session, value: &serde_json::Value) {
+    let instance = value.get("instance").and_then(serde_json::Value::as_str).unwrap_or("");
+    let revision = value.get("revision").and_then(serde_json::Value::as_u64).unwrap_or(0);
+    if instance == *session.state_instance.borrow() && revision < session.state_revision.get() { return; }
+    *session.state_instance.borrow_mut() = instance.to_owned();
+    session.state_revision.set(revision);
+    let old = session.model.borrow().state.clone();
+    let profile = session.model.borrow().profile;
+    let pristine_power = power_form(session) == *session.applied_power.borrow();
+    let old_frequency = old.cpu_frequency;
+    {
+        let mut model = session.model.borrow_mut();
+        model.hydrate(value);
+        if session.light_at.get().is_some() { model.state.lighting = old.lighting.clone(); }
+        if session.fan_at.get().is_some() || session.drag.get().is_some() { model.state.fan = old.fan.clone(); }
+    }
+    let model = session.model.borrow();
+    let remote_power = AppliedPower { enabled: model.state.power.enabled, stapm: model.state.power.stapm_limit, fast: model.state.power.fast_limit,
+        slow: model.state.power.slow_limit, tctl: model.state.power.tctl_temp, reapply: model.state.power.reapply_seconds };
+    session.suppress.set(true);
+    if pristine_power {
+        session.built.power.enabled.set_active(remote_power.enabled);
+        for (scale, value) in [(&session.built.power.stapm.scale, remote_power.stapm / 1000), (&session.built.power.fast.scale, remote_power.fast / 1000),
+            (&session.built.power.slow.scale, remote_power.slow / 1000), (&session.built.power.tctl.scale, remote_power.tctl), (&session.built.power.reapply.scale, remote_power.reapply)] { scale.set_value(f64::from(value)); }
+    }
+    *session.applied_power.borrow_mut() = remote_power;
+    session.built.settings.battery.set_active(model.state.battery_power_save);
+    session.built.settings.nvidia.set_active(model.state.disable_nvidia_queries);
+    session.built.settings.hardware.set_active(model.state.hardware_shortcuts);
+    if session.light_at.get().is_none() && model.state.lighting != old.lighting {
+        session.built.keyboard.brightness.set_value(f64::from(model.state.lighting.brightness));
+        session.built.keyboard.speed.set_value(f64::from(model.state.lighting.speed));
+        session.built.keyboard.idle_enabled.set_active(model.state.lighting.idle_timeout > 0);
+        session.built.keyboard.idle.set_sensitive(model.state.lighting.idle_timeout > 0);
+        if model.state.lighting.idle_timeout > 0 { session.built.keyboard.idle.set_value(f64::from(model.state.lighting.idle_timeout)); }
+    }
+    session.built.fans.response.set_selected(u32::from(model.state.fan.curve_response == CURVE_RESPONSE_AGGRESSIVE));
+    session.built.fans.min_change.set_value(model.state.fan.min_fan_change_pct);
+    let frequency_changed = model.state.cpu_frequency != old_frequency || model.profile != profile;
+    if model.profile != profile { session.selected_point.set(None); session.drag.set(None); session.fan_hover.set(None); }
+    drop(model);
+    session.suppress.set(false);
+    if session.light_at.get().is_none() { sync_color_entries(session); }
+    if frequency_changed { refresh_frequency(session); }
+    refresh_view(session);
+}
+
+fn apply_frequency_view(session: &Session, result: Result<crate::FrequencyWindow, String>) {
+    let Ok(window) = result else {
+        session.built.power.freq_sliders.set_visible(false);
+        session.built.power.freq_note.set_text(&result.err().unwrap_or_default());
+        session.model.borrow_mut().host.frequency = None;
+        session.last_frequency.borrow_mut().take();
+        return;
+    };
+    if session.last_frequency.borrow().as_ref() == Some(&window) { return; }
+    let pending = (paint::round_i32(session.built.power.freq_min.scale.value()), paint::round_i32(session.built.power.freq_max.scale.value()));
+    let dirty = session.applied_freq.get().is_some_and(|applied| pending != applied);
+    let (minimum, maximum) = if dirty { (pending.0.clamp(window.lower, window.upper), pending.1.clamp(window.lower, window.upper)) } else { (window.minimum, window.maximum) };
+    session.suppress.set(true);
+    for (slider, value) in [(&session.built.power.freq_min, minimum.min(maximum)), (&session.built.power.freq_max, maximum)] {
+        configure_scale(&slider.scale, f64::from(window.lower), f64::from(window.upper), 1000.0);
+        slider.value.set_range(f64::from(window.lower) / 1000.0, f64::from(window.upper) / 1000.0);
+        slider.scale.set_value(f64::from(value));
+        slider.value.set_value(f64::from(value) / 1000.0);
+    }
+    session.suppress.set(false);
+    session.applied_freq.set(Some((window.minimum, window.maximum)));
+    session.built.power.freq_note.set_text(&format!("Applies to all {} CPU policies. {}Hardware range: {:.3}–{:.3} MHz.", window.policies,
+        if window.mixed { "Current limits differ between policies. " } else { "" }, f64::from(window.lower) / 1000.0, f64::from(window.upper) / 1000.0));
+    session.built.power.freq_sliders.set_visible(true);
+    *session.last_frequency.borrow_mut() = Some(window.clone());
+    session.model.borrow_mut().host.frequency = Some(window);
 }
 
 fn extra_signature(extras: &[ExtraSensor]) -> String {
     extras.iter().map(|extra| format!("{}:{}", extra.group, extra.key)).collect::<Vec<_>>().join("\n")
 }
 
-fn find_row(list: &ListBox, key: &str) -> Option<ListBoxRow> {
-    let mut index = 0;
-    while let Some(row) = list.row_at_index(index) {
-        if row.widget_name().as_str() == key {
-            return Some(row);
-        }
-        index += 1;
+fn finite_i32(value: f64) -> Option<i32> {
+    if !value.is_finite() {
+        return None;
     }
-    None
+    let rounded = value.round();
+    if rounded < f64::from(i32::MIN) || rounded > f64::from(i32::MAX) {
+        return None;
+    }
+    Some(rounded as i32)
 }
 
 fn mark_key(buttons: &[gtk4::Button], keys: &[String], key: &str) {
     widgets::mark(buttons, keys.iter().position(|item| item == key));
-}
-
-fn scale_text(value: f64, unit: &str) -> String {
-    if unit == "MHz" {
-        format!("{} MHz", paint::round_i32(value / 1000.0))
-    } else {
-        format!("{} {unit}", paint::round_i32(value))
-    }
 }
 
 fn set_scale(scale: &gtk4::Scale, value: f64) {
@@ -2135,4 +2833,34 @@ fn configure_scale(scale: &gtk4::Scale, lower: f64, upper: f64, step: f64) {
     adjustment.set_upper(upper);
     adjustment.set_step_increment(step);
     adjustment.set_page_increment(step);
+}
+
+#[cfg(test)]
+mod regression_tests {
+    use super::*;
+
+    #[test]
+    fn frequency_range_is_the_intersection_of_all_policies() {
+        let policy = |lower, upper, minimum, maximum| victus_hw::FrequencyPolicy {
+            path: PathBuf::new(), hardware_min: lower, hardware_max: upper, minimum, maximum,
+        };
+        let policies = [policy(400_000, 5_000_000, 400_000, 5_000_000), policy(800_000, 3_800_000, 800_000, 3_800_000)];
+        let common = frequency_window(&policies).unwrap();
+        assert_eq!((common.lower, common.upper, common.minimum, common.maximum), (800_000, 3_800_000, 800_000, 3_800_000));
+        assert!(common.mixed);
+        assert!(frequency_window(&[policy(400_000, 700_000, 400_000, 700_000), policy(800_000, 3_800_000, 800_000, 3_800_000)]).is_err());
+    }
+
+    #[test]
+    fn partial_samples_do_not_replace_unrequested_readings() {
+        let mut target = SensorSnapshot::default();
+        target.cpu_fan = victus_core::SensorReading::new("2400 RPM");
+        target.cpu_temp_c = Some(70.0);
+        let mut incoming = SensorSnapshot::default();
+        incoming.cpu_power = victus_core::SensorReading::new("15 W");
+        merge_snapshot(&mut target, incoming, &["cpu-power".into()]);
+        assert_eq!(target.cpu_fan.value, "2400 RPM");
+        assert_eq!(target.cpu_temp_c, Some(70.0));
+        assert_eq!(target.cpu_power.value, "15 W");
+    }
 }

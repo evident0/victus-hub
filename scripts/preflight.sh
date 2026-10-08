@@ -11,9 +11,20 @@ have_shared_lib() {
 preflight() {
 	local app_only=${1:-0} kernel missing=() tool packages header
 	kernel=$(uname -r)
-	for tool in python3 cargo rustc systemctl loginctl gdbus; do
+	for tool in python3 cargo rustc pkg-config systemctl loginctl gdbus; do
 		command -v "$tool" >/dev/null 2>&1 || missing+=("$tool")
 	done
+	for tool in 'gtk4 >= 4.14' 'libadwaita-1 >= 1.5'; do
+		pkg-config --exists "$tool" 2>/dev/null || missing+=("development package: $tool")
+	done
+	if command -v rustc >/dev/null 2>&1; then
+		local rust_version
+		rust_version=$(rustc --version)
+		if ! [[ "$rust_version" =~ ^rustc\ ([0-9]+)\.([0-9]+) ]] ||
+			! (( BASH_REMATCH[1] > 1 || (BASH_REMATCH[1] == 1 && BASH_REMATCH[2] >= 85) )); then
+			missing+=("Rust >= 1.85")
+		fi
+	fi
 	if [ "$(id -u)" -ne 0 ]; then
 		command -v sudo >/dev/null 2>&1 || missing+=(sudo)
 	fi

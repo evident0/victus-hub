@@ -21,6 +21,7 @@ serde_json.workspace = true
 log.workspace = true
 nix.workspace = true
 libloading.workspace = true
+gio = "0.21"
 
 [lints.rust]
 unsafe_code = "warn"

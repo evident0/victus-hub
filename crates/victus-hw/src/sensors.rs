@@ -104,7 +104,7 @@ impl SensorSampler {
             snap.extra_sensors.extend(read_frequencies(cpu_root));
         }
         if wanted("lm-sensors") {
-            snap.extra_sensors.extend(read_lm(hwmon_class));
+            snap.extra_sensors.extend(read_lm(hwmon_class, disable_nvidia || gpu_suspended));
         }
         if keys.iter().any(|key| matches!(key.as_str(), "gpu-temp" | "gpu-usage" | "gpu-power")) {
             fill_gpu(&mut snap, keys, gpu, gpu_suspended, disable_nvidia, nvidia_present, hwmon_class);
@@ -222,6 +222,7 @@ fn read_ram(meminfo: &Path) -> Option<(SensorReading, Option<f64>, Option<f64>, 
         }
     }
     let total = total?;
+    if total <= 0.0 { return None; }
     let available = available?;
     let used_kb = (total - available).max(0.0);
     let used_gb = used_kb / 1_048_576.0;
@@ -270,43 +271,66 @@ fn read_frequencies(cpu_root: &Path) -> Vec<ExtraSensor> {
     sensors
 }
 
-fn read_lm(hwmon_class: &Path) -> Vec<ExtraSensor> {
+fn read_lm(hwmon_class: &Path, skip_nvidia: bool) -> Vec<ExtraSensor> {
     let mut sensors = Vec::new();
     for hwmon in hwmon_dirs(hwmon_class) {
         let chip = read_text(&hwmon.join("name")).unwrap_or_else(|| "hwmon".into());
+        if skip_nvidia && chip == "nvidia" { continue; }
+        // libsensors chip addresses distinguished, for example, two NVMe drives.
+        let device = fs::canonicalize(hwmon.join("device")).ok();
+        let identity = device.as_ref().and_then(|path| path.file_name()).or_else(|| hwmon.file_name()).unwrap_or_default().to_string_lossy();
+        let chip_id = format!("{chip}-{identity}");
         let Ok(entries) = fs::read_dir(&hwmon) else { continue };
         for entry in entries.flatten() {
             let fname = entry.file_name();
             let fname = fname.to_string_lossy();
-            let (unit, scale) = if fname.starts_with("temp") && fname.ends_with("_input") {
-                ("°C", 1000.0)
-            } else if fname.starts_with("fan") && fname.ends_with("_input") {
-                ("RPM", 1.0)
-            } else if (fname.starts_with("in") || fname.starts_with("power")) && fname.ends_with("_input") {
-                if fname.starts_with("power") { ("W", 1_000_000.0) } else { ("V", 1000.0) }
+            let Some(feature) = fname.strip_suffix("_input").or_else(|| fname.strip_suffix("_average")) else { continue };
+            if fname.ends_with("_average") && hwmon.join(format!("{feature}_input")).exists() { continue; }
+            let (unit, scale, maximum, metric) = if feature.starts_with("temp") {
+                ("°C", 1000.0, 100.0, "Temp")
+            } else if feature.starts_with("fan") {
+                ("RPM", 1.0, 6000.0, "Fan")
+            } else if feature.starts_with("power") {
+                ("W", 1_000_000.0, 120.0, "Power")
+            } else if feature.starts_with("in") {
+                ("V", 1000.0, 20.0, "Voltage")
+            } else if feature.starts_with("curr") {
+                ("A", 1000.0, 10.0, "Current")
             } else {
                 continue;
             };
             let Some(raw) = read_int(&entry.path()) else { continue };
             let value = raw as f64 / scale;
-            let label = read_text(&hwmon.join(fname.replace("_input", "_label"))).unwrap_or_else(|| fname.trim_end_matches("_input").to_owned());
+            if unit == "°C" && value <= -100.0 { continue; }
+            let label = read_text(&hwmon.join(format!("{feature}_label"))).unwrap_or_else(|| feature.to_owned());
+            if matches!(chip.as_str(), "hp" | "hp-wmi" | "hp_wmi" | "k10temp")
+                || (chip == "amdgpu" && matches!(label.as_str(), "edge" | "PPT"))
+                || (chip.starts_with("BAT") && unit == "W") { continue; }
+            let group = if chip.starts_with("nvme") { "Drives" } else if chip.starts_with("spd") { "Memory" }
+                else if chip.starts_with("mt7921") { "Network" } else if chip.starts_with("BAT") { "Battery" }
+                else if chip.starts_with("ucsi_source") { "USB-C" } else if matches!(chip.as_str(), "amdgpu" | "nvidia" | "nouveau") { "GPU" }
+                else if chip.starts_with("acpitz") { "ACPI" } else { "Other" };
+            let slug = |text: &str| text.chars().map(|ch| if ch.is_ascii_alphanumeric() { ch.to_ascii_lowercase() } else { '-' }).collect::<String>();
             sensors.push(ExtraSensor {
-                key: format!("lm-{chip}-{}", entry.file_name().to_string_lossy()),
-                group: chip.clone(),
-                name: label,
+                key: format!("lm-{}-{}", slug(&chip_id), slug(feature)),
+                group: group.into(),
+                name: format!("{label} {metric}"),
                 unit: unit.into(),
                 value_min: 0.0,
-                value_max: value.max(100.0),
+                value_max: value.max(maximum),
                 numeric_value: value,
                 reading: SensorReading::with_source(format_sensor(value, unit), format!("sensors: {chip} / {}", entry.file_name().to_string_lossy())),
             });
         }
     }
+    sensors.sort_by(|left, right| (&left.group, &left.key).cmp(&(&right.group, &right.key)));
     sensors
 }
 
 fn format_sensor(value: f64, unit: &str) -> String {
-    if unit == "RPM" { format!("{value:.0} {unit}") } else { format!("{value:.1} {unit}") }
+    if unit == "RPM" { format!("{value:.0} {unit}") }
+    else if matches!(unit, "V" | "A") { format!("{value:.2} {unit}") }
+    else { format!("{value:.1} {unit}") }
 }
 
 fn fill_gpu(
@@ -343,6 +367,9 @@ fn fill_gpu(
                 None => snap.gpu_temp = SensorReading::with_source("Unavailable", "dGPU off or unavailable"),
             }
         }
+        if wanted("gpu-power") {
+            snap.gpu_power = read_gpu_power(hwmon_class);
+        }
         if wanted("gpu-usage") {
             snap.gpu_usage = SensorReading::with_source("N/A", "dGPU off or unavailable");
         }
@@ -373,6 +400,23 @@ fn fill_gpu(
             None => snap.gpu_usage = SensorReading::with_source("Unavailable", "no NVIDIA utilization (NVML/smi)"),
         }
     }
+}
+
+fn read_gpu_power(hwmon_class: &Path) -> SensorReading {
+    for hwmon in hwmon_dirs(hwmon_class) {
+        if !matches!(read_text(&hwmon.join("name")).as_deref(), Some("amdgpu" | "nouveau")) { continue; }
+        let Ok(entries) = fs::read_dir(&hwmon) else { continue };
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if name.starts_with("power") && (name.ends_with("_input") || name.ends_with("_average")) {
+                if let Some(value) = read_int(&entry.path()) {
+                    return SensorReading::with_source(format!("{:.1} W", value as f64 / 1_000_000.0), entry.path().display().to_string());
+                }
+            }
+        }
+    }
+    SensorReading::with_source("Unavailable", "no GPU power sensor")
 }
 
 fn parse_proc_stat(path: &Path) -> Option<CpuTicks> {
@@ -428,6 +472,32 @@ mod tests {
         assert!(snap.ram_used_gb.unwrap() > 3.0);
         let empty = sampler.read(&[], &root, &stat, &mem, &root, None, None, false, false, false);
         assert_eq!(empty.cpu_temp.value, "0 C");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn extra_sensor_identity_and_average_current_inputs_are_preserved() {
+        let root = offline_scratch("extra-sensors");
+        for (directory, current, temperature) in [("hwmon0", "1500", "42000"), ("hwmon1", "2500", "47000")] {
+            let chip = root.join(directory);
+            fs::create_dir_all(&chip).unwrap();
+            fs::write(chip.join("name"), "nvme\n").unwrap();
+            fs::write(chip.join("temp1_input"), temperature).unwrap();
+            fs::write(chip.join("curr1_input"), current).unwrap();
+            fs::write(chip.join("power1_average"), "12000000").unwrap();
+            fs::write(chip.join("temp2_input"), "-128000").unwrap();
+        }
+        let extras = read_lm(&root, false);
+        assert_eq!(extras.len(), 6);
+        let keys = extras.iter().map(|sensor| &sensor.key).collect::<std::collections::HashSet<_>>();
+        assert_eq!(keys.len(), extras.len());
+        assert_eq!(extras.iter().filter(|sensor| sensor.unit == "A").count(), 2);
+        assert_eq!(extras.iter().filter(|sensor| sensor.unit == "W" && sensor.numeric_value == 12.0).count(), 2);
+        let amd = root.join("hwmon2");
+        fs::create_dir_all(&amd).unwrap();
+        fs::write(amd.join("name"), "amdgpu").unwrap();
+        fs::write(amd.join("power1_average"), "23000000").unwrap();
+        assert_eq!(read_gpu_power(&root).value, "23.0 W");
         let _ = fs::remove_dir_all(root);
     }
 }

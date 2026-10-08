@@ -1,7 +1,8 @@
 use serde_json::Value;
+use std::sync::{Arc, Mutex};
 use victus_core::{
     config_from_value, format_sensors_response, format_status, lighting_from_value, match_request, parse_ints,
-    parse_json_object, power_from_value, state_to_value, unknown_sensor_keys, validate_frequency, validate_intel_power,
+    parse_json_object, power_from_value, unknown_sensor_keys, validate_frequency, validate_intel_power,
     validate_ryzenadj, validate_shortcut, validate_undervolt, HubError, HubResult, SensorSnapshot,
 };
 
@@ -111,6 +112,83 @@ fn one_int(body: &str, name: &str) -> HubResult<i32> {
     values.first().copied().ok_or_else(|| HubError::new(format!("expected an integer for {name}")))
 }
 
+/// Slow production I/O uses separate platforms; fan and lighting writes remain
+/// serialized by the runtime lock. Tests can still use the direct dispatcher.
+pub fn dispatch_with_workers<P: Platform>(
+    runtime: &Arc<Mutex<Runtime<P>>>, sampler: &Arc<Mutex<P>>, commands: &Arc<Mutex<P>>, peer: &Peer, request: &str,
+) -> String {
+    if !peer.authorized { return format_status(false, "access denied: session is no longer active and unlocked"); }
+    let result = (|| -> HubResult<Option<String>> {
+        let Some((prefix, body)) = match_request(request.trim_end_matches(['\n', '\r'])) else { return Ok(None) };
+        match prefix {
+            "sensors" => {
+                let keys: Vec<String> = body.trim().trim_matches('\t').split(',').map(str::trim)
+                    .filter(|key| !key.is_empty()).map(str::to_owned).collect();
+                let unknown = unknown_sensor_keys(&keys);
+                if !unknown.is_empty() { return Err(HubError::new(format!("unknown sensors: {}", unknown.join(", ")))); }
+                let disable = runtime.lock().expect("runtime lock").nvidia_queries_disabled();
+                let snap = sampler.lock().expect("sensor worker").sensors(&keys, disable);
+                Ok(Some(format_sensors_response(&snap)))
+            }
+            "cpu-power" => Ok(Some(sampler.lock().expect("sensor worker").cpu_power().format_line())),
+            "set-profile\t" => {
+                let index = one_int(body, "profile")?.clamp(0, 2);
+                let mut worker = commands.lock().expect("command worker");
+                let message = worker.apply_profile(index)?;
+                runtime.lock().expect("runtime lock").complete_profile(index);
+                Ok(Some(ok(&message)))
+            }
+            "power-config\t" => {
+                let policy = power_from_value(Some(&parse_json_object(body, "power-config")?));
+                let mut worker = commands.lock().expect("command worker");
+                if policy.enabled { apply_power_policy(&mut *worker, &policy)?; }
+                let message = runtime.lock().expect("runtime lock").set_power(policy);
+                Ok(Some(ok(&message)))
+            }
+            "cpu-frequency-config" => {
+                let body = body.trim_start_matches('\t').trim();
+                let limits = if body.is_empty() { None } else {
+                    let values = parse_ints(body, 2, "expected minimum and maximum in kHz")?;
+                    validate_frequency(values[0], values[1])?;
+                    Some((values[0], values[1]))
+                };
+                let mut worker = commands.lock().expect("command worker");
+                if let Some((minimum, maximum)) = limits { worker.cpu_frequency(minimum, maximum)?; }
+                runtime.lock().expect("runtime lock").remember_cpu_frequency(limits);
+                Ok(Some(ok("cpu-frequency-config")))
+            }
+            "power-limits\t" | "intel-power-limits\t" | "intel-undervolt\t" | "cpu-frequency-limits\t" => {
+                let mut worker = commands.lock().expect("command worker");
+                let count = if prefix == "power-limits\t" { 4 } else { 2 };
+                let values = parse_ints(body, count, "invalid hardware arguments")?;
+                let message = match prefix {
+                    "power-limits\t" => { validate_ryzenadj(values[0], values[1], values[2], values[3])?; worker.ryzenadj(values[0], values[1], values[2], values[3])? }
+                    "intel-power-limits\t" => { validate_intel_power(values[0], values[1])?; worker.intel_power(values[0], values[1])? }
+                    "intel-undervolt\t" => { validate_undervolt(values[0], values[1])?; worker.intel_undervolt(values[0], values[1])? }
+                    _ => { validate_frequency(values[0], values[1])?; worker.cpu_frequency(values[0], values[1])? }
+                };
+                Ok(Some(ok(&message)))
+            }
+            _ => Ok(None),
+        }
+    })();
+    match result {
+        Ok(Some(line)) => line,
+        Ok(None) => dispatch(&mut *runtime.lock().expect("runtime lock"), peer, request),
+        Err(error) => format_status(false, &error.to_string()),
+    }
+}
+
+pub fn apply_power_policy<P: Platform>(platform: &mut P, policy: &victus_core::PowerPolicy) -> HubResult<String> {
+    if platform.intel_cpu() {
+        validate_intel_power(policy.slow_limit, policy.fast_limit)?;
+        platform.intel_power(policy.slow_limit, policy.fast_limit)
+    } else {
+        validate_ryzenadj(policy.stapm_limit, policy.fast_limit, policy.slow_limit, policy.tctl_temp)?;
+        platform.ryzenadj(policy.stapm_limit, policy.fast_limit, policy.slow_limit, policy.tctl_temp)
+    }
+}
+
 fn keyboard_color<P: Platform>(runtime: &mut Runtime<P>, body: &str) -> HubResult<String> {
     let parts: Vec<&str> = body.split('\t').filter(|part| !part.is_empty()).collect();
     if parts.len() == 3 {
@@ -185,8 +263,7 @@ fn sensors<P: Platform>(runtime: &mut Runtime<P>, body: &str) -> HubResult<Strin
 }
 
 fn state_line<P: Platform>(runtime: &Runtime<P>) -> String {
-    let state = runtime.snapshot();
-    let mut value = state_to_value(&state);
+    let mut value = runtime.state_value();
     if let Some(object) = value.as_object_mut() {
         object.insert("capabilities".to_owned(), runtime.platform.capabilities());
     }
@@ -273,6 +350,102 @@ mod tests {
         runtime.set_hardware_shortcuts(true);
         runtime.handle_key(&[29, 42], 103);
         assert!(!runtime.published.is_empty());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn unavailable_manual_control_never_overrides_the_auto_fallback() {
+        let (mut runtime, dir) = runtime();
+        runtime.platform.manual = false;
+        let config = FanConfig { custom_enabled: true, ..FanConfig::default() };
+        runtime.set_fan_config(config);
+        runtime.fan_poll(1.0);
+        assert!(runtime.platform.log.iter().any(|entry| entry == "pwm-enable 2"));
+        assert!(!runtime.platform.log.iter().any(|entry| entry == "pwm-enable 1" || entry.starts_with("pwm ")));
+        assert_eq!(runtime.platform.temp_reads, 0);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn saved_four_zone_static_lighting_is_written_once_after_startup() {
+        let dir = offline_scratch("static-startup");
+        let mut state = victus_core::DaemonState::default();
+        state.lighting.enabled = true;
+        state.lighting.zone_colors = vec!["#123456".into(); 4];
+        victus_core::save_state(&state, &dir.join("state.json")).unwrap();
+        let mut runtime = Runtime::new(dir.join("state.json"), &dir.join("shortcuts.json"), FakePlatform::default());
+        runtime.lighting_tick(1.0);
+        runtime.lighting_tick(2.0);
+        runtime.lighting_tick(3.0);
+        assert_eq!(runtime.platform.log.iter().filter(|entry| entry.starts_with("color ")).count(), 4);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    struct BlockingSensor {
+        inner: FakePlatform,
+        started: Option<std::sync::mpsc::Sender<()>>,
+        release: Option<std::sync::mpsc::Receiver<()>>,
+    }
+
+    macro_rules! forward_mut {
+        ($($name:ident($($arg:ident: $ty:ty),*) -> $ret:ty;)*) => { $(
+            fn $name(&mut self, $($arg: $ty),*) -> $ret { self.inner.$name($($arg),*) }
+        )* };
+    }
+
+    impl Platform for BlockingSensor {
+        forward_mut! {
+            pwm_enable(mode: i32) -> HubResult<String>;
+            pwm_max() -> HubResult<String>;
+            pwm(value: i32) -> HubResult<String>;
+            keyboard_color(zone: Option<i32>, red: u8, green: u8, blue: u8) -> HubResult<String>;
+            keyboard_brightness(level: i32) -> HubResult<String>;
+            keyboard_user_brightness(level: i32) -> HubResult<String>;
+            temps(disable: bool) -> HubResult<(Option<f64>, Option<f64>)>;
+            ryzenadj(stapm: i32, fast: i32, slow: i32, tctl: i32) -> HubResult<String>;
+            intel_power(pl1: i32, pl2: i32) -> HubResult<String>;
+            intel_undervolt(core: i32, cache: i32) -> HubResult<String>;
+            cpu_frequency(minimum: i32, maximum: i32) -> HubResult<String>;
+            apply_profile(index: i32) -> HubResult<String>;
+            cpu_power() -> victus_core::CpuPowerSample;
+            gpu_mux(mode: i32) -> HubResult<String>;
+        }
+        fn zone_count(&self) -> i32 { self.inner.zone_count() }
+        fn manual_fan(&self) -> bool { self.inner.manual_fan() }
+        fn pwm_percent(&self) -> Option<f64> { self.inner.pwm_percent() }
+        fn intel_cpu(&self) -> bool { self.inner.intel_cpu() }
+        fn profile_index(&self) -> Option<i32> { self.inner.profile_index() }
+        fn ac_online(&self) -> Option<bool> { self.inner.ac_online() }
+        fn capabilities(&self) -> Value { self.inner.capabilities() }
+        fn idle_elapsed(&self) -> f64 { self.inner.idle_elapsed() }
+        fn sensors(&mut self, keys: &[String], disable: bool) -> SensorSnapshot {
+            if let Some(started) = &self.started { started.send(()).unwrap(); }
+            if let Some(release) = &self.release { release.recv_timeout(std::time::Duration::from_secs(5)).unwrap(); }
+            self.inner.sensors(keys, disable)
+        }
+    }
+
+    #[test]
+    fn blocked_display_sampling_does_not_hold_the_fan_runtime_lock() {
+        let dir = offline_scratch("sensor-isolation");
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let platform = || BlockingSensor { inner: FakePlatform::default(), started: None, release: None };
+        let mut runtime = Runtime::new(dir.join("state.json"), &dir.join("shortcuts.json"), platform());
+        runtime.set_fan_config(FanConfig { custom_enabled: true, ..FanConfig::default() });
+        let runtime = Arc::new(Mutex::new(runtime));
+        let sampler = Arc::new(Mutex::new(BlockingSensor { inner: FakePlatform::default(), started: Some(started_tx), release: Some(release_rx) }));
+        let commands = Arc::new(Mutex::new(platform()));
+        let request_runtime = Arc::clone(&runtime);
+        let request = std::thread::spawn(move || dispatch_with_workers(&request_runtime, &sampler, &commands, &peer(0), "sensors\tgpu-power"));
+        started_rx.recv_timeout(std::time::Duration::from_secs(3)).unwrap();
+        let progressed = if let Ok(mut guard) = runtime.try_lock() {
+            guard.fan_poll(1.0);
+            guard.platform.inner.log.iter().any(|line| line.starts_with("pwm "))
+        } else { false };
+        release_tx.send(()).unwrap();
+        assert!(request.join().unwrap().starts_with("OK\t"));
+        assert!(progressed, "display sampling blocked fan control");
         let _ = std::fs::remove_dir_all(dir);
     }
 }

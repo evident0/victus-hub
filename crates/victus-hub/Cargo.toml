@@ -20,6 +20,8 @@ victus-hw = { path = "../victus-hw" }
 gtk4.workspace = true
 libadwaita.workspace = true
 serde_json.workspace = true
+# KSNI backend. The default feature pulls GTK 3, which cannot share this process.
+tray-icon = { version = "0.26.1", default-features = false, features = ["ksni"] }
 
 [lints.rust]
 unsafe_code = "forbid"

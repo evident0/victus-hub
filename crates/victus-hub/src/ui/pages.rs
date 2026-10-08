@@ -3,6 +3,9 @@
 use gtk4::prelude::*;
 use gtk4::{Align, Box, Button, DrawingArea, DropDown, Entry, FlowBox, Grid, Label, ListBox, Orientation, Scale, SelectionMode, SpinButton, Stack, Switch};
 use victus_core::{effects_for_zone_count, ExtraSensor, PROGRAM_VERSION};
+use std::cell::RefCell;
+use std::collections::HashSet;
+use std::rc::Rc;
 
 use super::widgets::{self, column, head, metric, pill, settings_row, slider, stack_page, Slider};
 
@@ -29,6 +32,7 @@ pub struct Home {
     pub footer_right: Label,
     pub mux_wrap: Box,
     pub mux_buttons: Vec<Button>,
+    pub gpu_name: Label,
 }
 
 pub struct Power {
@@ -89,11 +93,15 @@ pub struct Keyboard {
     pub brightness: Scale,
     pub brightness_value: Label,
     pub idle: SpinButton,
+    pub idle_enabled: Switch,
 }
 
 pub struct SensorRow {
+    pub row: gtk4::ListBoxRow,
     pub key: String,
     pub name: String,
+    pub group: String,
+    pub unit: String,
     pub graphable: bool,
     pub min: f64,
     pub max: f64,
@@ -105,9 +113,8 @@ pub struct SensorRow {
 
 pub struct Sensors {
     pub list: ListBox,
-    pub graph: DrawingArea,
-    pub open: Button,
     pub rows: Vec<SensorRow>,
+    pub collapsed: Rc<RefCell<HashSet<String>>>,
 }
 
 pub struct Settings {
@@ -141,24 +148,25 @@ struct SensorMeta {
     key: &'static str,
     group: &'static str,
     name: &'static str,
+    unit: &'static str,
     graphable: bool,
     min: f64,
     max: f64,
 }
 
 const BASE_SENSORS: &[SensorMeta] = &[
-    SensorMeta { key: "cpu-temp", group: "CPU", name: "CPU Temp", graphable: true, min: 0.0, max: 100.0 },
-    SensorMeta { key: "cpu-usage", group: "CPU", name: "CPU Usage", graphable: true, min: 0.0, max: 100.0 },
-    SensorMeta { key: "cpu-power", group: "CPU", name: "CPU Power", graphable: true, min: 0.0, max: 80.0 },
-    SensorMeta { key: "gpu-temp", group: "GPU", name: "GPU Temp", graphable: true, min: 0.0, max: 100.0 },
-    SensorMeta { key: "gpu-usage", group: "GPU", name: "GPU Usage", graphable: true, min: 0.0, max: 100.0 },
-    SensorMeta { key: "gpu-power", group: "GPU", name: "GPU Power", graphable: true, min: 0.0, max: 120.0 },
-    SensorMeta { key: "cpu-fan", group: "HP Embedded Controller", name: "CPU Fan", graphable: true, min: 0.0, max: 6000.0 },
-    SensorMeta { key: "gpu-fan", group: "HP Embedded Controller", name: "GPU Fan", graphable: true, min: 0.0, max: 6000.0 },
-    SensorMeta { key: "pwm-value", group: "HP Embedded Controller", name: "HP PWM Value", graphable: true, min: 0.0, max: 255.0 },
-    SensorMeta { key: "pwm-mode", group: "HP Embedded Controller", name: "HP PWM Mode", graphable: false, min: 0.0, max: 2.0 },
-    SensorMeta { key: "profile", group: "System", name: "System Profile", graphable: false, min: 0.0, max: 2.0 },
-    SensorMeta { key: "ram-usage", group: "Memory", name: "RAM Usage", graphable: true, min: 0.0, max: 64.0 },
+    SensorMeta { key: "cpu-temp", group: "CPU", name: "CPU Temp", unit: "°C", graphable: true, min: 0.0, max: 100.0 },
+    SensorMeta { key: "cpu-usage", group: "CPU", name: "CPU Usage", unit: "%", graphable: true, min: 0.0, max: 100.0 },
+    SensorMeta { key: "cpu-power", group: "CPU", name: "CPU Power", unit: "W", graphable: true, min: 0.0, max: 80.0 },
+    SensorMeta { key: "gpu-temp", group: "GPU", name: "GPU Temp", unit: "°C", graphable: true, min: 0.0, max: 100.0 },
+    SensorMeta { key: "gpu-usage", group: "GPU", name: "GPU Usage", unit: "%", graphable: true, min: 0.0, max: 100.0 },
+    SensorMeta { key: "gpu-power", group: "GPU", name: "GPU Power", unit: "W", graphable: true, min: 0.0, max: 120.0 },
+    SensorMeta { key: "cpu-fan", group: "HP Embedded Controller", name: "CPU Fan", unit: "RPM", graphable: true, min: 0.0, max: 6000.0 },
+    SensorMeta { key: "gpu-fan", group: "HP Embedded Controller", name: "GPU Fan", unit: "RPM", graphable: true, min: 0.0, max: 6000.0 },
+    SensorMeta { key: "pwm-value", group: "HP Embedded Controller", name: "HP PWM Value", unit: "PWM", graphable: true, min: 0.0, max: 255.0 },
+    SensorMeta { key: "pwm-mode", group: "HP Embedded Controller", name: "HP PWM Mode", unit: "", graphable: false, min: 0.0, max: 2.0 },
+    SensorMeta { key: "profile", group: "System", name: "System Profile", unit: "", graphable: false, min: 0.0, max: 2.0 },
+    SensorMeta { key: "ram-usage", group: "Memory", name: "RAM Usage", unit: "GB", graphable: true, min: 0.0, max: 64.0 },
 ];
 
 pub fn fan_pairs(modes: &[String]) -> Vec<(&'static str, &'static str, &'static str)> {
@@ -177,29 +185,58 @@ pub fn clear_list(list: &ListBox) {
     }
 }
 
-pub fn fill_sensors(list: &ListBox, extras: &[ExtraSensor]) -> Vec<SensorRow> {
+pub fn fill_sensors(list: &ListBox, extras: &[ExtraSensor], collapsed: &Rc<RefCell<HashSet<String>>>) -> Vec<SensorRow> {
     let mut rows = Vec::new();
-    let mut headed = Vec::new();
+    let mut groups: Vec<&str> = Vec::new();
     for meta in BASE_SENSORS {
-        if !headed.iter().any(|group| group == meta.group) {
-            let _header = widgets::sensor_row(list, "", meta.group, false);
-            headed.push(meta.group.to_owned());
-        }
-        rows.push(push_sensor(list, meta.key, meta.name, meta.graphable, meta.min, meta.max));
+        if !groups.contains(&meta.group) { groups.push(meta.group); }
     }
     for extra in extras {
-        if !headed.iter().any(|group| group == &extra.group) {
-            let _header = widgets::sensor_row(list, "", &extra.group, false);
-            headed.push(extra.group.clone());
+        if !groups.contains(&extra.group.as_str()) { groups.push(&extra.group); }
+    }
+    for group in groups {
+        let count = BASE_SENSORS.iter().filter(|meta| meta.group == group).count() + extras.iter().filter(|extra| extra.group == group).count();
+        let (button, arrow) = widgets::sensor_group(list, group, count);
+        let start = rows.len();
+        for meta in BASE_SENSORS.iter().filter(|meta| meta.group == group) {
+            rows.push(push_sensor(list, meta.key, meta.group, meta.name, meta.unit, meta.graphable, meta.min, meta.max));
         }
-        rows.push(push_sensor(list, &extra.key, &extra.name, true, extra.value_min, extra.value_max));
+        for extra in extras.iter().filter(|extra| extra.group == group) {
+            rows.push(push_sensor(list, &extra.key, &extra.group, &extra.name, &extra.unit, true, extra.value_min, extra.value_max));
+        }
+        let children: Vec<_> = rows[start..].iter().map(|row| row.row.clone()).collect();
+        let is_collapsed = collapsed.borrow().contains(group);
+        arrow.set_text(if is_collapsed { "▸" } else { "▾" });
+        for row in &children { row.set_visible(!is_collapsed); }
+        let collapsed = Rc::clone(collapsed);
+        let name = group.to_owned();
+        button.connect_clicked(move |_| {
+            let mut state = collapsed.borrow_mut();
+            let show = state.remove(&name);
+            if !show { state.insert(name.clone()); }
+            arrow.set_text(if show { "▾" } else { "▸" });
+            for row in &children { row.set_visible(show); }
+        });
     }
     rows
 }
 
-fn push_sensor(list: &ListBox, key: &str, name: &str, graphable: bool, min: f64, max: f64) -> SensorRow {
+fn push_sensor(list: &ListBox, key: &str, group: &str, name: &str, unit: &str, graphable: bool, min: f64, max: f64) -> SensorRow {
     let cells = widgets::sensor_row(list, key, name, true);
-    SensorRow { key: key.to_owned(), name: name.to_owned(), graphable, min, max, current: cells.current, maximum: cells.maximum, minimum: cells.minimum, average: cells.average }
+    SensorRow {
+        row: cells.row,
+        key: key.to_owned(),
+        name: name.to_owned(),
+        group: group.to_owned(),
+        unit: unit.to_owned(),
+        graphable,
+        min,
+        max,
+        current: cells.current,
+        maximum: cells.maximum,
+        minimum: cells.minimum,
+        average: cells.average,
+    }
 }
 
 pub fn build(model: &crate::Model) -> Built {
@@ -207,6 +244,8 @@ pub fn build(model: &crate::Model) -> Built {
     sidebar.set_content_width(62);
     sidebar.set_vexpand(true);
     let stack = Stack::new();
+    stack.set_hhomogeneous(false);
+    stack.set_vhomogeneous(false);
     stack.set_hexpand(true);
     stack.set_vexpand(true);
     let (home_page, home) = home(model);
@@ -249,6 +288,7 @@ fn home(model: &crate::Model) -> (Box, Home) {
     let (cpu_fan_box, cpu_fan, _) = metric("CPU fan", " rpm");
     let (gpu_fan_box, gpu_fan, _) = metric("GPU fan", " rpm");
     let grid = Grid::new();
+    grid.set_column_homogeneous(true);
     grid.set_margin_top(24);
     grid.set_column_spacing(20);
     grid.attach(&cpu, 0, 0, 1, 1);
@@ -287,12 +327,6 @@ fn home(model: &crate::Model) -> (Box, Home) {
     curve_row.set_halign(Align::End);
     curve_row.append(&curve);
     page.append(&curve_row);
-    let (power, power_sub) = jump_row("Power", "Limits off");
-    power.set_margin_top(20);
-    page.append(&power);
-    let (light_row, light_sub, mini) = light_jump();
-    light_row.set_margin_top(8);
-    page.append(&light_row);
     let mux_labels = model.host.mux.iter().map(|choice| choice.label.as_str()).collect::<Vec<_>>();
     let (mux_buttons_row, mux_buttons) = widgets::segment(&mux_labels);
     let mux_wrap = Box::new(Orientation::Vertical, 8);
@@ -300,10 +334,21 @@ fn home(model: &crate::Model) -> (Box, Home) {
     let graphics = Label::new(Some("Graphics"));
     graphics.add_css_class("row-title");
     graphics.set_halign(Align::Start);
-    mux_wrap.append(&graphics);
+    let graphics_row = Box::new(Orientation::Horizontal, 8);
+    let gpu_name = Label::new(Some(&model.host.gpu_name));
+    gpu_name.add_css_class("sub");
+    graphics_row.append(&graphics);
+    graphics_row.append(&gpu_name);
+    mux_wrap.append(&graphics_row);
     mux_wrap.append(&mux_buttons_row);
     mux_wrap.set_visible(!mux_labels.is_empty());
     page.append(&mux_wrap);
+    let (power, power_sub) = jump_row("Power", "Limits off");
+    power.set_margin_top(20);
+    page.append(&power);
+    let (light_row, light_sub, mini) = light_jump();
+    light_row.set_margin_top(8);
+    page.append(&light_row);
     let spacer = Box::new(Orientation::Vertical, 0);
     spacer.set_vexpand(true);
     page.append(&spacer);
@@ -333,6 +378,7 @@ fn home(model: &crate::Model) -> (Box, Home) {
         footer_right,
         mux_wrap,
         mux_buttons,
+        gpu_name,
     };
     (page, home)
 }
@@ -413,8 +459,8 @@ fn power(intel: bool) -> (Box, Power) {
     tctl.row.set_visible(!intel);
     let limits = Box::new(Orientation::Vertical, 0);
     limits.append(&stapm.row);
-    limits.append(&fast.row);
-    limits.append(&slow.row);
+    if intel { limits.append(&slow.row); limits.append(&fast.row); }
+    else { limits.append(&fast.row); limits.append(&slow.row); }
     limits.append(&tctl.row);
     limits.append(&reapply.row);
     page.append(&limits);
@@ -450,6 +496,7 @@ fn power(intel: bool) -> (Box, Power) {
     let uv_apply = pill("Apply undervolt");
     uv_apply.set_halign(Align::End);
     let uv_status = Label::new(None);
+    uv_status.set_text("Set both offsets to 0 mV to reset. Requires the msr kernel module and firmware voltage-control support. Saved offsets are applied only when you click Apply undervolt.");
     uv_status.add_css_class("sub");
     uv_status.set_halign(Align::Start);
     uv_status.set_wrap(true);
@@ -497,7 +544,9 @@ fn fans(modes: &[String]) -> (Box, Fans) {
     links_row.append(&curve_links);
     links_row.append(&hint);
     let chart = DrawingArea::new();
-    chart.set_content_height(280);
+    chart.set_content_height(220);
+    chart.set_focusable(true);
+    chart.set_cursor_from_name(Some("crosshair"));
     chart.set_vexpand(true);
     chart.set_hexpand(true);
     chart.set_margin_top(22);
@@ -576,26 +625,38 @@ fn keyboard(zones: i32) -> (Box, Keyboard) {
     page.append(&visual);
     page.append(&widgets::hairline());
     let chip = DrawingArea::new();
+    chip.set_cursor_from_name(Some("pointer"));
     chip.set_content_width(40);
     chip.set_content_height(34);
     let hex = widgets::hex_entry();
     let hue = DrawingArea::new();
-    hue.set_content_height(18);
+    hue.set_cursor_from_name(Some("crosshair"));
+    hue.set_content_height(33);
     hue.set_hexpand(true);
     let shade = DrawingArea::new();
-    shade.set_content_height(18);
+    shade.set_cursor_from_name(Some("crosshair"));
+    shade.set_content_height(33);
     shade.set_hexpand(true);
-    let strips = Box::new(Orientation::Vertical, 8);
+    let strips = Box::new(Orientation::Vertical, 0);
     strips.set_hexpand(true);
     strips.append(&hue);
     strips.append(&shade);
     let color_box = Box::new(Orientation::Horizontal, 12);
     color_box.set_margin_top(18);
-    color_box.append(&chip);
-    color_box.append(&hex);
+    let color_left = Box::new(Orientation::Vertical, 6);
+    color_left.set_size_request(210, -1);
+    let hex_row = Box::new(Orientation::Horizontal, 0);
+    hex_row.append(&chip);
+    let hash = Label::new(Some("  #"));
+    hash.add_css_class("mono");
+    hex_row.append(&hash);
+    hex_row.append(&hex);
+    color_left.append(&hex_row);
+    color_box.append(&color_left);
     color_box.append(&strips);
     page.append(&color_box);
     let chip2 = DrawingArea::new();
+    chip2.set_cursor_from_name(Some("pointer"));
     chip2.set_content_width(40);
     chip2.set_content_height(34);
     let hex2 = widgets::hex_entry();
@@ -614,15 +675,9 @@ fn keyboard(zones: i32) -> (Box, Keyboard) {
     brightness_value.add_css_class("mono");
     brightness_value.set_width_chars(5);
     let brightness_row = Box::new(Orientation::Horizontal, 12);
-    brightness_row.set_margin_top(12);
-    let brightness_label = Label::new(Some("Brightness"));
-    brightness_label.add_css_class("row-title");
-    brightness_label.set_width_chars(12);
-    brightness_label.set_halign(Align::Start);
-    brightness_row.append(&brightness_label);
     brightness_row.append(&brightness);
     brightness_row.append(&brightness_value);
-    page.append(&brightness_row);
+    color_left.append(&brightness_row);
     let speed = Scale::with_range(Orientation::Horizontal, 1.0, 100.0, 1.0);
     speed.set_draw_value(false);
     speed.set_hexpand(true);
@@ -639,9 +694,15 @@ fn keyboard(zones: i32) -> (Box, Keyboard) {
     speed_row.append(&speed);
     speed_row.append(&speed_value);
     page.append(&speed_row);
-    let idle = widgets::spin(0.0, 3600.0, 1.0);
+    let idle = widgets::spin(1.0, 600.0, 1.0);
     idle.set_digits(0);
-    page.append(&settings_row("Idle dim", "Seconds before the backlight dims. 0 leaves it on.", &idle));
+    idle.set_value(30.0);
+    let idle_enabled = widgets::switch();
+    let idle_control = Box::new(Orientation::Horizontal, 10);
+    idle_control.append(&Label::new(Some("s")));
+    idle_control.append(&idle);
+    idle_control.append(&idle_enabled);
+    page.append(&settings_row("Idle timeout", "Dim the backlight when you stop typing", &idle_control));
     let keyboard = Keyboard {
         head_status,
         effect_ids,
@@ -663,6 +724,7 @@ fn keyboard(zones: i32) -> (Box, Keyboard) {
         brightness,
         brightness_value,
         idle,
+        idle_enabled,
     };
     (page, keyboard)
 }
@@ -675,18 +737,10 @@ fn sensors() -> (Box, Sensors) {
     let list = ListBox::new();
     list.add_css_class("sensors");
     list.set_selection_mode(SelectionMode::Single);
-    let rows = fill_sensors(&list, &[]);
+    let collapsed = Rc::new(RefCell::new(HashSet::new()));
+    let rows = fill_sensors(&list, &[], &collapsed);
     page.append(&list);
-    let graph = DrawingArea::new();
-    graph.set_content_height(150);
-    graph.set_hexpand(true);
-    graph.set_margin_top(16);
-    page.append(&graph);
-    let open = pill("Open graph");
-    open.set_halign(Align::End);
-    open.set_margin_top(8);
-    page.append(&open);
-    (page, Sensors { list, graph, open, rows })
+    (page, Sensors { list, rows, collapsed })
 }
 
 fn settings(product: &str) -> (Box, Settings) {

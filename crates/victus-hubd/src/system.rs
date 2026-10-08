@@ -3,6 +3,8 @@
 //! helpers below with a scratch directory.
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicI32, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use serde_json::Value;
@@ -18,6 +20,8 @@ use victus_hw::{
 use crate::platform::Platform;
 
 pub struct SysPlatform {
+    gpu_monitor: Option<Arc<crate::gpu::GpuMonitor>>,
+    profile_cache: Option<Arc<AtomicI32>>,
     hwmon_class: PathBuf,
     leds: PathBuf,
     kbd_platform: PathBuf,
@@ -51,6 +55,8 @@ impl SysPlatform {
     pub fn installed() -> Self {
         let pci = Path::new("/sys/bus/pci/devices");
         Self {
+            gpu_monitor: None,
+            profile_cache: None,
             hwmon_class: PathBuf::from("/sys/class/hwmon"),
             leds: PathBuf::from("/sys/class/leds"),
             kbd_platform: PathBuf::from("/sys/devices/platform/hp-kbd-rgb"),
@@ -85,6 +91,12 @@ impl SysPlatform {
         self.idle_elapsed = seconds;
     }
 
+    pub fn with_caches(mut self, gpu: Arc<crate::gpu::GpuMonitor>, profile: Arc<AtomicI32>) -> Self {
+        self.gpu_monitor = Some(gpu);
+        self.profile_cache = Some(profile);
+        self
+    }
+
     fn hwmon(&self) -> Option<PathBuf> {
         find_hwmon(&self.hwmon_class, &["hp", "hp_wmi", "hp-wmi"])
     }
@@ -102,9 +114,6 @@ impl SysPlatform {
 
     fn gpu_temp(&mut self, disable_nvidia: bool) -> Option<f64> {
         if !self.nvidia_present {
-            if disable_nvidia {
-                return None;
-            }
             return amd_or_nouveau_temp_c(&self.hwmon_class);
         }
         self.nvidia_fields(true, false, false, disable_nvidia).temp_c
@@ -112,12 +121,13 @@ impl SysPlatform {
 
     /// Hardware order matches the Python query: hwmon, then NVML, then nvidia-smi.
     /// `Nvml::open` and `nvidia-smi` run only from this live platform.
-    fn nvidia_fields(&mut self, temperature: bool, power: bool, utilization: bool, disable_nvidia: bool) -> NvidiaFields {
+    pub(crate) fn nvidia_fields(&mut self, temperature: bool, power: bool, utilization: bool, disable_nvidia: bool) -> NvidiaFields {
         let suspended = dgpu_suspended(self.dgpu_status.as_deref());
         if disable_nvidia || suspended || !self.nvidia_present {
             self.nvml = None;
             return NvidiaFields::default();
         }
+        if let Some(monitor) = &self.gpu_monitor { return monitor.snapshot(); }
         let mut fields = NvidiaFields::default();
         if temperature {
             if let Some(temp) = nvidia_hwmon_temp_c(&self.hwmon_class) {
@@ -205,12 +215,14 @@ impl SysPlatform {
 
 impl Platform for SysPlatform {
     fn pwm_enable(&mut self, mode: i32) -> HubResult<String> {
+        log::info!("[fan-control] pwm-enable {mode}");
         write_pwm_enable(self.hwmon().as_deref(), mode)
     }
     fn pwm_max(&mut self) -> HubResult<String> {
         self.pwm_enable(0)
     }
     fn pwm(&mut self, value: i32) -> HubResult<String> {
+        log::info!("[fan-control] pwm {value}/255");
         write_pwm(self.hwmon().as_deref(), value)
     }
     fn keyboard_color(&mut self, zone: Option<i32>, red: u8, green: u8, blue: u8) -> HubResult<String> {
@@ -247,9 +259,11 @@ impl Platform for SysPlatform {
         Ok((cpu_temp_c(&self.hwmon_class), self.gpu_temp(disable_nvidia)))
     }
     fn ryzenadj(&mut self, stapm: i32, fast: i32, slow: i32, tctl: i32) -> HubResult<String> {
+        log::info!("[power-limits] STAPM={stapm} fast={fast} slow={slow} tctl={tctl}");
         apply_ryzenadj(&self.ryzenadj, stapm, fast, slow, tctl)
     }
     fn intel_power(&mut self, pl1: i32, pl2: i32) -> HubResult<String> {
+        log::info!("[power-limits] Intel PL1={pl1} PL2={pl2}");
         intel_power_limits(&self.powercap, pl1, pl2, self.intel)
     }
     fn intel_undervolt(&mut self, core_mv: i32, cache_mv: i32) -> HubResult<String> {
@@ -262,7 +276,14 @@ impl Platform for SysPlatform {
         self.intel
     }
     fn profile_index(&self) -> Option<i32> {
-        profile_from_active_file(&self.tuned_active)
+        if let Some(cache) = &self.profile_cache {
+            let index = cache.load(Ordering::Relaxed);
+            return (0..=2).contains(&index).then_some(index);
+        }
+        read_system_profile(&self.tuned_active)
+    }
+    fn note_profile(&mut self, index: i32) {
+        if let Some(cache) = &self.profile_cache { cache.store(index, Ordering::Relaxed); }
     }
     fn apply_profile(&mut self, index: i32) -> HubResult<String> {
         let tuned = find_executable(None, &[PathBufRef(Path::new("/usr/sbin/tuned-adm")), PathBufRef(Path::new("/usr/bin/tuned-adm"))]);
@@ -285,7 +306,10 @@ impl Platform for SysPlatform {
         ac_online(&self.power_supply)
     }
     fn sensors(&mut self, keys: &[String], disable_nvidia: bool) -> SensorSnapshot {
-        let power = self.rapl.read(&self.powercap, elapsed_secs(self.started, Instant::now()));
+        if let Some(monitor) = &self.gpu_monitor { monitor.display(keys); }
+        if keys.is_empty() { return SensorSnapshot::default(); }
+        let power = keys.iter().any(|key| key == "cpu-power")
+            .then(|| self.rapl.read(&self.powercap, elapsed_secs(self.started, Instant::now())));
         let suspended = dgpu_suspended(self.dgpu_status.as_deref());
         let wants = |key: &str| keys.iter().any(|item| item == key);
         let gpu = if self.nvidia_present && (wants("gpu-temp") || wants("gpu-power") || wants("gpu-usage")) {
@@ -302,7 +326,7 @@ impl Platform for SysPlatform {
             &self.proc_stat,
             &self.meminfo,
             &self.cpu_root,
-            Some(&power),
+            power.as_ref(),
             gpu.as_ref(),
             suspended,
             disable_nvidia,
@@ -324,6 +348,9 @@ impl Platform for SysPlatform {
     fn release_gpu(&mut self) {
         self.nvml = None;
     }
+    fn gpu_policy(&self, fan: bool, disabled: bool, suspended: bool) {
+        if let Some(monitor) = &self.gpu_monitor { monitor.policy(fan, disabled, suspended); }
+    }
 }
 
 pub fn cpu_is_intel(cpuinfo: &Path) -> bool {
@@ -333,6 +360,29 @@ pub fn cpu_is_intel(cpuinfo: &Path) -> bool {
 pub fn profile_from_active_file(path: &Path) -> Option<i32> {
     let text = std::fs::read_to_string(path).ok()?;
     profile_index_for_name(text.trim())
+}
+
+pub fn read_system_profile(tuned_active: &Path) -> Option<i32> {
+    if let Some(index) = profile_from_active_file(tuned_active) { return Some(index); }
+    for service in ["org.freedesktop.UPower.PowerProfiles", "net.hadess.PowerProfiles"] {
+        let path = if service.starts_with("org.") { "/org/freedesktop/UPower/PowerProfiles" } else { "/net/hadess/PowerProfiles" };
+        let args = ["--system", "get-property", service, path, service, "ActiveProfile"].map(str::to_owned);
+        if let Ok(output) = victus_hw::run_command_timeout(Path::new("/usr/bin/busctl"), &args, Duration::from_secs(2)) {
+            if output.status == 0 {
+                let name = output.stdout.trim().strip_prefix("s ").unwrap_or(output.stdout.trim()).trim_matches('"');
+                if let Some(index) = profile_index_for_name(name) { return Some(index); }
+            }
+        }
+    }
+    for (program, argument) in [("/usr/bin/powerprofilesctl", "get"), ("/usr/sbin/tuned-adm", "active"), ("/usr/bin/tuned-adm", "active")] {
+        if let Ok(output) = victus_hw::run_command_timeout(Path::new(program), &[argument.into()], Duration::from_secs(2)) {
+            if output.status == 0 {
+                let name = output.stdout.trim().strip_prefix("Current active profile:").unwrap_or(output.stdout.trim()).trim();
+                if let Some(index) = profile_index_for_name(name) { return Some(index); }
+            }
+        }
+    }
+    None
 }
 
 pub fn ac_online(power_supply: &Path) -> Option<bool> {
@@ -371,8 +421,13 @@ pub fn ac_online(power_supply: &Path) -> Option<bool> {
 
 pub fn find_nvidia_runtime(pci_devices: &Path) -> Option<PathBuf> {
     for entry in std::fs::read_dir(pci_devices).ok()?.flatten() {
-        if read_text(&entry.path().join("vendor")).as_deref() == Some("0x10de") {
-            return Some(entry.path().join("power/runtime_status"));
+        let path = entry.path();
+        let class = read_text(&path.join("class")).unwrap_or_default();
+        if read_text(&path.join("vendor")).as_deref() == Some("0x10de")
+            && (class.starts_with("0x0300") || class.starts_with("0x0302"))
+            && read_text(&path.join("boot_vga")).as_deref() != Some("1") {
+            let status = path.join("power/runtime_status");
+            if status.is_file() { return Some(status); }
         }
     }
     None
@@ -426,6 +481,9 @@ mod tests {
         let pci = root.join("pci/0000:01:00.0");
         std::fs::create_dir_all(&pci).unwrap();
         std::fs::write(pci.join("vendor"), "0x10de\n").unwrap();
+        std::fs::write(pci.join("class"), "0x030200\n").unwrap();
+        std::fs::create_dir_all(pci.join("power")).unwrap();
+        std::fs::write(pci.join("power/runtime_status"), "active\n").unwrap();
         let status = find_nvidia_runtime(&root.join("pci")).unwrap();
         assert!(status.starts_with(&root));
         assert!(status.ends_with("runtime_status"));

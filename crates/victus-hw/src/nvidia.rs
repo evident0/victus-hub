@@ -1,8 +1,5 @@
-use std::io::Read;
 use std::path::Path;
-use std::process::{Command, Stdio};
-use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use crate::sysfs::{hwmon_dirs, read_int, read_text};
 
@@ -98,32 +95,10 @@ pub fn read_smi_line(program: &Path, columns: &[&str]) -> Option<String> {
     if columns.is_empty() || !program.is_file() {
         return None;
     }
-    let query = columns.join(",");
-    let mut child = Command::new(program)
-        .args([format!("--query-gpu={query}"), "--format=csv,noheader,nounits".to_owned()])
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .ok()?;
-    let started = Instant::now();
-    let status = loop {
-        match child.try_wait() {
-            Ok(Some(status)) => break status,
-            Ok(None) if started.elapsed() > Duration::from_millis(1200) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return None;
-            }
-            Ok(None) => thread::sleep(Duration::from_millis(20)),
-            Err(_) => return None,
-        }
-    };
-    if !status.success() {
-        return None;
-    }
-    let mut stdout = String::new();
-    child.stdout.as_mut()?.read_to_string(&mut stdout).ok()?;
-    stdout.lines().next().map(str::trim).filter(|line| !line.is_empty()).map(ToOwned::to_owned)
+    let args = [format!("--query-gpu={}", columns.join(",")), "--format=csv,noheader,nounits".to_owned()];
+    let output = crate::run_command_timeout(program, &args, Duration::from_millis(1200)).ok()?;
+    if output.status != 0 { return None; }
+    output.stdout.lines().next().map(str::trim).filter(|line| !line.is_empty()).map(ToOwned::to_owned)
 }
 
 pub fn note_smi_failures(backoff: &mut SmiBackoff, now: f64, failed: &[&str]) {

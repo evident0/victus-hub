@@ -115,27 +115,33 @@ fi
 # previous current symlink in place and does not restart the service.
 printf '\033[1;34m── Building victus-hubd daemon + victus-hub program ──\033[0m\n'
 cd "$ROOT_DIR"
+BUILD_DIR=$(mktemp -d /tmp/victus-hub-build.XXXXXXXX)
+trap 'rm -rf -- "$BUILD_DIR"' EXIT
 if [ "$(id -u)" -eq 0 ] && [ -n "${SUDO_UID:-}" ]; then
+	BUILD_HOME=$(getent passwd "$SUDO_UID" | cut -d: -f6)
+	[ -n "$BUILD_HOME" ] || { printf 'Cannot determine build user home.\n' >&2; exit 1; }
+	chown "$SUDO_UID:${SUDO_GID:-$SUDO_UID}" "$BUILD_DIR"
 	if [ -n "${PKG_CONFIG_PATH:-}" ]; then
-		sudo -u "#$SUDO_UID" -- env HOME="${SUDO_HOME:-${HOME:-/root}}" PKG_CONFIG_PATH="$PKG_CONFIG_PATH" cargo build --release --manifest-path "$ROOT_DIR/Cargo.toml"
+		sudo -u "#$SUDO_UID" -- env HOME="$BUILD_HOME" PKG_CONFIG_PATH="$PKG_CONFIG_PATH" cargo build --locked --release --target-dir "$BUILD_DIR" --manifest-path "$ROOT_DIR/Cargo.toml"
 	else
-		sudo -u "#$SUDO_UID" -- env HOME="${SUDO_HOME:-${HOME:-/root}}" cargo build --release --manifest-path "$ROOT_DIR/Cargo.toml"
+		sudo -u "#$SUDO_UID" -- env HOME="$BUILD_HOME" cargo build --locked --release --target-dir "$BUILD_DIR" --manifest-path "$ROOT_DIR/Cargo.toml"
 	fi
 else
-	cargo build --release --manifest-path "$ROOT_DIR/Cargo.toml"
+	cargo build --locked --release --target-dir "$BUILD_DIR" --manifest-path "$ROOT_DIR/Cargo.toml"
 fi
 APP_DIR=/opt/victus-hub-app
 "${SUDO[@]}" install -d -m755 "$APP_DIR/releases"
 NEW_ENV=$("${SUDO[@]}" mktemp -d "$APP_DIR/releases/install.XXXXXXXX")
 "${SUDO[@]}" chmod 755 "$NEW_ENV"
 cleanup_install() {
+	rm -rf -- "$BUILD_DIR"
 	[ -z "${NEW_ENV:-}" ] || "${SUDO[@]}" rm -rf "$NEW_ENV"
 	[ -z "${ICON_TMP:-}" ] || rm -rf "$ICON_TMP"
 }
 trap cleanup_install EXIT
 "${SUDO[@]}" install -d -m755 "$NEW_ENV/bin"
-"${SUDO[@]}" install -m755 "$ROOT_DIR/target/release/victus-hub" "$NEW_ENV/bin/victus-hub"
-"${SUDO[@]}" install -m755 "$ROOT_DIR/target/release/victus-hubd" "$NEW_ENV/bin/victus-hubd"
+"${SUDO[@]}" install -m755 "$BUILD_DIR/release/victus-hub" "$NEW_ENV/bin/victus-hub"
+"${SUDO[@]}" install -m755 "$BUILD_DIR/release/victus-hubd" "$NEW_ENV/bin/victus-hubd"
 "${SUDO[@]}" chown -R root:root "$NEW_ENV"
 "${SUDO[@]}" chmod -R go-w "$NEW_ENV"
 "${SUDO[@]}" ln -sfn "$NEW_ENV" "$APP_DIR/current.new"

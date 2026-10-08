@@ -5,7 +5,9 @@ use gtk4::{Align, Box, Button, DropDown, Entry, Label, ListBox, ListBoxRow, Orie
 
 pub struct Slider {
     pub scale: Scale,
-    pub value: Label,
+    pub value: SpinButton,
+    pub unit: Label,
+    pub divisor: f64,
     pub row: Box,
 }
 
@@ -61,8 +63,9 @@ pub fn metric(caption: &str, unit: &str) -> (Box, Label, Label) {
     value.set_halign(Align::Start);
     let unit_label = Label::new(Some(unit));
     unit_label.add_css_class("unit");
+    unit_label.add_css_class(if unit.contains("rpm") { "rpm-unit" } else { "temp-unit" });
     unit_label.set_valign(Align::Start);
-    unit_label.set_margin_top(8);
+    unit_label.set_margin_top(if unit.contains("rpm") { 26 } else { 23 });
     row.append(&value);
     row.append(&unit_label);
     let caption_label = Label::new(Some(caption));
@@ -88,10 +91,12 @@ pub fn footer() -> (Box, Label, Label) {
     let row = Box::new(Orientation::Horizontal, 8);
     let dot = Label::new(Some("●"));
     dot.add_css_class("ok");
+    dot.add_css_class("heartbeat");
     let left = Label::new(None);
     left.add_css_class("mono");
     left.set_hexpand(true);
     left.set_halign(Align::Start);
+    left.set_ellipsize(gtk4::pango::EllipsizeMode::End);
     let right = Label::new(Some("—"));
     right.add_css_class("mono");
     row.append(&dot);
@@ -111,6 +116,8 @@ pub fn segment(labels: &[impl AsRef<str>]) -> (Box, Vec<Button>) {
         let button = Button::with_label(label.as_ref());
         button.add_css_class("seg-btn");
         button.set_hexpand(true);
+        // Page segments in the Qt UI are a 13px label with 9px of vertical padding.
+        button.set_size_request(-1, 35);
         row.append(&button);
         buttons.push(button);
     }
@@ -175,14 +182,21 @@ pub fn slider(title: &str, min: f64, max: f64, step: f64) -> Slider {
     let scale = Scale::with_range(Orientation::Horizontal, min, max, step);
     scale.set_draw_value(false);
     scale.set_hexpand(true);
-    let value = Label::new(Some("—"));
+    let divisor = if max > 100_000.0 { 1000.0 } else { 1.0 };
+    let value = SpinButton::with_range(min / divisor, max / divisor, 1.0);
+    value.set_digits(if divisor == 1000.0 { 3 } else { 0 });
     value.add_css_class("mono");
-    value.set_width_chars(10);
+    value.set_width_chars(8);
+    value.set_numeric(true);
+    value.set_update_policy(gtk4::SpinButtonUpdatePolicy::IfValid);
     value.set_halign(Align::End);
+    let unit = Label::new(None);
+    unit.add_css_class("mono");
     row.append(&name);
     row.append(&scale);
     row.append(&value);
-    Slider { scale, value, row }
+    row.append(&unit);
+    Slider { scale, value, unit, divisor, row }
 }
 
 pub fn switch() -> Switch {
@@ -237,6 +251,7 @@ pub fn sensor_header() -> Box {
         let label = Label::new(Some(title));
         label.add_css_class("caption");
         label.set_width_chars(8);
+        label.set_size_request(100, -1);
         label.set_halign(Align::End);
         row.append(&label);
     }
@@ -259,12 +274,15 @@ pub fn sensor_row(list: &ListBox, key: &str, name: &str, selectable: bool) -> Se
     title.set_hexpand(true);
     title.set_halign(Align::Start);
     title.set_xalign(0.0);
+    title.set_margin_start(16);
+    title.set_ellipsize(gtk4::pango::EllipsizeMode::End);
     line.append(&title);
     let mut labels = Vec::new();
     for _ in 0..4 {
         let label = Label::new(Some("—"));
         label.add_css_class("mono");
         label.set_width_chars(8);
+        label.set_size_request(100, -1);
         label.set_halign(Align::End);
         line.append(&label);
         labels.push(label);
@@ -276,4 +294,33 @@ pub fn sensor_row(list: &ListBox, key: &str, name: &str, selectable: bool) -> Se
     row.set_activatable(selectable);
     list.append(&row);
     SensorCells { row, current: labels.remove(0), maximum: labels.remove(0), minimum: labels.remove(0), average: labels.remove(0) }
+}
+
+pub fn sensor_group(list: &ListBox, name: &str, count: usize) -> (Button, Label) {
+    let button = Button::new();
+    button.add_css_class("row-link");
+    let line = Box::new(Orientation::Horizontal, 8);
+    let arrow = Label::new(Some("▾"));
+    let title = Label::new(Some(name));
+    title.add_css_class("row-title");
+    title.add_css_class("sensor-group-title");
+    title.set_hexpand(true);
+    title.set_halign(Align::Start);
+    line.append(&arrow);
+    line.append(&title);
+    for text in [format!("({count})"), String::new(), String::new(), String::new()] {
+        let label = Label::new(Some(&text));
+        label.add_css_class("mono");
+        label.set_size_request(100, -1);
+        label.set_halign(Align::End);
+        line.append(&label);
+    }
+    button.set_child(Some(&line));
+    let row = ListBoxRow::new();
+    row.set_widget_name("");
+    row.set_selectable(false);
+    row.set_activatable(false);
+    row.set_child(Some(&button));
+    list.append(&row);
+    (button, arrow)
 }

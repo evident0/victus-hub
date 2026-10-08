@@ -1,5 +1,6 @@
 use std::path::{Path, PathBuf};
-use std::sync::mpsc::Sender;
+use std::cell::Cell;
+use std::sync::mpsc::SyncSender;
 
 use victus_core::{
     active_curve_drives_fans, clamp_profile, effect_is_animated, fan_enable_mode, hardware_action, lighting_frames,
@@ -10,6 +11,12 @@ use victus_core::{
 
 use crate::binds::ProgramShortcuts;
 use crate::platform::Platform;
+
+#[derive(Debug, Clone, Copy)]
+pub enum ProfileRequest {
+    Select(i32),
+    Cycle,
+}
 
 pub struct Runtime<P: Platform> {
     pub platform: P,
@@ -30,14 +37,19 @@ pub struct Runtime<P: Platform> {
     light_last_brightness: Option<i32>,
     light_anim_step: f64,
     light_last_anim: f64,
+    #[cfg(test)]
     pub published: Vec<LightingSettings>,
-    lighting_tx: Option<Sender<String>>,
+    lighting_tx: Option<SyncSender<String>>,
+    profile_tx: Option<SyncSender<ProfileRequest>>,
+    revision: Cell<u64>,
+    instance: String,
     pub pending_activation: Option<(Vec<i32>, i32)>,
 }
 
 impl<P: Platform> Runtime<P> {
     pub fn new(state_path: impl Into<PathBuf>, shortcuts_path: &Path, platform: P) -> Self {
         let state_path = state_path.into();
+        let zones = platform.zone_count().max(1) as usize;
         Self {
             platform,
             state: victus_core::load_state(&state_path),
@@ -50,21 +62,40 @@ impl<P: Platform> Runtime<P> {
             suspended: false,
             light_last_send: 0.0,
             light_last_color: None,
-            light_last_zone: Vec::new(),
+            light_last_zone: vec![None; zones],
             light_backlight_on: None,
             light_last_idle_poll: 0.0,
             light_dimmed: false,
             light_last_brightness: None,
             light_anim_step: 0.0,
             light_last_anim: 0.0,
+            #[cfg(test)]
             published: Vec::new(),
             lighting_tx: None,
+            profile_tx: None,
+            revision: Cell::new(0),
+            instance: format!("{}-{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos()),
             pending_activation: None,
         }
     }
 
-    pub fn set_lighting_sender(&mut self, sender: Sender<String>) {
+    pub fn set_lighting_sender(&mut self, sender: SyncSender<String>) {
         self.lighting_tx = Some(sender);
+    }
+
+    pub fn set_profile_sender(&mut self, sender: SyncSender<ProfileRequest>) { self.profile_tx = Some(sender); }
+    pub fn current_profile(&self) -> Option<i32> { self.profile }
+    pub fn is_suspended(&self) -> bool { self.suspended }
+    pub fn state_value(&self) -> serde_json::Value {
+        let mut value = victus_core::state_to_value(&self.state);
+        value["profile"] = serde_json::json!(self.profile);
+        value["revision"] = serde_json::json!(self.revision.get());
+        value["instance"] = serde_json::json!(self.instance);
+        value
+    }
+    pub fn publish_state(&self) {
+        self.revision.set(self.revision.get().wrapping_add(1));
+        if let Some(sender) = &self.lighting_tx { let _ = sender.try_send(format!("STATE\t{}\n", self.state_value())); }
     }
 
     pub fn snapshot(&self) -> victus_core::DaemonState {
@@ -84,16 +115,19 @@ impl<P: Platform> Runtime<P> {
         if let Err(error) = victus_core::save_state(&self.state, &self.state_path) {
             log::error!("save state: {error}");
         }
+        self.publish_state();
     }
 
     pub fn set_fan_config(&mut self, config: FanConfig) -> String {
         self.state.fan = config;
+        self.sync_gpu_policy();
         self.persist();
         self.apply_fan_mode();
         "fan-config".into()
     }
 
     pub fn set_lighting(&mut self, settings: LightingSettings) -> String {
+        log::info!("[keyboard-rgb] lighting-config {}", lighting_to_value(&settings));
         self.state.lighting = settings;
         self.persist();
         self.invalidate_lighting(true);
@@ -108,12 +142,16 @@ impl<P: Platform> Runtime<P> {
     }
 
     pub fn set_cpu_frequency(&mut self, limits: Option<(i32, i32)>) -> HubResult<String> {
-        self.state.cpu_frequency = limits;
-        self.persist();
         if let Some((minimum, maximum)) = limits {
             self.platform.cpu_frequency(minimum, maximum)?;
         }
+        self.remember_cpu_frequency(limits);
         Ok("cpu-frequency-config".into())
+    }
+
+    pub fn remember_cpu_frequency(&mut self, limits: Option<(i32, i32)>) {
+        self.state.cpu_frequency = limits;
+        self.persist();
     }
 
     pub fn set_battery_power_save(&mut self, enabled: bool) -> String {
@@ -135,15 +173,27 @@ impl<P: Platform> Runtime<P> {
 
     pub fn set_disable_nvidia_queries(&mut self, enabled: bool) -> String {
         self.state.disable_nvidia_queries = enabled;
+        self.sync_gpu_policy();
         self.persist();
         "disable-nvidia-queries".into()
     }
 
     pub fn set_profile(&mut self, index: i32) -> HubResult<String> {
         let index = clamp_profile(index);
+        if let Some(sender) = &self.profile_tx {
+            sender.try_send(ProfileRequest::Select(index)).map_err(|_| victus_core::HubError::new("profile change already pending"))?;
+            return Ok("profile change queued".into());
+        }
         let message = self.platform.apply_profile(index)?;
-        self.profile = Some(index);
+        self.complete_profile(index);
         Ok(message)
+    }
+
+    pub fn complete_profile(&mut self, index: i32) {
+        self.profile = Some(clamp_profile(index));
+        self.platform.note_profile(index);
+        self.sync_gpu_policy();
+        self.publish_state();
     }
 
     pub fn apply_fan_mode(&mut self) {
@@ -163,6 +213,11 @@ impl<P: Platform> Runtime<P> {
 
     pub fn fan_poll(&mut self, now: f64) {
         let config = self.state.fan.clone();
+        if !self.platform.manual_fan() && config.custom_enabled && config.manual_preset.is_none() {
+            self.fan.state.on_leave_custom();
+            self.platform.release_gpu();
+            return;
+        }
         if self.suspended || !config.custom_enabled || config.manual_preset.is_some() {
             self.platform.release_gpu();
         }
@@ -177,6 +232,7 @@ impl<P: Platform> Runtime<P> {
 
     pub fn prepare_sleep(&mut self) {
         self.suspended = true;
+        self.sync_gpu_policy();
         if let Err(error) = self.platform.pwm_enable(2) {
             log::error!("prepare-sleep: fan auto failed: {error}");
         }
@@ -190,6 +246,7 @@ impl<P: Platform> Runtime<P> {
         self.fan.state.on_suspend();
         self.invalidate_lighting(true);
         self.suspended = false;
+        self.sync_gpu_policy();
         self.apply_fan_mode();
         self.last_power_apply = 0.0;
         if let Some((minimum, maximum)) = self.state.cpu_frequency {
@@ -224,9 +281,19 @@ impl<P: Platform> Runtime<P> {
         self.last_power_apply = now;
     }
 
+    /// Production executes this plan on the slow-I/O worker, outside this lock.
+    pub fn power_plan(&mut self, now: f64) -> Option<(PowerPolicy, Option<(i32, i32)>)> {
+        if self.suspended || !self.state.power.enabled || self.state.power.reapply_seconds <= 0
+            || (self.last_power_apply != 0.0 && now - self.last_power_apply < f64::from(self.state.power.reapply_seconds)) {
+            return None;
+        }
+        self.last_power_apply = now;
+        Some((self.state.power.clone(), self.state.cpu_frequency))
+    }
+
     pub fn refresh_host(&mut self, force: bool) {
         if let Some(index) = self.platform.profile_index() {
-            self.profile = Some(index);
+            if self.profile != Some(index) { self.complete_profile(index); }
         }
         let Some(on_ac) = self.platform.ac_online() else { return };
         let on_battery = !on_ac;
@@ -269,8 +336,13 @@ impl<P: Platform> Runtime<P> {
                     HardwareAction::Brightness(direction) => self.step_brightness(direction),
                     HardwareAction::Effect(direction) => self.step_effect(direction),
                     HardwareAction::CycleProfile => {
-                        let current = self.profile.unwrap_or(1);
-                        if let Err(error) = self.set_profile((current + 1) % 3) {
+                        let result = if let Some(sender) = &self.profile_tx {
+                            sender.try_send(ProfileRequest::Cycle).map(|_| "profile cycle queued".into())
+                                .map_err(|_| victus_core::HubError::new("profile change already pending"))
+                        } else {
+                            self.set_profile((self.profile.unwrap_or(1) + 1) % 3)
+                        };
+                        if let Err(error) = result {
                             log::error!("hardware shortcut: profile cycle failed: {error}");
                         }
                     }
@@ -305,10 +377,11 @@ impl<P: Platform> Runtime<P> {
     }
 
     fn publish(&mut self, settings: &LightingSettings) {
+        #[cfg(test)]
         self.published.push(settings.clone());
         if let Some(sender) = &self.lighting_tx {
             let body = lighting_to_value(settings);
-            let _ = sender.send(format!("LIGHTING\t{body}\n"));
+            let _ = sender.try_send(format!("LIGHTING\t{body}\n"));
         }
     }
 
@@ -425,6 +498,10 @@ impl<P: Platform> Runtime<P> {
         if reset_backlight {
             self.light_backlight_on = None;
         }
+    }
+
+    fn sync_gpu_policy(&self) {
+        self.platform.gpu_policy(self.fan_needs_gpu_temp(), self.nvidia_queries_disabled(), self.suspended);
     }
 }
 

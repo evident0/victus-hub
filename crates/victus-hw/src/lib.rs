@@ -28,7 +28,11 @@ pub use sysfs::{
 };
 
 use std::path::Path;
-use std::process::Command;
+use std::io::Read;
+use std::process::{Command, Stdio};
+use std::os::unix::process::CommandExt;
+use std::os::fd::{AsFd, AsRawFd};
+use std::time::{Duration, Instant};
 
 use victus_core::{ryzenadj_args, validate_ryzenadj, HubError, HubResult};
 
@@ -40,12 +44,84 @@ pub struct CommandOutput {
 }
 
 pub fn run_command(program: &Path, args: &[String]) -> HubResult<CommandOutput> {
-    let output = Command::new(program).args(args).output().map_err(|error| HubError::new(format!("failed to run {}: {error}", program.display())))?;
+    run_command_timeout(program, args, Duration::from_secs(10))
+}
+
+/// Drain both pipes while waiting, and always reap timed-out children.
+pub fn run_command_timeout(program: &Path, args: &[String], timeout: Duration) -> HubResult<CommandOutput> {
+    run_prepared_command(Command::new(program).args(args), timeout)
+}
+
+pub fn run_prepared_command(command: &mut Command, timeout: Duration) -> HubResult<CommandOutput> {
+    let program = command.get_program().to_string_lossy().into_owned();
+    let mut child = command.process_group(0).stdout(Stdio::piped()).stderr(Stdio::piped())
+        .spawn().map_err(|error| HubError::new(format!("failed to run {program}: {error}")))?;
+    let mut stdout_pipe = child.stdout.take().expect("piped stdout");
+    let mut stderr_pipe = child.stderr.take().expect("piped stderr");
+    let nonblocking = |fd| -> HubResult<()> {
+        let flags = nix::fcntl::fcntl(fd, nix::fcntl::FcntlArg::F_GETFL).map_err(|error| HubError::new(error.to_string()))?;
+        nix::fcntl::fcntl(fd, nix::fcntl::FcntlArg::F_SETFL(nix::fcntl::OFlag::from_bits_truncate(flags) | nix::fcntl::OFlag::O_NONBLOCK))
+            .map_err(|error| HubError::new(error.to_string()))?;
+        Ok(())
+    };
+    let deadline = Instant::now() + timeout;
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    let result = (|| -> HubResult<std::process::ExitStatus> {
+        nonblocking(stdout_pipe.as_raw_fd())?;
+        nonblocking(stderr_pipe.as_raw_fd())?;
+        let mut status = None;
+        let mut out_done = false;
+        let mut err_done = false;
+        loop {
+            if Instant::now() >= deadline { return Err(HubError::new(format!("{program} timed out"))); }
+            if status.is_none() { status = child.try_wait().map_err(|error| HubError::new(format!("{program}: {error}")))?; }
+            if !out_done { out_done = drain_available(&mut stdout_pipe, &mut stdout)?; }
+            if !err_done { err_done = drain_available(&mut stderr_pipe, &mut stderr)?; }
+            if let Some(status) = status {
+                if out_done && err_done { return Ok(status); }
+                // Close pipes inherited by descendants of an exited command.
+                let _ = nix::sys::signal::killpg(nix::unistd::Pid::from_raw(child.id() as i32), nix::sys::signal::Signal::SIGKILL);
+            }
+            let mut fds = Vec::with_capacity(2);
+            if !out_done { fds.push(nix::poll::PollFd::new(stdout_pipe.as_fd(), nix::poll::PollFlags::POLLIN)); }
+            if !err_done { fds.push(nix::poll::PollFd::new(stderr_pipe.as_fd(), nix::poll::PollFlags::POLLIN)); }
+            let wait = deadline.saturating_duration_since(Instant::now()).as_millis().clamp(1, if fds.is_empty() { 10 } else { 250 }) as u16;
+            match nix::poll::poll(&mut fds, wait) {
+                Ok(_) | Err(nix::errno::Errno::EINTR) => {},
+                Err(error) => return Err(HubError::new(error.to_string())),
+            }
+        }
+    })();
+    if result.is_err() {
+        let _ = nix::sys::signal::killpg(nix::unistd::Pid::from_raw(child.id() as i32), nix::sys::signal::Signal::SIGKILL);
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+    let status = result?;
     Ok(CommandOutput {
-        status: output.status.code().unwrap_or(1),
-        stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
-        stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+        status: status.code().unwrap_or(1),
+        stdout: String::from_utf8_lossy(&stdout).into_owned(),
+        stderr: String::from_utf8_lossy(&stderr).into_owned(),
     })
+}
+
+fn drain_available(pipe: &mut impl Read, output: &mut Vec<u8>) -> HubResult<bool> {
+    let mut buffer = [0_u8; 8192];
+    // Bound each drain to give the other pipe and timeout checks a turn.
+    for _ in 0..16 {
+        match pipe.read(&mut buffer) {
+            Ok(0) => return Ok(true),
+            Ok(count) => {
+                let remaining = (1024 * 1024_usize).saturating_sub(output.len());
+                output.extend_from_slice(&buffer[..count.min(remaining)]);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => return Ok(false),
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(error) => return Err(HubError::new(error.to_string())),
+        }
+    }
+    Ok(false)
 }
 
 pub fn apply_ryzenadj(program: &Path, stapm: i32, fast: i32, slow: i32, tctl: i32) -> HubResult<String> {
@@ -115,6 +191,16 @@ pub fn intel_power_limits(root: &Path, pl1_mw: i32, pl2_mw: i32, intel: bool) ->
                 .ok_or_else(|| HubError::new(format!("{} does not expose {label} power limits", package.file_name().unwrap_or_default().to_string_lossy())))?;
             let target = package.join(format!("{prefix}_power_limit_uw"));
             let _ = std::fs::read_to_string(&target).map_err(|error| HubError::new(format!("Could not apply Intel power limits: {error}. Some limits may have changed.")))?;
+            for (bound, below) in [("min", true), ("max", false)] {
+                let path = package.join(format!("{prefix}_{bound}_power_uw"));
+                if path.exists() {
+                    let limit = read_int(&path).ok_or_else(|| HubError::new(format!("Cannot read {}", path.display())))?;
+                    let requested = i64::from(value) * 1000;
+                    if limit > 0 && ((below && requested < limit) || (!below && requested > limit)) {
+                        return Err(HubError::new(format!("{label} power exceeds {} hardware range", package.display())));
+                    }
+                }
+            }
             writes.push((target, value * 1000));
         }
         let enabled = package.join("enabled");
@@ -127,6 +213,11 @@ pub fn intel_power_limits(root: &Path, pl1_mw: i32, pl2_mw: i32, intel: bool) ->
     }
     for (path, value) in &writes {
         std::fs::write(path, value.to_string()).map_err(|error| HubError::new(format!("Could not apply Intel power limits: {error}. Some limits may have changed.")))?;
+        let accepted = read_int(path).ok_or_else(|| HubError::new(format!("Cannot read back {}", path.display())))?;
+        let tolerance = if path.to_string_lossy().ends_with("_uw") { 125_000 } else { 0 };
+        if (accepted - i64::from(*value)).abs() > tolerance {
+            return Err(HubError::new(format!("{} rejected the requested power limit. Some limits may have changed.", path.display())));
+        }
     }
     Ok("Intel PL1/PL2 power limits applied".into())
 }
@@ -142,5 +233,42 @@ mod tests {
         let error = apply_ryzenadj(&missing, 500, 25_000, 25_000, 95).unwrap_err();
         assert!(error.to_string().contains("stapm-limit"));
         let _ = std::fs::remove_dir_all(missing.parent().unwrap());
+    }
+
+    #[test]
+    fn command_output_child() {
+        use std::io::Write;
+        match std::env::var("VICTUS_TEST_CHILD").ok().as_deref() {
+            Some("output") => {
+                std::io::stdout().write_all(b"stdout-child\n").unwrap();
+                std::io::stderr().write_all(b"stderr-child\n").unwrap();
+                let chunk = [b'x'; 8192];
+                for _ in 0..256 {
+                    std::io::stdout().write_all(&chunk).unwrap();
+                    std::io::stderr().write_all(&chunk).unwrap();
+                }
+            }
+            Some("wait") => std::thread::sleep(Duration::from_secs(5)),
+            _ => {},
+        }
+    }
+
+    #[test]
+    fn command_pipes_are_bounded_drained_and_timed_out_without_scripts() {
+        let executable = std::env::current_exe().unwrap();
+        let mut command = Command::new(&executable);
+        command.args(["--exact", "tests::command_output_child", "--nocapture"]).env("VICTUS_TEST_CHILD", "output");
+        let output = run_prepared_command(&mut command, Duration::from_secs(5)).unwrap();
+        assert_eq!(output.status, 0);
+        assert_eq!(output.stdout.len(), 1024 * 1024);
+        assert_eq!(output.stderr.len(), 1024 * 1024);
+        assert!(output.stdout.contains("stdout-child"));
+        assert!(output.stderr.contains("stderr-child"));
+        let mut command = Command::new(executable);
+        command.args(["--exact", "tests::command_output_child", "--nocapture"]).env("VICTUS_TEST_CHILD", "wait");
+        let started = Instant::now();
+        let error = run_prepared_command(&mut command, Duration::from_millis(50)).unwrap_err();
+        assert!(error.to_string().contains("timed out"));
+        assert!(started.elapsed() < Duration::from_secs(2));
     }
 }

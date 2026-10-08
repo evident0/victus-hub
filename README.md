@@ -9,6 +9,8 @@ with Fedora.
 
 The panel and the root daemon are a Cargo workspace (`victus-hub` and `victus-hubd`). The panel is a GTK 4 and libadwaita window. Python stays in the tree as the behavior reference. `cargo build --release` writes both binaries under `target/release/`. `scripts/install` builds them and installs the binaries; it does not create a Python virtualenv. `VICTUS_HUB_OFFLINE=1` opens the panel without connecting to a daemon.
 
+Building requires Rust 1.85 or newer, GTK 4.14 or newer, libadwaita 1.5 or newer, and their development/pkg-config packages. The installer builds in a temporary directory using the invoking user's home and cache, including when the source checkout under `/opt` belongs to root.
+
 ## Install (One-Liner)
 ```
 curl -sL https://raw.githubusercontent.com/evident0/victus-hub/master/install.sh | sudo bash
@@ -177,9 +179,9 @@ your UI from the updated installation. It requests sudo for system changes and
 leaves kernel modules and the RyzenAdj installation in place. The UI runs in
 the terminal; the daemon stays running after it closes.
 
-For UI-only development, `./scripts/ui-test 3` installs the checkout into
-`.venv` and emulates RGB without hardware writes. This helper uninstalls the
-daemon; use `./scripts/install --app-only` to restore it afterward.
+For UI-only development, `./scripts/ui-test 3` runs the Rust panel with
+offline sensor graphs and emulated RGB, without hardware writes or connecting
+to the installed daemon.
 
 The app logs to the terminal it was launched from (so run it from a
 terminal or check the desktop entry's output). The daemon logs via
@@ -210,10 +212,10 @@ journalctl -u victus-hubd -f -o cat
 
 ## Project Structure
 
-- **`victus_hub/`** — the Qt GUI. The user runs this unprivileged. It
+- **`crates/victus-hub/`** — the GTK GUI. The user runs this unprivileged. It
   sends desired state (fan curves, lighting, power policy) to the daemon
   over a Unix socket. Sensor display and the keyboard preview stay in the UI.
-- **`victus_hubd/`** — the root daemon. Runs as a systemd service
+- **`crates/victus-hubd/`** — the root daemon. Runs as a systemd service
   (`victus-hubd.service`), listens on `/run/victus-hubd/victus-hub.sock`,
   owns the control loops, and persists last policy under
   `/var/lib/victus-hubd/` so fans, lighting, and power limits keep working

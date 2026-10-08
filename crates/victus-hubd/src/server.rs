@@ -1,18 +1,20 @@
 use std::fs;
 use std::io::{Read, Write};
+use std::os::fd::AsFd;
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::mpsc::{self, Sender};
+use std::sync::mpsc::{self, SyncSender};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
+use nix::poll::{poll, PollFd, PollFlags};
 
 use victus_core::{HubError, HubResult};
 
 use crate::auth::Peer;
-use crate::dispatch::dispatch;
+use crate::dispatch::{dispatch, dispatch_with_workers};
 use crate::platform::Platform;
 use crate::runtime::Runtime;
 
@@ -24,6 +26,16 @@ where
     P: Platform + 'static,
     F: Fn(u32, i32) -> Peer + Send + Sync + 'static,
 {
+    serve_inner(path, runtime, None, auth, stop)
+}
+
+pub fn serve_with_workers<P, F>(path: &Path, runtime: Arc<Mutex<Runtime<P>>>, sampler: Arc<Mutex<P>>, commands: Arc<Mutex<P>>, auth: F, stop: Arc<AtomicBool>) -> HubResult<()>
+where P: Platform + 'static, F: Fn(u32, i32) -> Peer + Send + Sync + 'static {
+    serve_inner(path, runtime, Some((sampler, commands)), auth, stop)
+}
+
+fn serve_inner<P, F>(path: &Path, runtime: Arc<Mutex<Runtime<P>>>, workers: Option<(Arc<Mutex<P>>, Arc<Mutex<P>>)>, auth: F, stop: Arc<AtomicBool>) -> HubResult<()>
+where P: Platform + 'static, F: Fn(u32, i32) -> Peer + Send + Sync + 'static {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|error| HubError::new(format!("socket directory: {error}")))?;
     }
@@ -34,14 +46,14 @@ where
     fs::set_permissions(path, fs::Permissions::from_mode(0o666)).map_err(|error| HubError::new(format!("socket mode: {error}")))?;
     listener.set_nonblocking(true).map_err(|error| HubError::new(format!("socket listen: {error}")))?;
 
-    let (light_tx, light_rx) = mpsc::channel::<String>();
+    let (light_tx, light_rx) = mpsc::sync_channel::<String>(32);
     runtime.lock().expect("runtime lock").set_lighting_sender(light_tx);
-    let subscribers = Arc::new(Mutex::new(Vec::<Sender<String>>::new()));
+    let subscribers = Arc::new(Mutex::new(Vec::<SyncSender<String>>::new()));
     let fanout = Arc::clone(&subscribers);
     thread::spawn(move || {
         while let Ok(line) = light_rx.recv() {
             if let Ok(mut guard) = fanout.lock() {
-                guard.retain(|sender| sender.send(line.clone()).is_ok());
+                guard.retain(|sender| sender.try_send(line.clone()).is_ok());
             }
         }
     });
@@ -49,6 +61,8 @@ where
     let auth = Arc::new(auth);
     let clients = Arc::new(AtomicUsize::new(0));
     while !stop.load(Ordering::Relaxed) {
+        let mut fds = [PollFd::new(listener.as_fd(), PollFlags::POLLIN)];
+        if poll(&mut fds, 1000_u16).unwrap_or(0) == 0 { continue; }
         match listener.accept() {
             Ok((stream, _)) => {
                 if clients.fetch_add(1, Ordering::Relaxed) >= MAX_CLIENTS {
@@ -61,13 +75,14 @@ where
                 let stop = Arc::clone(&stop);
                 let subscribers = Arc::clone(&subscribers);
                 let clients = Arc::clone(&clients);
+                let workers = workers.clone();
                 thread::spawn(move || {
-                    let _ = handle_client(stream, &runtime, auth.as_ref(), &subscribers, &stop);
+                    let _ = handle_client(stream, &runtime, workers.as_ref(), auth.as_ref(), &subscribers, &stop);
                     clients.fetch_sub(1, Ordering::Relaxed);
                 });
             }
             Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                thread::sleep(Duration::from_millis(20));
+                continue;
             }
             Err(error) => return Err(HubError::new(format!("accept: {error}"))),
         }
@@ -79,8 +94,9 @@ where
 fn handle_client<P: Platform>(
     mut stream: UnixStream,
     runtime: &Arc<Mutex<Runtime<P>>>,
+    workers: Option<&(Arc<Mutex<P>>, Arc<Mutex<P>>)>,
     auth: &dyn Fn(u32, i32) -> Peer,
-    subscribers: &Arc<Mutex<Vec<Sender<String>>>>,
+    subscribers: &Arc<Mutex<Vec<SyncSender<String>>>>,
     stop: &AtomicBool,
 ) -> HubResult<()> {
     stream.set_read_timeout(Some(Duration::from_secs(5))).ok();
@@ -95,12 +111,18 @@ fn handle_client<P: Platform>(
         write_line(&stream, "ERR\tempty request\n")?;
         return Ok(());
     };
+    let peer = auth(uid, pid);
+    if !peer.authorized { write_line(&stream, "ERR\taccess denied: session is no longer active and unlocked\n")?; return Ok(()); }
     if line == "shortcut-events" {
         write_line(&stream, "OK\tshortcut-events\n")?;
-        stream_events(stream, subscribers, stop)?;
+        let initial = runtime.lock().expect("runtime lock").state_value();
+        write_line(&stream, &format!("STATE\t{initial}\n"))?;
+        stream_events(stream, subscribers, stop, &peer, auth)?;
         return Ok(());
     }
-    let response = {
+    let response = if let Some((sampler, commands)) = workers {
+        dispatch_with_workers(runtime, sampler, commands, &peer, &line)
+    } else {
         let mut guard = runtime.lock().expect("runtime lock");
         dispatch(&mut guard, &peer, &line)
     };
@@ -108,13 +130,14 @@ fn handle_client<P: Platform>(
     Ok(())
 }
 
-fn stream_events(mut stream: UnixStream, subscribers: &Arc<Mutex<Vec<Sender<String>>>>, stop: &AtomicBool) -> HubResult<()> {
-    let (sender, receiver) = mpsc::channel();
+fn stream_events(mut stream: UnixStream, subscribers: &Arc<Mutex<Vec<SyncSender<String>>>>, stop: &AtomicBool, peer: &Peer, auth: &dyn Fn(u32, i32) -> Peer) -> HubResult<()> {
+    let (sender, receiver) = mpsc::sync_channel(16);
     subscribers.lock().expect("subscribers").push(sender);
     stream.set_nonblocking(true).ok();
     while !stop.load(Ordering::Relaxed) {
-        match receiver.recv_timeout(Duration::from_millis(200)) {
+        match receiver.recv_timeout(Duration::from_secs(1)) {
             Ok(line) => {
+                if !auth(peer.uid, peer.pid).authorized { continue; }
                 if stream.write_all(line.as_bytes()).is_err() {
                     break;
                 }
@@ -135,17 +158,23 @@ fn stream_events(mut stream: UnixStream, subscribers: &Arc<Mutex<Vec<Sender<Stri
 
 fn read_line(stream: &mut UnixStream) -> HubResult<Option<String>> {
     let mut buffer = Vec::new();
-    let mut byte = [0_u8; 1];
+    let mut chunk = [0_u8; 4096];
+    let deadline = Instant::now() + Duration::from_secs(5);
     loop {
-        match stream.read(&mut byte) {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() { return Err(HubError::new("request timed out")); }
+        stream.set_read_timeout(Some(remaining)).ok();
+        match stream.read(&mut chunk) {
             Ok(0) => break,
-            Ok(_) => {
-                if byte[0] == b'\n' {
-                    break;
-                }
-                buffer.push(byte[0]);
+            Ok(count) => {
+                let end = chunk[..count].iter().position(|byte| *byte == b'\n');
+                buffer.extend_from_slice(&chunk[..end.unwrap_or(count)]);
                 if buffer.len() > MAX_REQUEST {
                     return Err(HubError::new("request is too large"));
+                }
+                if let Some(end) = end {
+                    if end + 1 != count { return Err(HubError::new("one request per connection is required")); }
+                    break;
                 }
             }
             Err(error) if error.kind() == std::io::ErrorKind::WouldBlock || error.kind() == std::io::ErrorKind::TimedOut => {
@@ -201,6 +230,41 @@ mod tests {
         server.join().expect("server thread").expect("server");
         let reply = reply.expect("temporary socket reply");
         assert!(reply.starts_with("OK\t"), "{reply}");
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn authorization_is_rechecked_after_the_request_arrives() {
+        let dir = offline_scratch("reauthorize");
+        let path = dir.join("hub.sock");
+        let runtime = Arc::new(Mutex::new(Runtime::new(dir.join("state.json"), &dir.join("shortcuts.json"), FakePlatform::default())));
+        let allowed = Arc::new(AtomicBool::new(true));
+        let stop = Arc::new(AtomicBool::new(false));
+        let (checked_tx, checked_rx) = mpsc::sync_channel(2);
+        let server_path = path.clone();
+        let server_stop = Arc::clone(&stop);
+        let server_allowed = Arc::clone(&allowed);
+        let server = thread::spawn(move || serve(&server_path, runtime, move |_, pid| {
+            let authorized = server_allowed.load(Ordering::Relaxed);
+            let _ = checked_tx.try_send(());
+            Peer { uid: 1000, pid, authorized }
+        }, server_stop));
+        let mut stream = None;
+        for _ in 0..100 {
+            if let Ok(connection) = UnixStream::connect(&path) { stream = Some(connection); break; }
+            thread::sleep(Duration::from_millis(10));
+        }
+        let mut stream = stream.expect("temporary server");
+        stream.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+        stream.write_all(b"get-state").unwrap();
+        checked_rx.recv_timeout(Duration::from_secs(3)).unwrap();
+        allowed.store(false, Ordering::Relaxed);
+        stream.write_all(b"\n").unwrap();
+        let mut response = String::new();
+        stream.read_to_string(&mut response).unwrap();
+        stop.store(true, Ordering::Relaxed);
+        server.join().unwrap().unwrap();
+        assert!(response.starts_with("ERR\taccess denied"), "{response}");
         let _ = fs::remove_dir_all(dir);
     }
 }

@@ -68,7 +68,7 @@ pub fn update_shell() -> String {
     )
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FrequencyWindow {
     pub lower: i32,
     pub upper: i32,
@@ -99,6 +99,8 @@ pub struct HostView {
     pub mux: Vec<MuxChoice>,
     pub mux_index: i32,
     pub product: String,
+    pub gpu_name: String,
+    pub undervolt: (i32, i32),
 }
 
 impl Default for HostView {
@@ -116,6 +118,8 @@ impl Default for HostView {
             mux: Vec::new(),
             mux_index: -1,
             product: String::new(),
+            gpu_name: String::new(),
+            undervolt: (0, 0),
         }
     }
 }
@@ -165,6 +169,9 @@ impl Model {
     /// Take daemon state as authoritative. Local defaults are not pushed back.
     pub fn hydrate(&mut self, value: &Value) {
         self.state = state_from_value(value);
+        if let Some(profile) = value.get("profile").and_then(Value::as_i64).filter(|index| (0..=2).contains(index)) {
+            self.profile = profile as i32;
+        }
     }
 
     pub fn select_fan_mode(&mut self, mode: FanMode) -> Vec<String> {
@@ -298,6 +305,30 @@ pub fn upsert_program_shortcut(text: &str, mods: &[i32], key: i32) -> String {
     out
 }
 
+pub fn undervolt_from_conf(text: &str) -> (i32, i32) {
+    let mut section = false;
+    let mut offsets = (0, 0);
+    for line in text.lines().map(str::trim) {
+        if line.starts_with('[') { section = line.eq_ignore_ascii_case("[intelUndervolt]"); continue; }
+        if !section { continue; }
+        let Some((key, value)) = line.split_once('=') else { continue };
+        let value = value.trim().parse::<i32>().unwrap_or(0).clamp(-250, 0);
+        match key.trim() { "core" => offsets.0 = value, "cache" => offsets.1 = value, _ => {} }
+    }
+    offsets
+}
+
+pub fn upsert_undervolt(text: &str, core: i32, cache: i32) -> String {
+    let mut output = String::new();
+    let mut replacing = false;
+    for line in text.lines() {
+        if line.trim().starts_with('[') { replacing = line.trim().eq_ignore_ascii_case("[intelUndervolt]"); }
+        if !replacing { output.push_str(line); output.push('\n'); }
+    }
+    output.push_str(&format!("\n[intelUndervolt]\ncore={core}\ncache={cache}\n"));
+    output
+}
+
 pub fn diagnostics_from_logs(module_errors: Option<&str>, acpi: Option<&str>, daemon: Option<&str>) -> String {
     let capabilities: &[victus_core::Capability] = &[];
     let modules: &[(&str, bool)] = &[];
@@ -394,5 +425,19 @@ mod tests {
         assert!(updated.contains("key=24"));
         assert!(updated.contains("mods=29"));
         assert_eq!(program_shortcut_from_conf(&updated).1, 24);
+    }
+
+    #[test]
+    fn undervolt_offsets_survive_settings_updates_without_overwriting_other_sections() {
+        let text = "[General]\nheight=680\n\n[intelUndervolt]\ncore=-100\ncache=-50\n\n[programShortcut]\nkey=149\nmods=\n";
+        assert_eq!(undervolt_from_conf(text), (-100, -50));
+        let updated = upsert_undervolt(text, 0, 0);
+        assert_eq!(undervolt_from_conf(&updated), (0, 0));
+        assert_eq!(program_shortcut_from_conf(&updated).1, 149);
+        assert!(updated.contains("height=680"));
+        assert_eq!(updated.matches("[intelUndervolt]").count(), 1);
+        let mut model = Model::offline(1);
+        model.hydrate(&serde_json::json!({"profile": 2}));
+        assert_eq!(model.profile, 2);
     }
 }

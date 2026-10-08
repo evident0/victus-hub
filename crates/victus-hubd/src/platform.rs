@@ -19,6 +19,7 @@ pub trait Platform: Send {
     fn cpu_frequency(&mut self, minimum: i32, maximum: i32) -> HubResult<String>;
     fn intel_cpu(&self) -> bool;
     fn profile_index(&self) -> Option<i32>;
+    fn note_profile(&mut self, _index: i32) {}
     fn apply_profile(&mut self, index: i32) -> HubResult<String>;
     fn ac_online(&self) -> Option<bool>;
     fn sensors(&mut self, keys: &[String], disable_nvidia: bool) -> SensorSnapshot;
@@ -27,6 +28,7 @@ pub trait Platform: Send {
     fn capabilities(&self) -> Value;
     fn idle_elapsed(&self) -> f64;
     fn release_gpu(&mut self) {}
+    fn gpu_policy(&self, _fan: bool, _disabled: bool, _suspended: bool) {}
 }
 
 #[derive(Debug, Clone)]

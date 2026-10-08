@@ -2,7 +2,7 @@
 
 use std::path::{Path, PathBuf};
 
-use victus_hub::{FrequencyWindow, MuxChoice};
+use victus_hub::MuxChoice;
 
 fn main() {
     let offline = std::env::var("VICTUS_HUB_OFFLINE").ok().as_deref() == Some("1");
@@ -59,20 +59,13 @@ fn fill_host(model: &mut victus_hub::Model, offline: bool) {
             let (mods, key) = victus_hub::program_shortcut_from_conf(&text);
             host.shortcut_mods = mods;
             host.shortcut_key = key;
+            host.undervolt = victus_hub::undervolt_from_conf(&text);
         }
     }
     match victus_hw::read_policies(Path::new("/sys/devices/system/cpu/cpufreq")) {
         Ok(policies) => {
-            let first = &policies[0];
-            let mixed = policies.iter().any(|policy| policy.minimum != first.minimum || policy.maximum != first.maximum);
-            host.frequency = Some(FrequencyWindow {
-                lower: first.hardware_min,
-                upper: first.hardware_max,
-                minimum: first.minimum,
-                maximum: first.maximum,
-                policies: policies.len(),
-                mixed,
-            });
+            host.frequency = victus_hub::ui::frequency_window(&policies).ok();
+            if host.frequency.is_none() { host.frequency_error = "CPU policies have no common frequency range".into(); }
         }
         Err(error) => host.frequency_error = error.to_string(),
     }
@@ -90,6 +83,7 @@ fn fill_host(model: &mut victus_hub::Model, offline: bool) {
         host.fan_modes = caps.fan_modes;
     }
     host.keyboard = caps.keyboard_lighting;
+    host.gpu_name = victus_hub::ui::gpu_name();
     if let Some(mux) = caps.gpu_mux {
         host.mux_index = mux.current_index;
         host.mux = mux

@@ -10,6 +10,7 @@ description = "Sysfs and command helpers. Every function takes the paths it may 
 victus-core = { path = "../victus-core" }
 serde_json.workspace = true
 libloading.workspace = true
+nix.workspace = true
 
 [lints.rust]
 unsafe_code = "warn"

@@ -8,18 +8,20 @@
 #![allow(clippy::module_name_repetitions, clippy::doc_markdown, clippy::too_many_arguments, clippy::too_many_lines)]
 
 mod auth;
+pub mod gpu;
 mod binds;
 mod dispatch;
 mod keys;
 mod platform;
 mod runtime;
 mod server;
-mod system;
+pub mod system;
 
 pub use auth::{authorize, parse_loginctl, session_ok, Peer, SessionInfo};
 pub use dispatch::dispatch;
 pub use keys::discover_keyboards;
 pub use platform::{FakePlatform, Platform};
-pub use runtime::Runtime;
-pub use server::serve;
+pub use runtime::{ProfileRequest, Runtime};
+pub use server::{serve, serve_with_workers};
+pub use dispatch::apply_power_policy;
 pub use system::{ac_online, cpu_is_intel, find_nvidia_runtime, profile_command, profile_from_active_file, SysPlatform};

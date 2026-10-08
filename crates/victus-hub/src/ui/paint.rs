@@ -160,8 +160,8 @@ pub struct Plot {
 impl Plot {
     pub fn new(width: f64, height: f64, temp_max: i32) -> Self {
         let left = 36.0;
-        let top = 16.0;
-        Self { left, top, width: (width - left - 16.0).max(1.0), height: (height - top - 28.0).max(1.0), temp_max }
+        let top = 36.0;
+        Self { left, top, width: (width - left - 36.0).max(1.0), height: (height - top - 36.0).max(1.0), temp_max }
     }
 
     pub fn xy(&self, temp: i32, speed: i32) -> (f64, f64) {
@@ -194,13 +194,13 @@ impl Plot {
 }
 
 pub fn move_point(points: &mut [FanPoint], index: usize, temp: i32, speed: i32) {
-    if index >= points.len() {
+    if points.len() < 2 || index >= points.len() {
         return;
     }
     let last = points.len().saturating_sub(1);
     let speed = speed.clamp(0, 100);
     if index == 0 || index == last {
-        points[index].speed = speed;
+        points[index].speed = if index == 0 { speed.min(points[1].speed) } else { speed.max(points[last - 1].speed) };
         return;
     }
     let left = points[index - 1].temp + 1;
@@ -208,20 +208,22 @@ pub fn move_point(points: &mut [FanPoint], index: usize, temp: i32, speed: i32) 
     if left <= right {
         points[index].temp = temp.clamp(left, right);
     }
-    points[index].speed = speed;
+    points[index].speed = speed.clamp(points[index - 1].speed, points[index + 1].speed);
 }
 
 /// Insert a middle point. Endpoints stay put, so a click outside the span returns `None`.
-pub fn insert_point(points: &mut Vec<FanPoint>, temp: i32, speed: i32) -> Option<usize> {
+pub fn insert_point(points: &mut Vec<FanPoint>, temp: i32, _speed: i32) -> Option<usize> {
+    if points.iter().any(|point| point.temp == temp) { return None; }
     let index = points.iter().position(|point| point.temp > temp).unwrap_or(points.len());
     if index == 0 || index == points.len() {
         return None;
     }
+    let speed = victus_core::interpolate_fan(points, temp);
     points.insert(index, FanPoint { temp, speed });
     Some(index)
 }
 
-pub fn chart(cr: &Context, width: f64, height: f64, temp_max: i32, points: &[FanPoint], accent: (f64, f64, f64), selected: Option<usize>, current: Option<f64>) {
+pub fn chart(cr: &Context, width: f64, height: f64, temp_max: i32, points: &[FanPoint], accent: (f64, f64, f64), selected: Option<usize>, hover: Option<usize>, current: Option<f64>) {
     let plot = Plot::new(width, height, temp_max);
     let _ = cr.set_source_rgb(15.0 / 255.0, 15.0 / 255.0, 15.0 / 255.0);
     rounded(cr, plot.left, plot.top, plot.width, plot.height, 8.0);
@@ -229,17 +231,37 @@ pub fn chart(cr: &Context, width: f64, height: f64, temp_max: i32, points: &[Fan
     let _ = cr.select_font_face("IBM Plex Sans", cairo::FontSlant::Normal, cairo::FontWeight::Normal);
     let _ = cr.set_font_size(11.0);
     source_hex(cr, "#848484");
-    for speed in [0, 50, 100] {
+    for speed in [0, 25, 50, 75, 100] {
         let y = plot.xy(TEMP_MIN_C, speed).1;
+        source_hex(cr, "#2c2c2c");
         let _ = cr.move_to(plot.left, y);
         let _ = cr.line_to(plot.left + plot.width, y);
         let _ = cr.set_line_width(1.0);
         let _ = cr.stroke();
         let label = format!("{speed}");
+        source_hex(cr, "#848484");
         let _ = cr.move_to(4.0, y + 4.0);
         let _ = cr.show_text(&label);
     }
+    for temp in (TEMP_MIN_C..=temp_max).step_by(10) {
+        let x = plot.xy(temp, 0).0;
+        source_hex(cr, "#2c2c2c");
+        cr.move_to(x, plot.top);
+        cr.line_to(x, plot.top + plot.height);
+        let _ = cr.stroke();
+        source_hex(cr, "#848484");
+        cr.move_to(x - 10.0, plot.top + plot.height + 18.0);
+        let _ = cr.show_text(&format!("{temp}°"));
+    }
     if points.len() >= 2 {
+        let first = plot.xy(points[0].temp, points[0].speed);
+        cr.move_to(first.0, plot.top + plot.height);
+        for point in points { let (x, y) = plot.xy(point.temp, point.speed); cr.line_to(x, y); }
+        let last = plot.xy(points[points.len() - 1].temp, 0);
+        cr.line_to(last.0, plot.top + plot.height);
+        cr.close_path();
+        cr.set_source_rgba(accent.0, accent.1, accent.2, 40.0 / 255.0);
+        let _ = cr.fill();
         let (x, y) = plot.xy(points[0].temp, points[0].speed);
         let _ = cr.move_to(x, y);
         for point in points.iter().skip(1) {
@@ -259,14 +281,33 @@ pub fn chart(cr: &Context, width: f64, height: f64, temp_max: i32, points: &[Fan
     }
     for (index, point) in points.iter().enumerate() {
         let (x, y) = plot.xy(point.temp, point.speed);
-        let _ = cr.set_source_rgb(accent.0, accent.1, accent.2);
+        source_hex(cr, "#161616");
         let _ = cr.arc(x, y, if selected == Some(index) { 6.0 } else { 4.0 }, 0.0, std::f64::consts::TAU);
-        let _ = cr.fill();
+        let _ = cr.fill_preserve();
+        cr.set_source_rgb(accent.0, accent.1, accent.2);
+        cr.set_line_width(2.0);
+        let _ = cr.stroke();
         if selected == Some(index) {
             source_hex(cr, "#161616");
             let _ = cr.arc(x, y, 2.5, 0.0, std::f64::consts::TAU);
             let _ = cr.fill();
         }
+    }
+    if let Some(point) = hover.and_then(|index| points.get(index)) {
+        let (x, y) = plot.xy(point.temp, point.speed);
+        let label = format!("{}°C @ {}%", point.temp, point.speed);
+        let tip_width = cr.text_extents(&label).map(|text| text.width()).unwrap_or(100.0) + 12.0;
+        let left = (x + 14.0).min(plot.left + plot.width - tip_width).max(plot.left);
+        let top = (y - 28.0).max(plot.top);
+        source_hex(cr, "#181818");
+        rounded(cr, left, top, tip_width, 22.0, 4.0);
+        let _ = cr.fill_preserve();
+        source_hex(cr, "#555555");
+        cr.set_line_width(1.0);
+        let _ = cr.stroke();
+        source_hex(cr, "#ededed");
+        cr.move_to(left + 6.0, top + 15.0);
+        let _ = cr.show_text(&label);
     }
 }
 
@@ -403,11 +444,6 @@ fn key_boxes(width: f64, height: f64, compact: bool) -> Vec<KeyBox> {
 }
 
 pub fn keyboard(cr: &Context, width: f64, height: f64, compact: bool, zones: i32, enabled: bool, colors: &[RgbColor]) {
-    if !compact {
-        source_hex(cr, "#0F0F0F");
-        rounded(cr, 0.0, 0.0, width, height, 12.0);
-        let _ = cr.fill();
-    }
     let radius = if compact { 3.0 } else { 6.0 };
     let _ = cr.select_font_face("IBM Plex Sans", cairo::FontSlant::Normal, cairo::FontWeight::Normal);
     for key in key_boxes(width, height, compact) {
@@ -454,36 +490,61 @@ pub fn key_zone(width: f64, height: f64, x: f64, y: f64) -> Option<usize> {
     key_boxes(width, height, false).into_iter().find(|key| x >= key.x && x <= key.x + key.w && y >= key.y && y <= key.y + key.h).map(|key| zone_for_key(key.label, key.center_units, 15.0))
 }
 
-pub fn hue_strip(cr: &Context, width: f64, height: f64, hue: f64) {
-    paint_strip(cr, width, height, |index, steps| hsv_to_rgb(index as f64 / steps as f64, 1.0, 1.0));
-    marker(cr, width, height, hue);
+pub fn hue_strip(cr: &Context, width: f64, height: f64, current: (f64, f64, f64)) {
+    paint_strip(cr, width, height, current, |index, steps| hsl_to_rgb(index as f64 / steps as f64, 0.85, 0.55));
 }
 
-pub fn shade_strip(cr: &Context, width: f64, height: f64, hue: f64, value: f64) {
-    paint_strip(cr, width, height, |index, steps| hsv_to_rgb(hue, 1.0, index as f64 / steps as f64));
-    marker(cr, width, height, value);
+pub fn shade_strip(cr: &Context, width: f64, height: f64, hue: f64, current: (f64, f64, f64)) {
+    paint_strip(cr, width, height, current, |index, steps| {
+        let t = index as f64 / f64::from(steps - 1);
+        hsl_to_rgb(hue, 0.28 + t * 0.6, 0.95 - t * 0.76)
+    });
 }
 
-fn paint_strip(cr: &Context, width: f64, height: f64, color: impl Fn(i32, i32) -> (f64, f64, f64)) {
-    let steps = 48;
+fn paint_strip(cr: &Context, width: f64, height: f64, current: (f64, f64, f64), color: impl Fn(i32, i32) -> (f64, f64, f64)) {
+    let steps = 36;
+    let mut nearest = (0, f64::INFINITY);
     for index in 0..steps {
         let (red, green, blue) = color(index, steps);
+        let distance = (red - current.0).powi(2) + (green - current.1).powi(2) + (blue - current.2).powi(2);
+        if distance < nearest.1 { nearest = (index, distance); }
         let _ = cr.set_source_rgb(red, green, blue);
         let x = width * f64::from(index) / f64::from(steps);
         let _ = cr.rectangle(x, 0.0, width / f64::from(steps) + 1.0, height);
         let _ = cr.fill();
     }
-    source_hex(cr, "#343434");
-    rounded(cr, 0.5, 0.5, width - 1.0, height - 1.0, 6.0);
-    let _ = cr.set_line_width(1.0);
-    let _ = cr.stroke();
+    if nearest.1 <= 1200.0 / (255.0 * 255.0) {
+        source_hex(cr, "#fcfaf9");
+        cr.set_line_width(2.0);
+        cr.rectangle(f64::from(nearest.0) * width / f64::from(steps) + 1.0, 1.0, (width / f64::from(steps) - 2.0).max(1.0), height - 2.0);
+        let _ = cr.stroke();
+    }
 }
 
-fn marker(cr: &Context, width: f64, height: f64, unit: f64) {
-    let x = unit.clamp(0.0, 1.0) * width;
-    source_hex(cr, "#EDEDED");
-    let _ = cr.rectangle(x - 1.0, 0.0, 2.0, height);
-    let _ = cr.fill();
+pub fn hsl_to_rgb(hue: f64, saturation: f64, lightness: f64) -> (f64, f64, f64) {
+    let chroma = (1.0 - (2.0 * lightness - 1.0).abs()) * saturation;
+    let h = hue.rem_euclid(1.0) * 6.0;
+    let x = chroma * (1.0 - (h.rem_euclid(2.0) - 1.0).abs());
+    let (r, g, b) = match h as i32 { 0 => (chroma, x, 0.0), 1 => (x, chroma, 0.0), 2 => (0.0, chroma, x),
+        3 => (0.0, x, chroma), 4 => (x, 0.0, chroma), _ => (chroma, 0.0, x) };
+    let m = lightness - chroma / 2.0;
+    (r + m, g + m, b + m)
+}
+
+#[cfg(test)]
+mod regression_tests {
+    use super::*;
+
+    #[test]
+    fn dragging_one_point_cannot_raise_its_neighbors() {
+        let mut points = vec![FanPoint { temp: 30, speed: 20 }, FanPoint { temp: 60, speed: 40 }, FanPoint { temp: 100, speed: 80 }];
+        move_point(&mut points, 1, 70, 95);
+        assert_eq!(points[1], FanPoint { temp: 70, speed: 80 });
+        assert_eq!(points[2], FanPoint { temp: 100, speed: 80 });
+        assert!(insert_point(&mut points, 70, 20).is_none());
+        let index = insert_point(&mut points, 50, 100).unwrap();
+        assert_eq!(points[index].speed, 50);
+    }
 }
 
 pub fn chip(cr: &Context, width: f64, height: f64, hex: &str) {
@@ -492,25 +553,103 @@ pub fn chip(cr: &Context, width: f64, height: f64, hex: &str) {
     let _ = cr.fill();
 }
 
-pub fn sparkline(cr: &Context, width: f64, height: f64, samples: &[f64], min: f64, max: f64, accent: (f64, f64, f64)) {
-    source_hex(cr, "#0F0F0F");
-    rounded(cr, 0.0, 0.0, width, height, 8.0);
-    let _ = cr.fill();
-    if samples.len() < 2 {
+struct Step {
+    left: usize,
+    left_value: f64,
+    right: usize,
+    right_value: f64,
+}
+
+/// Step chart used by the sensor graph window. The grid is drawn even when
+/// every sample is still empty, matching the Qt `SensorLineGraph`.
+pub fn sensor_chart(cr: &Context, width: f64, height: f64, samples: &[Option<f64>], min: f64, max: f64, accent: (f64, f64, f64), hover: Option<usize>, unit: &str) {
+    if width < 2.0 || height < 2.0 || samples.len() < 2 {
         return;
     }
-    let span = (max - min).abs().max(1.0);
-    let step = (width - 16.0) / (samples.len() - 1) as f64;
-    let (first_x, first_y) = (8.0, height - 8.0 - ((samples[0] - min) / span).clamp(0.0, 1.0) * (height - 16.0));
-    let _ = cr.move_to(first_x, first_y);
-    for (index, sample) in samples.iter().enumerate().skip(1) {
-        let x = 8.0 + step * index as f64;
-        let y = height - 8.0 - ((sample - min) / span).clamp(0.0, 1.0) * (height - 16.0);
-        let _ = cr.line_to(x, y);
+    let count = samples.len();
+    let span = (max - min).max(1.0);
+    let x_for = |index: usize| (index as f64 / (count - 1) as f64) * width;
+    let y_for = |value: f64| height - ((value - min) / span).clamp(0.0, 1.0) * height;
+
+    source_hex(cr, "#202020");
+    rounded(cr, 0.0, 0.0, width, height, 4.0);
+    let _ = cr.fill();
+
+    for frac in [0.0, 0.2, 0.4, 0.6, 0.8, 1.0] {
+        let y = frac * height;
+        source_hex(cr, if frac == 0.0 || frac == 1.0 { "#444444" } else { "#3A3A3A" });
+        let _ = cr.set_line_width(1.0);
+        let _ = cr.move_to(0.0, y);
+        let _ = cr.line_to(width, y);
+        let _ = cr.stroke();
     }
-    let _ = cr.set_source_rgb(accent.0, accent.1, accent.2);
-    let _ = cr.set_line_width(2.0);
+    source_hex(cr, "#444444");
+    let _ = cr.move_to(0.5, 0.0);
+    let _ = cr.line_to(0.5, height);
+    let _ = cr.move_to(width - 0.5, 0.0);
+    let _ = cr.line_to(width - 0.5, height);
     let _ = cr.stroke();
+
+    let valid: Vec<usize> = samples.iter().enumerate().filter_map(|(index, value)| value.map(|_| index)).collect();
+    let mut steps = Vec::new();
+    for pair in valid.windows(2) {
+        let left = pair[0];
+        let right = pair[1];
+        let Some(left_value) = samples[left] else { continue };
+        let Some(right_value) = samples[right] else { continue };
+        steps.push(Step { left, left_value, right, right_value });
+    }
+    if let (Some(first), Some(last)) = (steps.first(), steps.last()) {
+        let _ = cr.new_path();
+        let _ = cr.move_to(x_for(first.left), y_for(first.left_value));
+        for step in &steps {
+            let _ = cr.line_to(x_for(step.right), y_for(step.left_value));
+            let _ = cr.line_to(x_for(step.right), y_for(step.right_value));
+        }
+        let _ = cr.line_to(x_for(last.right), height);
+        let _ = cr.line_to(x_for(first.left), height);
+        let _ = cr.close_path();
+        let _ = cr.set_source_rgba(accent.0, accent.1, accent.2, 128.0 / 255.0);
+        let _ = cr.fill();
+
+        let _ = cr.new_path();
+        let _ = cr.move_to(x_for(first.left), y_for(first.left_value));
+        for step in &steps {
+            let _ = cr.line_to(x_for(step.right), y_for(step.left_value));
+            let _ = cr.line_to(x_for(step.right), y_for(step.right_value));
+        }
+        let _ = cr.set_source_rgb(accent.0, accent.1, accent.2);
+        let _ = cr.set_line_width(2.0);
+        let _ = cr.stroke();
+    }
+
+    let Some(index) = hover.filter(|index| steps.iter().any(|step| step.left <= *index && *index <= step.right)) else { return };
+    let Some(step) = steps.iter().find(|step| step.left <= index && index <= step.right) else { return };
+    let label = if unit.is_empty() { format!("{:.1}", step.left_value) } else { format!("{:.1} {unit}", step.left_value) };
+    let _ = cr.select_font_face("IBM Plex Sans", cairo::FontSlant::Normal, cairo::FontWeight::Normal);
+    let _ = cr.set_font_size(11.0);
+    let width_px = cr.text_extents(&label).map(|extents| extents.width()).unwrap_or(label.len() as f64 * 7.0);
+    let tip_w = width_px + 14.0;
+    let tip_h = 22.0;
+    let hx = x_for(index);
+    let hy = y_for(step.left_value);
+    let mut tip_x = hx + 12.0;
+    if tip_x + tip_w > width {
+        tip_x = hx - tip_w - 4.0;
+    }
+    let mut tip_y = hy - 28.0;
+    if tip_y < 4.0 {
+        tip_y = hy + 8.0;
+    }
+    source_hex(cr, "#303030");
+    rounded(cr, tip_x, tip_y, tip_w, tip_h, 4.0);
+    let _ = cr.fill_preserve();
+    let _ = cr.set_source_rgb(accent.0, accent.1, accent.2);
+    let _ = cr.set_line_width(1.0);
+    let _ = cr.stroke();
+    let _ = cr.set_source_rgb(1.0, 1.0, 1.0);
+    let _ = cr.move_to(tip_x + 7.0, tip_y + 15.0);
+    let _ = cr.show_text(&label);
 }
 
 pub fn rgb_to_hsv(red: f64, green: f64, blue: f64) -> (f64, f64, f64) {
