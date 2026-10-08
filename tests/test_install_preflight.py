@@ -29,8 +29,17 @@ class TestPreflight(unittest.TestCase):
         (self.root / "proc").mkdir()
         (self.root / "proc/cpuinfo").write_text("GenuineIntel\n")
         text = (REPO / "scripts/preflight.sh").read_text()
-        text = text.replace("/usr/bin/python3", str(self.bin / "python3"))
-        for prefix in ("/run/systemd", "/lib/modules", "/usr/src", "/sys/firmware", "/proc/cpuinfo"):
+        for prefix in (
+            "/usr/lib/x86_64-linux-gnu",
+            "/lib/x86_64-linux-gnu",
+            "/usr/lib64",
+            "/lib64",
+            "/run/systemd",
+            "/lib/modules",
+            "/usr/src",
+            "/sys/firmware",
+            "/proc/cpuinfo",
+        ):
             text = text.replace(prefix, str(self.root) + prefix)
         self.script = self.root / "preflight"
         self.script.write_text(text + '\npreflight "${1:-0}"\n')
@@ -55,16 +64,34 @@ class TestPreflight(unittest.TestCase):
                 self.assertNotIn("PACKAGE MANAGER WAS EXECUTED", result.stdout + result.stderr)
                 (self.bin / manager).unlink()
 
+    def plant_shared_libs(self):
+        libdir = self.root / "usr/lib64"
+        libdir.mkdir(parents=True, exist_ok=True)
+        for name in (
+            "libsystemd.so.0",
+            "libEGL.so.1",
+            "libGL.so.1",
+            "libwayland-client.so.0",
+            "libxkbcommon.so.0",
+            "libX11.so.6",
+        ):
+            (libdir / name).write_text("")
+
     def test_app_only_does_not_require_build_dependencies(self):
         self.command("gdbus", "exit 0")
+        self.command("cargo", "exit 0")
+        self.command("rustc", "exit 0")
+        self.plant_shared_libs()
         result = self.run_check(1)
         self.assertEqual(result.returncode, 0, result.stderr)
 
-    def test_missing_venv_is_explicit(self):
-        self.command("python3", 'case "$*" in *ensurepip*) exit 1;; esac')
+    def test_missing_cargo_is_explicit(self):
+        self.command("gdbus", "exit 0")
+        self.command("rustc", "exit 0")
+        self.plant_shared_libs()
         result = self.run_check(1)
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("venv/ensurepip", result.stderr)
+        self.assertIn("cargo", result.stderr)
 
     def test_split_ubuntu_mint_headers_reject_unsupported_kernel(self):
         self.command("uname", "printf '6.8.0-100-generic\\n'")
@@ -466,7 +493,6 @@ class TestAppInstaller(unittest.TestCase):
         text = (REPO / "scripts/install").read_text()
         for prefix in ("/opt/", "/etc/", "/usr/local/", "/usr/share/", "/usr/lib/", "/run/"):
             text = text.replace(prefix, str(self.root) + prefix)
-        text = text.replace("/usr/bin/python3", str(self.bin / "python3"))
         (scripts / "install").write_text(text)
         (scripts / "stop-gui").write_text("# test stub\n")
         (scripts / "kmod-prompts.sh").write_text("")
@@ -487,30 +513,49 @@ class TestAppInstaller(unittest.TestCase):
             path.chmod(0o755)
         python = self.bin / "python3"
         python.write_text(f"#!{sys.executable}\n" + '''
-import pathlib, sys
+import sys
 args = sys.argv[1:]
 if len(args) == 1 and args[0].endswith('/scripts/stop-gui'):
     with open(__import__('os').environ['TEST_LOG'], 'a') as log:
         log.write('stop-gui\\n')
     sys.exit(0)
-assert args[:3] == ['-I', '-m', 'venv'], args
-target = pathlib.Path(args[3]) / 'bin'
-target.mkdir()
-python = target / 'python'
-python.write_text('#!/bin/bash\\nprintf "python %s\\n" "$*" >> "$TEST_LOG"\\ncase "$*" in *"-m pip"*) exit "${TEST_PIP_EXIT:-0}";; esac\\n')
-python.chmod(0o755)
+sys.stderr.write('unexpected python3 call: %s\\n' % args)
+sys.exit(1)
 ''')
         python.chmod(0o755)
+        cargo = self.bin / "cargo"
+        cargo.write_text(f"#!{sys.executable}\n" + '''
+import os, pathlib, sys
+args = sys.argv[1:]
+with open(os.environ['TEST_LOG'], 'a') as log:
+    log.write('cargo ' + ' '.join(args) + '\\n')
+code = int(os.environ.get('TEST_CARGO_EXIT', '0'))
+if code != 0:
+    sys.exit(code)
+manifest = None
+for index, arg in enumerate(args):
+    if arg == '--manifest-path' and index + 1 < len(args):
+        manifest = pathlib.Path(args[index + 1])
+if manifest is None:
+    sys.exit('cargo stub expected --manifest-path')
+release = manifest.parent / 'target' / 'release'
+release.mkdir(parents=True, exist_ok=True)
+for name in ('victus-hub', 'victus-hubd'):
+    binary = release / name
+    binary.write_text('#!/bin/sh\\nprintf "%s\\n" "$*" >> "$TEST_LOG"\\nexit 0\\n')
+    binary.chmod(0o755)
+''')
+        cargo.chmod(0o755)
 
     def install(self):
         return subprocess.run(["/bin/bash", str(self.root / "scripts/install"), "--app-only"], env=self.env, capture_output=True, text=True)
 
-    def test_pip_failure_preserves_current_and_does_not_restart_service(self):
+    def test_cargo_failure_preserves_current_and_does_not_restart_service(self):
         app = self.root / "opt/victus-hub-app"
         previous = app / "releases/previous"
         previous.mkdir(parents=True)
         (app / "current").symlink_to(previous)
-        self.env['TEST_PIP_EXIT'] = '1'
+        self.env['TEST_CARGO_EXIT'] = '1'
         result = self.install()
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual((app / "current").resolve(), previous)
@@ -521,23 +566,28 @@ python.chmod(0o755)
         result = self.install()
         self.assertEqual(result.returncode, 0, result.stderr)
         app = self.root / "opt/victus-hub-app"
-        self.assertTrue((app / "current/bin/python").is_file())
+        self.assertTrue((app / "current/bin/victus-hubd").is_file())
+        self.assertTrue((app / "current/bin/victus-hub").is_file())
         log = self.log.read_text()
-        self.assertIn("python -I -m pip install --upgrade", log)
-        self.assertLess(log.index("stop-gui"), log.index("python -I -m pip install"))
-        self.assertIn("--disable-pip-version-check", log)
+        self.assertIn("cargo build --release --manifest-path", log)
+        self.assertLess(log.index("stop-gui"), log.index("cargo build --release"))
         self.assertIn("systemctl restart victus-hubd.service", log)
+        self.assertIn('--socket', log)
         service = (self.root / "etc/systemd/system/victus-hubd.service").read_text()
-        self.assertIn("/current/bin/python -I -m victus_hubd", service)
+        self.assertIn("/current/bin/victus-hubd", service)
+        self.assertNotIn("python", service)
         self.assertIn("DeviceAllow=char-nvidia* rw", service)
         self.assertNotIn("PYTHONPATH", service)
         self.assertNotIn("@ROOT_DIR@", service)
         launcher = self.root / "usr/local/bin/victus-hub"
         self.assertTrue(os.access(launcher, os.X_OK))
-        self.assertIn(" -I -m victus_hub", launcher.read_text())
+        self.assertIn("current/bin/victus-hub", launcher.read_text())
+        self.assertNotIn("python", launcher.read_text())
         for path in ("usr/share/applications/victus-hub.desktop",
                      "usr/share/dbus-1/services/io.github.evident0.VictusHub.service"):
-            self.assertIn('"QT_QPA_PLATFORM=wayland;xcb"', (self.root / path).read_text())
+            text = (self.root / path).read_text()
+            self.assertIn("VICTUS_HUB_DEBUG_LEVEL=0", text)
+            self.assertNotIn("QT_QPA_PLATFORM", text)
 
     def _seed_old_releases(self):
         releases = self.root / "opt/victus-hub-app/releases"

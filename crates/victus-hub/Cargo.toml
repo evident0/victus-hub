@@ -1,0 +1,38 @@
+[package]
+name = "victus-hub"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "egui control panel for HP Victus and Omen laptops"
+
+[lib]
+name = "victus_hub"
+path = "src/lib.rs"
+
+[[bin]]
+name = "victus-hub"
+path = "src/main.rs"
+
+[dependencies]
+victus-core = { path = "../victus-core" }
+victus-hw = { path = "../victus-hw" }
+eframe.workspace = true
+serde_json.workspace = true
+zbus.workspace = true
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = "warn"
+pedantic = "warn"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+must_use_candidate = "allow"
+cast_possible_truncation = "allow"
+cast_sign_loss = "allow"
+cast_precision_loss = "allow"
+module_name_repetitions = "allow"
+doc_markdown = "allow"
+too_many_lines = "allow"

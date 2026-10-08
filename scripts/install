@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Install (or reinstall) all Victus Hub components:
 #   1. custom hp-wmi (includes MUX), hp-kbd-rgb, ryzenadj (AMD only)
-#   2. victus-hubd daemon         (root-owned venv + systemd service)
-#   3. victus-hub program         (pip entry point, same install as daemon)
+#   2. victus-hubd daemon         (release binary + systemd service)
+#   3. victus-hub program         (egui binary, same install as daemon)
 #   4. .desktop entry + icon     (app-menu integration)
 set -euo pipefail
 
@@ -105,9 +105,16 @@ if [ "$APP_ONLY" -eq 0 ]; then
 	install_components
 fi
 
-# ── 2. Root-owned isolated application install (no system pip writes) ──
-printf '\033[1;34m── Installing victus-hubd daemon + victus-hub program ──\033[0m\n'
+# ── 2. Root-owned application install ──
+# Build before creating a release directory. A failed build leaves the
+# previous current symlink in place and does not restart the service.
+printf '\033[1;34m── Building victus-hubd daemon + victus-hub program ──\033[0m\n'
 cd "$ROOT_DIR"
+if [ "$(id -u)" -eq 0 ] && [ -n "${SUDO_UID:-}" ]; then
+	sudo -u "#$SUDO_UID" -- env HOME="${SUDO_HOME:-${HOME:-/root}}" cargo build --release --manifest-path "$ROOT_DIR/Cargo.toml"
+else
+	cargo build --release --manifest-path "$ROOT_DIR/Cargo.toml"
+fi
 APP_DIR=/opt/victus-hub-app
 "${SUDO[@]}" install -d -m755 "$APP_DIR/releases"
 NEW_ENV=$("${SUDO[@]}" mktemp -d "$APP_DIR/releases/install.XXXXXXXX")
@@ -117,17 +124,16 @@ cleanup_install() {
 	[ -z "${ICON_TMP:-}" ] || rm -rf "$ICON_TMP"
 }
 trap cleanup_install EXIT
-"${SUDO[@]}" /usr/bin/python3 -I -m venv "$NEW_ENV"
-"${SUDO[@]}" "$NEW_ENV/bin/python" -I -m pip install --upgrade --disable-pip-version-check "$ROOT_DIR"
-# Verify imports using the exact interpreter used by the service/launcher.
-"${SUDO[@]}" "$NEW_ENV/bin/python" -I -c 'from victus_hubd import daemon; from victus_hub.main import main'
+"${SUDO[@]}" install -d -m755 "$NEW_ENV/bin"
+"${SUDO[@]}" install -m755 "$ROOT_DIR/target/release/victus-hub" "$NEW_ENV/bin/victus-hub"
+"${SUDO[@]}" install -m755 "$ROOT_DIR/target/release/victus-hubd" "$NEW_ENV/bin/victus-hubd"
 "${SUDO[@]}" chown -R root:root "$NEW_ENV"
 "${SUDO[@]}" chmod -R go-w "$NEW_ENV"
 "${SUDO[@]}" ln -sfn "$NEW_ENV" "$APP_DIR/current.new"
 "${SUDO[@]}" mv -Tf "$APP_DIR/current.new" "$APP_DIR/current"
 NEW_ENV=
 "${SUDO[@]}" install -d /usr/local/bin
-printf '#!/bin/sh\nexec /opt/victus-hub-app/current/bin/python -I -m victus_hub "$@"\n' |
+printf '#!/bin/sh\nexec /opt/victus-hub-app/current/bin/victus-hub "$@"\n' |
 	"${SUDO[@]}" tee /usr/local/bin/victus-hub >/dev/null
 "${SUDO[@]}" chmod 755 /usr/local/bin/victus-hub
 
@@ -152,7 +158,7 @@ printf 'Starting %s...\n' "$SERVICE_NAME"
 # Wait for a protocol response, not just a stale socket pathname.
 READY=0
 for _ in $(seq 1 30); do
-	if "${SUDO[@]}" "$APP_DIR/current/bin/python" -I -c 'from victus_hub.backend.daemon_client import request_get_state; request_get_state()' 2>/dev/null; then
+	if "${SUDO[@]}" "$APP_DIR/current/bin/victus-hubd" --socket "$SOCKET_PATH" --client get-state >/dev/null 2>&1; then
 		printf '\033[32mDaemon ready (%s)\033[0m\n' "$SOCKET_PATH"
 		READY=1
 		break
@@ -210,7 +216,7 @@ printf 'Installing desktop entry to %s\n' "$DESKTOP_DST"
 Type=Application
 Name=Victus Hub
 Comment=HP Laptop Control Panel
-Exec=env "QT_QPA_PLATFORM=wayland;xcb" VICTUS_HUB_DEBUG_LEVEL=0 $VICTUS_HUB_BIN
+Exec=env VICTUS_HUB_DEBUG_LEVEL=0 $VICTUS_HUB_BIN
 Icon=victus-hub
 Terminal=false
 Categories=System;Utility;
@@ -219,7 +225,7 @@ DESKTOP
 "${SUDO[@]}" tee "$DBUS_SERVICE_DST" >/dev/null <<DBUS
 [D-BUS Service]
 Name=io.github.evident0.VictusHub
-Exec=env "QT_QPA_PLATFORM=wayland;xcb" VICTUS_HUB_DEBUG_LEVEL=0 $VICTUS_HUB_BIN
+Exec=env VICTUS_HUB_DEBUG_LEVEL=0 $VICTUS_HUB_BIN
 DBUS
 "${SUDO[@]}" chmod 644 "$DBUS_SERVICE_DST"
 

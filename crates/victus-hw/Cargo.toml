@@ -1,0 +1,27 @@
+[package]
+name = "victus-hw"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Sysfs and command helpers. Every function takes the paths it may touch."
+
+[dependencies]
+victus-core = { path = "../victus-core" }
+serde_json.workspace = true
+libloading.workspace = true
+
+[lints.rust]
+unsafe_code = "warn"
+
+[lints.clippy]
+all = "warn"
+pedantic = "warn"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+must_use_candidate = "allow"
+cast_possible_truncation = "allow"
+cast_sign_loss = "allow"
+cast_precision_loss = "allow"
+module_name_repetitions = "allow"
+doc_markdown = "allow"

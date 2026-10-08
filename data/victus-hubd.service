@@ -4,7 +4,7 @@ After=systemd-udevd.service systemd-logind.service
 
 [Service]
 Type=simple
-ExecStart=/opt/victus-hub-app/current/bin/python -I -m victus_hubd
+ExecStart=/opt/victus-hub-app/current/bin/victus-hubd
 WorkingDirectory=/
 Restart=on-failure
 RestartSec=1

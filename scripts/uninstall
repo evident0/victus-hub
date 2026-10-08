@@ -160,11 +160,10 @@ fi
 remove_path "$SOCKET_RUNTIME_DIR" "$STATE_DIR"
 remove_path /opt/victus-hub-app
 
-# ── 3. Program + daemon Python packages ──
-# A single pip distribution (victus-hub) ships both victus_hub* and victus_hubd*.
-# The one-liner installer runs pip as root into /usr/local; a user checkout may
-# also install into ~/.local. Uninstall both, then delete leftover launchers.
-printf '\033[1;34m── Uninstalling victus-hub Python packages ──\033[0m\n'
+# ── 3. Launcher, plus a Python package left by an older install ──
+# Current installs copy release binaries into /opt/victus-hub-app, removed above.
+# Older installs used pip. Remove that package when it is still present.
+printf '\033[1;34m── Removing victus-hub launcher ──\033[0m\n'
 pip_uninstall
 if [ "$(id -u)" -eq 0 ] && [ -n "${REAL_USER:-}" ] && [ "$REAL_USER" != root ]; then
 	pip_uninstall sudo -H -u "$REAL_USER"

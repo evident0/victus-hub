@@ -7,6 +7,8 @@ A lightweight control panel for HP Victus and Omen laptops on Linux.
 It was built and tested on 8BD4 (HP Victus 16-s0001nv) 
 with Fedora.
 
+The panel and the root daemon are a Cargo workspace (`victus-hub` and `victus-hubd`). Python stays in the tree as the behavior reference. `cargo build --release` writes both binaries under `target/release/`. `scripts/install` builds them and installs the binaries; it does not create a Python virtualenv. `VICTUS_HUB_OFFLINE=1` opens the panel without connecting to a daemon.
+
 ## Install (One-Liner)
 ```
 curl -sL https://raw.githubusercontent.com/evident0/victus-hub/master/install.sh | sudo bash
