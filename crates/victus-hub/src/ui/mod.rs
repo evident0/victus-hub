@@ -186,6 +186,7 @@ pub fn start(model: Model, own_bus: bool) -> Result<(), String> {
             return;
         }
         libadwaita::StyleManager::default().set_color_scheme(libadwaita::ColorScheme::ForceDark);
+        configure_font_rendering();
         let session = build_ui(app, &model, &page_for_activate, &visible_for_activate, &stop_for_activate, &sensor_rx, &graphs_for_activate, &wake, &reader, &sensor_signal);
         *current.borrow_mut() = Rc::downgrade(&session);
     });
@@ -249,6 +250,23 @@ fn have_display() -> bool {
 
 struct FontFiles(Option<PathBuf>);
 impl Drop for FontFiles { fn drop(&mut self) { if let Some(path) = &self.0 { let _ = std::fs::remove_dir_all(path); } } }
+
+fn configure_font_rendering() {
+    let Some(settings) = gtk4::Settings::default() else { return };
+    // GTK 4.16+ automatic rendering can override the hinting settings. Look up
+    // its enum at runtime to keep compatibility with the GTK 4.14 minimum.
+    if let Some(manual) = settings.find_property("gtk-font-rendering")
+        .and_then(|property| glib::EnumClass::with_type(property.value_type()))
+        .and_then(|class| class.to_value_by_nick("manual")) {
+        settings.set_property("gtk-font-rendering", manual);
+    }
+    // Keep Plex's measured outlines and rendered ink in the same coordinate
+    // space. Even light hinting can snap capital tops outside fractional
+    // glyph bounds; label padding cannot repair clipping inside a glyph.
+    settings.set_gtk_hint_font_metrics(false);
+    settings.set_gtk_xft_hinting(0);
+    settings.set_gtk_xft_hintstyle(Some("hintnone"));
+}
 
 fn prepare_fonts() -> FontFiles {
     if std::env::var_os("FONTCONFIG_FILE").is_some() {
@@ -1529,7 +1547,7 @@ fn refresh_view(session: &Session) {
     session.built.keyboard.speed_row.set_visible(animated);
     if session.accent_profile.get() != Some(profile) {
         let color = accent_hex(profile);
-        session.accent.load_from_string(&format!("window.victus button.seg-btn.on {{ background: {color}; }} window.victus .linkish.on, window.victus .accent {{ color: {color}; }} window.victus button.selection-link.on {{ color: #ffffff; border-bottom-color: {color}; }} window.victus scale highlight, window.victus switch:checked {{ background: {color}; }}"));
+        session.accent.load_from_string(&format!("window.victus button.seg-btn.on {{ background: {color}; }} window.victus .linkish.on, window.victus .accent {{ color: {color}; }} window.victus button.linkish.on:not(.selection-link):hover:not(:disabled) {{ color: mix({color}, #ffffff, 0.22); }} window.victus button.selection-link.on {{ color: #ffffff; border-bottom-color: {color}; }} window.victus scale highlight, window.victus switch:checked {{ background: {color}; }}"));
         session.accent_profile.set(Some(profile));
     }
     session.built.home.mini.queue_draw();

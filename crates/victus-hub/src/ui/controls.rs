@@ -1,6 +1,6 @@
 //! Navigation, profile, power, and fan control event bindings.
 
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 
 use gtk4::prelude::*;
 use victus_core::{FanMode, CURVE_RESPONSE_AGGRESSIVE, CURVE_RESPONSE_SMOOTH};
@@ -23,32 +23,41 @@ fn wire_sidebar(session: &Rc<Session>) {
     let weak = Rc::downgrade(session);
     let click = gtk4::GestureClick::new();
     click.set_button(1);
-    click.connect_released(move |_, _, _, y| {
+    click.connect_released(move |_, _, x, y| {
         let Some(session) = weak.upgrade() else { return };
         let keyboard = session.model.borrow().host.keyboard;
         let height = f64::from(session.built.sidebar.height());
-        if let Some(page) = paint::nav_page(keyboard, height, y) { show_page(&session, page); }
+        if let Some(page) = paint::nav_page(keyboard, height, x, y) { show_page(&session, page); }
     });
     session.built.sidebar.add_controller(click);
     let weak = Rc::downgrade(session);
     let motion = gtk4::EventControllerMotion::new();
-    motion.connect_motion(move |_, _, y| {
-        let Some(session) = weak.upgrade() else { return };
-        let keyboard = session.model.borrow().host.keyboard;
-        let height = f64::from(session.built.sidebar.height());
-        let hover = paint::nav_page(keyboard, height, y);
-        if session.hover.get() != hover {
-            session.hover.set(hover);
-            session.built.sidebar.queue_draw();
-        }
+    motion.connect_motion(move |_, x, y| {
+        sidebar_hover(&weak, x, y);
+    });
+    let weak = Rc::downgrade(session);
+    motion.connect_enter(move |_, x, y| {
+        sidebar_hover(&weak, x, y);
     });
     let weak = Rc::downgrade(session);
     motion.connect_leave(move |_| {
         let Some(session) = weak.upgrade() else { return };
         session.hover.set(None);
+        session.built.sidebar.set_cursor_from_name(None);
         session.built.sidebar.queue_draw();
     });
     session.built.sidebar.add_controller(motion);
+}
+
+fn sidebar_hover(weak: &Weak<Session>, x: f64, y: f64) {
+    let Some(session) = weak.upgrade() else { return };
+    let keyboard = session.model.borrow().host.keyboard;
+    let height = f64::from(session.built.sidebar.height());
+    let hover = paint::nav_page(keyboard, height, x, y);
+    if session.hover.replace(hover) != hover {
+        session.built.sidebar.set_cursor_from_name(hover.map(|_| "pointer"));
+        session.built.sidebar.queue_draw();
+    }
 }
 
 fn wire_home(session: &Rc<Session>) {

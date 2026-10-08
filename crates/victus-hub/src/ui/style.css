@@ -6,12 +6,17 @@ window.victus {
 }
 window.victus .victus-page,
 window.victus .victus-scroll,
-window.victus viewport,
-window.victus list,
-window.victus list row,
-window.victus row {
+window.victus .victus-scroll > viewport,
+window.victus list.sensors,
+window.victus list.sensors > row {
   background: #161616;
   color: #ededed;
+}
+/* Leave room for glyph ink at fractional text/display scales. */
+window.victus label,
+window.graph-win label,
+popover.sensor-menu label {
+  padding: 2px;
 }
 window.victus .title {
   font-size: 15px;
@@ -69,6 +74,9 @@ window.victus button.seg-btn.on {
   color: #ffffff;
   font-weight: 600;
 }
+window.victus button.seg-btn:hover:not(:disabled) { color: #ededed; }
+window.victus button.seg-btn.on:hover:not(:disabled) { color: #ffffff; }
+window.victus button.seg-btn:disabled { color: #7e7e7e; }
 window.graph-win {
   background: #161616;
   color: #ededed;
@@ -110,6 +118,9 @@ window.victus .linkish {
   min-height: 0;
 }
 window.victus .linkish.on { color: #3f8cff; }
+window.victus button.linkish:hover:not(:disabled) { color: #ededed; }
+window.victus button.linkish.on:hover:not(:disabled) { color: #6ba6ff; }
+window.victus button.linkish:disabled { color: #7e7e7e; }
 window.victus button.selection-link {
   border-bottom: 1px solid transparent;
   border-radius: 0;
@@ -120,6 +131,7 @@ window.victus button.selection-link.on {
   color: #ffffff;
   border-bottom-color: #3f8cff;
 }
+window.victus button.selection-link.on:hover:not(:disabled) { color: #ffffff; }
 window.victus .pill {
   background: #202020;
   color: #ededed;
@@ -129,26 +141,55 @@ window.victus .pill {
   padding: 6px 14px;
   min-height: 0;
 }
+window.victus button.pill:hover:not(:disabled) { background: #343434; }
+window.victus button.pill:active:not(:disabled) { background: #313131; }
+window.victus button.pill:disabled { background: #0f0f0f; color: #7e7e7e; }
 window.victus .row-link {
   background: transparent;
   border: none;
   box-shadow: none;
   padding: 8px 0;
 }
-window.victus .row-link:hover { background: #202020; border-radius: 10px; }
+window.victus .row-link:hover:not(:disabled) { background: #202020; border-radius: 10px; }
 window.victus .sunken-chip {
   background: #0f0f0f;
   border-radius: 8px;
   padding: 4px 8px;
 }
 window.victus entry,
-window.victus dropdown,
 window.victus spinbutton {
   background: #0f0f0f;
   color: #ededed;
   border: 1px solid #2c2c2c;
   border-radius: 8px;
 }
+/* DropDown's selected item is a row inside a toggle button, not a page row. */
+window.victus dropdown > button {
+  background: #0f0f0f;
+  color: #ededed;
+  border: none;
+  box-shadow: none;
+  border-radius: 8px;
+  padding: 4px 10px;
+  min-height: 24px;
+}
+window.victus dropdown > button:hover:not(:disabled),
+window.victus dropdown > button:checked { background: #202020; }
+window.victus dropdown > button row {
+  background: transparent;
+  padding: 0;
+}
+window.victus dropdown popover > contents {
+  background: #0f0f0f;
+  color: #ededed;
+  border: 1px solid #2c2c2c;
+  border-radius: 8px;
+  padding: 4px;
+}
+window.victus dropdown listview,
+window.victus dropdown listview > row { background: transparent; }
+window.victus dropdown listview > row:hover,
+window.victus dropdown listview > row:selected { background: #202020; }
 window.victus entry.hex { font-family: "IBM Plex Mono", monospace; }
 window.victus scale trough {
   background: #313131;
@@ -163,4 +204,5 @@ window.victus scale slider {
   min-height: 16px;
 }
 window.victus switch:checked { background: #3f8cff; }
-window.victus list row:selected { background: #202020; }
+window.victus list.sensors > row:hover,
+window.victus list.sensors > row:selected { background: #202020; }

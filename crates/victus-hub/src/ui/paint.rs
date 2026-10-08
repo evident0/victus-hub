@@ -30,8 +30,11 @@ pub fn nav_buttons(keyboard: bool, height: f64) -> Vec<NavButton> {
     buttons
 }
 
-pub fn nav_page(keyboard: bool, height: f64, y: f64) -> Option<usize> {
-    nav_buttons(keyboard, height).into_iter().find(|button| (button.y..button.y + BUTTON).contains(&y)).map(|button| button.page)
+pub fn nav_page(keyboard: bool, height: f64, x: f64, y: f64) -> Option<usize> {
+    nav_buttons(keyboard, height).into_iter().find(|button| {
+        (button.x..button.x + BUTTON).contains(&x)
+            && (button.y..button.y + BUTTON).contains(&y)
+    }).map(|button| button.page)
 }
 
 pub fn sidebar(cr: &Context, width: f64, height: f64, keyboard: bool, selected: usize, hover: Option<usize>) {
@@ -47,7 +50,7 @@ pub fn sidebar(cr: &Context, width: f64, height: f64, keyboard: bool, selected: 
         let color = if button.page == selected {
             "#EDEDED"
         } else if hover == Some(button.page) {
-            "#969696"
+            "#EDEDED"
         } else {
             "#848484"
         };
@@ -92,7 +95,6 @@ fn icon(cr: &Context, page: usize) {
         3 => {
             rounded(cr, 2.5, 5.5, 19.0, 13.0, 2.0);
             stroke_only(cr, 1.6);
-            source_hex(cr, "#EDEDED");
             for (x, y) in [(6.0, 9.5), (10.0, 9.5), (14.0, 9.5), (17.6, 9.5), (6.0, 12.5), (10.0, 12.5), (14.0, 12.5), (17.6, 12.5)] {
                 let _ = cr.arc(x, y, 0.7, 0.0, std::f64::consts::TAU);
             }

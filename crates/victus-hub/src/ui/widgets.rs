@@ -61,11 +61,11 @@ pub fn metric(caption: &str, unit: &str) -> (Box, Label, Label) {
     let value = Label::new(Some("—"));
     value.add_css_class("metric");
     value.set_halign(Align::Start);
+    value.set_valign(Align::Baseline);
     let unit_label = Label::new(Some(unit));
     unit_label.add_css_class("unit");
     unit_label.add_css_class(if unit.contains("rpm") { "rpm-unit" } else { "temp-unit" });
-    unit_label.set_valign(Align::Start);
-    unit_label.set_margin_top(if unit.contains("rpm") { 26 } else { 23 });
+    unit_label.set_valign(Align::Baseline);
     row.append(&value);
     row.append(&unit_label);
     let caption_label = Label::new(Some(caption));
@@ -115,6 +115,7 @@ pub fn segment(labels: &[impl AsRef<str>]) -> (Box, Vec<Button>) {
     for label in labels {
         let button = Button::with_label(label.as_ref());
         button.add_css_class("seg-btn");
+        button.set_cursor_from_name(Some("pointer"));
         button.set_hexpand(true);
         // Page segments in the Qt UI are a 13px label with 9px of vertical padding.
         button.set_size_request(-1, 35);
@@ -131,6 +132,7 @@ pub fn links(labels: &[impl AsRef<str>]) -> (Box, Vec<Button>) {
         let button = Button::with_label(label.as_ref());
         button.add_css_class("linkish");
         button.add_css_class("selection-link");
+        button.set_cursor_from_name(Some("pointer"));
         row.append(&button);
         buttons.push(button);
     }
@@ -140,6 +142,7 @@ pub fn links(labels: &[impl AsRef<str>]) -> (Box, Vec<Button>) {
 pub fn pill(label: &str) -> Button {
     let button = Button::with_label(label);
     button.add_css_class("pill");
+    button.set_cursor_from_name(Some("pointer"));
     button
 }
 
@@ -217,6 +220,7 @@ pub fn hex_entry() -> Entry {
 pub fn dropdown(labels: &[&str]) -> DropDown {
     let dropdown = DropDown::from_strings(labels);
     dropdown.set_size_request(140, -1);
+    dropdown.set_cursor_from_name(Some("pointer"));
     dropdown
 }
 
