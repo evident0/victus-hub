@@ -67,9 +67,17 @@ fn gtk_controls_preserve_pending_edits_and_wire_lighting_and_navigation() {
     value["power"]["stapm_limit"] = 50_000.into();
     apply_remote_state(&session, &value);
     assert_eq!(session.applied_power.borrow().stapm_limit, 40_000, "stale state was accepted");
-    session.built.stack.set_visible_child_name("sensors");
-    while glib::MainContext::default().iteration(false) {}
+    show_page(&session, 4);
     let list = &session.built.sensors.list;
+    let laid_out = Instant::now() + Duration::from_secs(2);
+    while Instant::now() < laid_out {
+        while glib::MainContext::default().iteration(false) {}
+        if list.row_at_index(1).is_some_and(|row| row.height() > 0) {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(list.row_at_index(1).is_some_and(|row| row.height() > 0), "sensor rows were not allocated");
     let row_y = |name: &str| -> f64 {
         let mut index = 0;
         while let Some(row) = list.row_at_index(index) {
