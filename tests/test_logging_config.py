@@ -77,7 +77,7 @@ class TerminalDebugTests(unittest.TestCase):
         install = (root / "scripts" / "install").read_text()
         self.assertRegex(
             install,
-            r"Exec=env QT_QPA_PLATFORM=wayland VICTUS_HUB_DEBUG_LEVEL=0 \$VICTUS_HUB_BIN",
+            r"Exec=env GSK_RENDERER=cairo VICTUS_HUB_DEBUG_LEVEL=0 \$VICTUS_HUB_BIN",
         )
         service = (root / "data" / "victus-hubd.service").read_text()
         self.assertNotIn("VICTUS_HUB_DEBUG_LEVEL", service)

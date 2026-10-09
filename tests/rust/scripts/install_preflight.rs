@@ -923,15 +923,19 @@ fn success_installs_isolated_service_and_launcher() {
     let launcher = harness.root.join("usr/local/bin/victus-hub");
     assert!(fs::metadata(&launcher).unwrap().permissions().mode() & 0o111 != 0);
     let launcher_text = fs::read_to_string(&launcher).unwrap();
+    assert!(launcher_text.contains("exec env GSK_RENDERER=cairo "), "{launcher_text}");
     assert!(launcher_text.contains("current/bin/victus-hub"), "{launcher_text}");
     assert!(!launcher_text.contains("python"));
+    assert!(!launcher_text.contains("GDK_BACKEND"));
     for path in [
         "usr/share/applications/victus-hub.desktop",
         "usr/share/dbus-1/services/io.github.evident0.VictusHub.service",
     ] {
         let text = fs::read_to_string(harness.root.join(path)).unwrap();
+        assert!(text.contains("GSK_RENDERER=cairo"), "{path}: {text}");
         assert!(text.contains("VICTUS_HUB_DEBUG_LEVEL=0"), "{path}: {text}");
         assert!(!text.contains("QT_QPA_PLATFORM"), "{path}: {text}");
+        assert!(!text.contains("GDK_BACKEND"), "{path}: {text}");
     }
 }
 

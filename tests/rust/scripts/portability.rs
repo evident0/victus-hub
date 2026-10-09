@@ -46,7 +46,9 @@ fn ui_test_rejects_arguments_without_launching() {
 fn install_pins_quiet_debug_level_and_the_service_does_not() {
     let root = repo_root();
     let install = fs::read_to_string(root.join("scripts/install")).unwrap();
-    assert_eq!(install.matches("Exec=env VICTUS_HUB_DEBUG_LEVEL=0 $VICTUS_HUB_BIN").count(), 2);
+    assert_eq!(install.matches("Exec=env GSK_RENDERER=cairo VICTUS_HUB_DEBUG_LEVEL=0 $VICTUS_HUB_BIN").count(), 2);
+    assert!(install.contains("exec env GSK_RENDERER=cairo /opt/victus-hub-app/current/bin/victus-hub"));
+    assert!(!install.contains("GDK_BACKEND"));
     let service = fs::read_to_string(root.join("data/victus-hubd.service")).unwrap();
     assert!(!service.contains("VICTUS_HUB_DEBUG_LEVEL"));
 }

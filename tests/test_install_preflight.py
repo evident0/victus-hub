@@ -578,13 +578,18 @@ for name in ('victus-hub', 'victus-hubd'):
         self.assertNotIn("@ROOT_DIR@", service)
         launcher = self.root / "usr/local/bin/victus-hub"
         self.assertTrue(os.access(launcher, os.X_OK))
-        self.assertIn("current/bin/victus-hub", launcher.read_text())
-        self.assertNotIn("python", launcher.read_text())
+        launcher_text = launcher.read_text()
+        self.assertIn("exec env GSK_RENDERER=cairo ", launcher_text)
+        self.assertIn("current/bin/victus-hub", launcher_text)
+        self.assertNotIn("python", launcher_text)
+        self.assertNotIn("GDK_BACKEND", launcher_text)
         for path in ("usr/share/applications/victus-hub.desktop",
                      "usr/share/dbus-1/services/io.github.evident0.VictusHub.service"):
             text = (self.root / path).read_text()
+            self.assertIn("GSK_RENDERER=cairo", text)
             self.assertIn("VICTUS_HUB_DEBUG_LEVEL=0", text)
             self.assertNotIn("QT_QPA_PLATFORM", text)
+            self.assertNotIn("GDK_BACKEND", text)
 
     def _seed_old_releases(self):
         releases = self.root / "opt/victus-hub-app/releases"
