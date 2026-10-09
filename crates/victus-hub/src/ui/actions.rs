@@ -108,8 +108,8 @@ pub(super) fn show_page(session: &Session, page: usize) {
     session.model.borrow_mut().page = page;
     if page == 4 && previous != page { session.built.sidebar.grab_focus(); }
     session.built.stack.set_visible_child_name(PAGE_NAMES[page]);
-    session.built.root.set_size_request(page_width(page), 680);
-    session.window.set_default_size(page_width(page), 680);
+    session.built.root.set_size_request(page_width(page), 690);
+    session.window.set_default_size(page_width(page), 690);
     session.built.sidebar.queue_draw();
     notify_sensors(session);
     if page == 1 { refresh_frequency(session); }

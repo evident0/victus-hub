@@ -223,8 +223,8 @@ pub(super) fn build_ui(
     window.set_title(Some("Victus Hub"));
     window.set_icon_name(Some("victus-hub"));
     window.set_decorated(true);
-    window.set_default_size(460, 680);
-    window.set_size_request(420, 680);
+    window.set_default_size(460, 690);
+    window.set_size_request(420, 690);
     window.set_hide_on_close(true);
     window.add_css_class("victus");
     let accent = gtk4::CssProvider::new();
