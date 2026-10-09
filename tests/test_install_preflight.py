@@ -96,10 +96,11 @@ class TestPreflight(unittest.TestCase):
         ):
             (libdir / name).write_text("")
 
-    def test_app_only_does_not_require_build_dependencies(self):
+    def test_app_only_requires_app_build_tools_but_not_kernel_build_tools(self):
         self.command("gdbus", "exit 0")
         self.command("cargo", "exit 0")
-        self.command("rustc", "exit 0")
+        self.command("rustc", "printf 'rustc 1.90.0\\n'")
+        self.command("pkg-config", "exit 0")
         self.plant_shared_libs()
         result = self.run_check(1)
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -568,6 +569,8 @@ class TestAppInstaller(unittest.TestCase):
             shutil.copyfile(REPO / "data" / name, self.root / "data" / name)
         self.log = self.root / "log"
         self.env = dict(os.environ, PATH=f"{self.bin}:{os.environ['PATH']}", TEST_LOG=str(self.log))
+        for key in ("SUDO_UID", "SUDO_GID", "SUDO_USER", "VICTUS_HUB_BUILD_HOME"):
+            self.env.pop(key, None)
         for name, body in {
             "sudo": 'exec "$@"',
             "chown": "exit 0",
@@ -599,12 +602,15 @@ code = int(os.environ.get('TEST_CARGO_EXIT', '0'))
 if code != 0:
     sys.exit(code)
 manifest = None
+target = None
 for index, arg in enumerate(args):
     if arg == '--manifest-path' and index + 1 < len(args):
         manifest = pathlib.Path(args[index + 1])
-if manifest is None:
-    sys.exit('cargo stub expected --manifest-path')
-release = manifest.parent / 'target' / 'release'
+    if arg == '--target-dir' and index + 1 < len(args):
+        target = pathlib.Path(args[index + 1])
+if manifest is None or target is None:
+    sys.exit('cargo stub expected --manifest-path and --target-dir')
+release = target / 'release'
 release.mkdir(parents=True, exist_ok=True)
 for name in ('victus-hub', 'victus-hubd'):
     binary = release / name
@@ -635,8 +641,12 @@ for name in ('victus-hub', 'victus-hubd'):
         self.assertTrue((app / "current/bin/victus-hubd").is_file())
         self.assertTrue((app / "current/bin/victus-hub").is_file())
         log = self.log.read_text()
-        self.assertIn("cargo build --release --manifest-path", log)
-        self.assertLess(log.index("stop-gui"), log.index("cargo build --release"))
+        build = next(line for line in log.splitlines() if line.startswith("cargo build "))
+        self.assertIn("--locked --release --target-dir", build)
+        self.assertIn(f"--manifest-path {self.root}/Cargo.toml", build)
+        build_dir = Path(build.split("--target-dir ", 1)[1].split(" --manifest-path", 1)[0])
+        self.assertFalse(build_dir.exists(), "temporary Cargo output must be cleaned up")
+        self.assertLess(log.index("stop-gui"), log.index("cargo build "))
         self.assertIn("systemctl restart victus-hubd.service", log)
         self.assertIn('--socket', log)
         service = (self.root / "etc/systemd/system/victus-hubd.service").read_text()

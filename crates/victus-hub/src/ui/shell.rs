@@ -387,6 +387,9 @@ pub(super) fn quit(session: &Session) {
     if let Some(id) = session.timer.borrow_mut().take() { id.remove(); }
     session.charts.close_all();
     session.tray.borrow_mut().take();
+    // GTK 4.14's ListBox disposal only understands rows, not an attached
+    // popover. Detach it before closing the window to avoid a removal loop.
+    if let Some(menu) = session.sensor_menu.borrow_mut().take() { menu.unparent(); }
     session.window.set_hide_on_close(false);
     session.window.close();
     if let Some(app) = session.window.application() {
@@ -427,4 +430,3 @@ pub(super) fn arm_tick(session: &Session) {
     });
     *session.timer.borrow_mut() = Some(id);
 }
-

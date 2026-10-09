@@ -1,4 +1,4 @@
-"""Development helpers use isolated Python and check build tools before changes."""
+"""Development helpers preview the Rust UI without touching installed services."""
 
 import os
 from pathlib import Path
@@ -32,36 +32,35 @@ class TestDevelopmentScripts(unittest.TestCase):
 
     def test_ui_dependency_failure_stops_before_service_changes(self):
         self.prepare_ui()
-        self.env["TEST_PIP_EXIT"] = "1"
+        self.env["TEST_CARGO_EXIT"] = "1"
         result = self.run_script("ui-test")
         self.assertNotEqual(result.returncode, 0)
         self.assertNotIn("systemctl", self.log.read_text())
 
-    def test_ui_uses_venv_and_preserves_explicit_qt_platform(self):
+    def test_ui_uses_cargo_offline_and_preserves_explicit_gdk_backend(self):
         self.prepare_ui()
-        for platform in (None, "xcb"):
+        for platform in (None, "x11"):
             with self.subTest(platform=platform):
-                self.env.pop("QT_QPA_PLATFORM", None)
+                self.env.pop("GDK_BACKEND", None)
                 if platform:
-                    self.env["QT_QPA_PLATFORM"] = platform
+                    self.env["GDK_BACKEND"] = platform
                 result = self.run_script("ui-test")
                 self.assertEqual(result.returncode, 0, result.stderr)
-                self.assertIn(f"platform={platform or 'wayland;xcb'}", result.stdout)
-                self.assertIn(f"-m pip install -e {self.root}", self.log.read_text())
+                self.assertIn(f"backend={platform or ''}", result.stdout)
+                self.assertIn("offline=1 no_dbus=1 zones=4", result.stdout)
+                self.assertIn("cargo run --release -p victus-hub", self.log.read_text())
+                self.assertNotIn("systemctl", self.log.read_text())
 
     def prepare_ui(self):
-        for name in ("ui-test", "debug-level.sh"):
+        for name in ("ui-test", "libadwaita-pkgconfig.sh"):
             text = (REPO / "scripts" / name).read_text()
             for prefix in ("/etc/", "/run/"):
                 text = text.replace(prefix, str(self.root) + prefix)
             (self.scripts / name).write_text(text)
-        python = self.root / ".venv/bin/python"
-        python.parent.mkdir(parents=True)
-        python.write_text('#!/bin/bash\nprintf "%s\\n" "$*" >> "$TEST_LOG"\n'
-                          'if [ "$2" = pip ]; then exit "${TEST_PIP_EXIT:-0}"; fi\n'
-                          'printf "platform=%s\\n" "$QT_QPA_PLATFORM"\n')
-        python.chmod(0o755)
-        self.command("python3", '[ "$1 $2" = "-m venv" ]')
+        self.command("cargo", 'printf "cargo %s\\n" "$*" >> "$TEST_LOG"\n'
+                     'printf "backend=%s offline=%s no_dbus=%s zones=%s\\n" '
+                     '"${GDK_BACKEND:-}" "$VICTUS_HUB_OFFLINE" "$VICTUS_HUB_NO_DBUS" "$VICTUS_HUB_EMULATE_ZONES"\n'
+                     'exit "${TEST_CARGO_EXIT:-0}"')
         self.command("systemctl", 'printf "systemctl %s\\n" "$*" >> "$TEST_LOG"; exit 1')
 
     def test_ryzenadj_requires_pkg_config_before_cloning(self):

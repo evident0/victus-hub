@@ -146,8 +146,8 @@ fn gtk_controls_preserve_pending_edits_and_wire_lighting_and_navigation() {
     assert!(graph.is_sensitive());
     graph.emit_clicked();
     assert!(session.charts.has_visible(), "graph opens from the sensor menu");
-    session.sensor_menu.borrow_mut().take().unwrap().unparent();
     quit(&session);
+    assert!(menu.parent().is_none(), "quit must detach the sensor popover before list disposal");
     verify_hardware_variants(&app);
 }
 
@@ -300,7 +300,6 @@ fn verify_hardware_variants(app: &libadwaita::Application) {
             .find(|window| window.title().as_deref() == Some("Parity dialog")).unwrap();
         window.default_widget().and_downcast::<gtk4::Button>().unwrap().emit_clicked();
         assert_eq!(response.get(), Some(gtk4::ResponseType::Cancel));
-        session.sensor_menu.borrow_mut().take().unwrap().unparent();
         quit(&session);
     }
 }
