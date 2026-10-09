@@ -121,10 +121,17 @@ if [ "$(id -u)" -eq 0 ] && [ -n "${SUDO_UID:-}" ]; then
 	BUILD_HOME=$(getent passwd "$SUDO_UID" | cut -d: -f6)
 	[ -n "$BUILD_HOME" ] || { printf 'Cannot determine build user home.\n' >&2; exit 1; }
 	chown "$SUDO_UID:${SUDO_GID:-$SUDO_UID}" "$BUILD_DIR"
+	# Nested sudo restores secure_path, which hides the invoking user's rustup.
+	BUILD_PATH="$PATH"
+	if [ -x "$BUILD_HOME/.cargo/bin/cargo" ]; then
+		if [[ ":$BUILD_PATH:" != *":$BUILD_HOME/.cargo/bin:"* ]]; then
+			BUILD_PATH="$BUILD_HOME/.cargo/bin:$BUILD_PATH"
+		fi
+	fi
 	if [ -n "${PKG_CONFIG_PATH:-}" ]; then
-		sudo -u "#$SUDO_UID" -- env HOME="$BUILD_HOME" PKG_CONFIG_PATH="$PKG_CONFIG_PATH" cargo build --locked --release --target-dir "$BUILD_DIR" --manifest-path "$ROOT_DIR/Cargo.toml"
+		sudo -n -u "#$SUDO_UID" -- env HOME="$BUILD_HOME" PATH="$BUILD_PATH" PKG_CONFIG_PATH="$PKG_CONFIG_PATH" cargo build --locked --release --target-dir "$BUILD_DIR" --manifest-path "$ROOT_DIR/Cargo.toml" </dev/null
 	else
-		sudo -u "#$SUDO_UID" -- env HOME="$BUILD_HOME" cargo build --locked --release --target-dir "$BUILD_DIR" --manifest-path "$ROOT_DIR/Cargo.toml"
+		sudo -n -u "#$SUDO_UID" -- env HOME="$BUILD_HOME" PATH="$BUILD_PATH" cargo build --locked --release --target-dir "$BUILD_DIR" --manifest-path "$ROOT_DIR/Cargo.toml" </dev/null
 	fi
 else
 	cargo build --locked --release --target-dir "$BUILD_DIR" --manifest-path "$ROOT_DIR/Cargo.toml"

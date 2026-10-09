@@ -11,6 +11,21 @@ import unittest
 REPO = Path(__file__).resolve().parents[1]
 
 
+def rewrite_prefixes(text, root, prefixes):
+    prefixes = sorted(prefixes, key=len, reverse=True)
+    out = []
+    index = 0
+    while index < len(text):
+        prefix = next((item for item in prefixes if text.startswith(item, index)), None)
+        if prefix is None:
+            out.append(text[index])
+            index += 1
+            continue
+        out.append(root + prefix)
+        index += len(prefix)
+    return "".join(out)
+
+
 class TestPreflight(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -19,6 +34,8 @@ class TestPreflight(unittest.TestCase):
         self.bin = self.root / "bin"
         self.bin.mkdir()
         self.env = dict(os.environ, PATH=str(self.bin))
+        for key in ("SUDO_UID", "SUDO_GID", "SUDO_USER", "VICTUS_HUB_BUILD_HOME"):
+            self.env.pop(key, None)
         self.command("uname", "printf 'test-kernel\\n'")
         self.command("id", "printf '0\\n'")
         self.command("python3", "exit 0")
@@ -29,7 +46,7 @@ class TestPreflight(unittest.TestCase):
         (self.root / "proc").mkdir()
         (self.root / "proc/cpuinfo").write_text("GenuineIntel\n")
         text = (REPO / "scripts/preflight.sh").read_text()
-        for prefix in (
+        prefixes = (
             "/usr/lib/x86_64-linux-gnu",
             "/lib/x86_64-linux-gnu",
             "/usr/lib64",
@@ -39,18 +56,23 @@ class TestPreflight(unittest.TestCase):
             "/usr/src",
             "/sys/firmware",
             "/proc/cpuinfo",
-        ):
-            text = text.replace(prefix, str(self.root) + prefix)
+        )
+        # Longest match, one pass. A later /lib64 replace must not rewrite /usr/lib64 twice.
+        text = rewrite_prefixes(text, str(self.root), prefixes)
         self.script = self.root / "preflight"
         self.script.write_text(text + '\npreflight "${1:-0}"\n')
 
-    def command(self, name, body):
-        path = self.bin / name
+    def command(self, name, body, directory=None):
+        path = (directory or self.bin) / name
+        path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("#!/bin/bash\n" + body + "\n")
         path.chmod(0o755)
 
-    def run_check(self, app_only=0):
-        return subprocess.run(["/bin/bash", str(self.script), str(app_only)], env=self.env, capture_output=True, text=True)
+    def run_check(self, app_only=0, extra_env=None):
+        env = dict(self.env)
+        if extra_env:
+            env.update(extra_env)
+        return subprocess.run(["/bin/bash", str(self.script), str(app_only)], env=env, capture_output=True, text=True)
 
     def test_missing_packages_are_reported_without_installing(self):
         for manager, label in (("apt-get", "Ubuntu/Mint"), ("pacman", "Arch"), ("dnf", "Fedora")):
@@ -89,6 +111,53 @@ class TestPreflight(unittest.TestCase):
         result = self.run_check(1)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("cargo", result.stderr)
+
+    def test_sudo_uses_invoking_user_rustup(self):
+        home = self.root / "home" / "dev"
+        cargo_bin = home / ".cargo" / "bin"
+        cargo_bin.mkdir(parents=True)
+        self.command("cargo", "exit 0", directory=cargo_bin)
+        self.command(
+            "rustc",
+            "if [ \"${VICTUS_HUB_INVOKED_AS_USER:-}\" != 1 ]; then printf 'rustc was not run as the invoking user\\n' >&2; exit 1; fi\n"
+            f"if [ \"$HOME\" != '{home}' ]; then printf 'HOME=%s\\n' \"$HOME\" >&2; exit 1; fi\n"
+            "printf 'rustc 1.90.0\\n'",
+            directory=cargo_bin,
+        )
+        self.command("getent", f"printf 'user:x:%s:%s::{home}:/bin/bash\\n' \"$2\" \"$2\"")
+        self.command(
+            "sudo",
+            "while [ $# -gt 0 ]; do\n"
+            "  case \"$1\" in\n"
+            "    --) shift; break ;;\n"
+            "    -u|--user|-g|--group) shift 2 ;;\n"
+            "    -*) shift ;;\n"
+            "    *) break ;;\n"
+            "  esac\n"
+            "done\n"
+            "export VICTUS_HUB_INVOKED_AS_USER=1\n"
+            "exec \"$@\"\n",
+        )
+        (self.bin / "cut").symlink_to(shutil.which("cut"))
+        (self.bin / "env").symlink_to(shutil.which("env"))
+        self.command("gdbus", "exit 0")
+        self.command("pkg-config", "exit 0")
+        self.plant_shared_libs()
+        result = self.run_check(1, {"SUDO_UID": "4242"})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Dependency preflight passed.", result.stdout)
+
+    def test_sudo_keeps_system_toolchain_without_user_rustup(self):
+        home = self.root / "home" / "dev"
+        self.command("gdbus", "exit 0")
+        self.command("pkg-config", "exit 0")
+        self.command("cargo", "exit 0")
+        self.command("rustc", "printf 'rustc 1.90.0\\n'")
+        self.command("getent", f"printf 'user:x:%s:%s::{home}:/bin/bash\\n' \"$2\" \"$2\"")
+        (self.bin / "cut").symlink_to(shutil.which("cut"))
+        self.plant_shared_libs()
+        result = self.run_check(1, {"SUDO_UID": "4242"})
+        self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_split_ubuntu_mint_headers_reject_unsupported_kernel(self):
         self.command("uname", "printf '6.8.0-100-generic\\n'")

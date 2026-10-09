@@ -65,6 +65,9 @@ fn bash_body(path: &Path, body: &str) {
 fn run(program: &Path, args: &[&str], env: &[(&str, &str)]) -> Output {
     let mut command = Command::new("/bin/bash");
     command.arg(program).args(args);
+    for key in ["SUDO_UID", "SUDO_GID", "SUDO_USER", "VICTUS_HUB_BUILD_HOME"] {
+        command.env_remove(key);
+    }
     for (key, value) in env {
         command.env(key, value);
     }
@@ -223,6 +226,90 @@ fn missing_cargo_is_explicit() {
     let result = run(&script, &["1"], &[("PATH", &path)]);
     assert!(!result.status.success());
     assert!(text(&result.stderr).contains("cargo"), "{}", text(&result.stderr));
+    let _ = fs::remove_dir_all(root);
+}
+
+fn preflight_root(label: &str) -> (PathBuf, PathBuf, PathBuf) {
+    let root = scratch(label);
+    let bin = root.join("bin");
+    fs::create_dir_all(&bin).unwrap();
+    bash_body(&bin.join("uname"), "printf 'test-kernel\\n'");
+    bash_body(&bin.join("id"), "printf '0\\n'");
+    bash_body(&bin.join("python3"), "exit 0");
+    bash_body(&bin.join("systemctl"), "exit 0");
+    bash_body(&bin.join("loginctl"), "exit 0");
+    bash_body(&bin.join("gdbus"), "exit 0");
+    bash_body(&bin.join("pkg-config"), "exit 0");
+    std::os::unix::fs::symlink(which("cut").unwrap(), bin.join("cut")).unwrap();
+    fs::create_dir_all(root.join("run/systemd/system")).unwrap();
+    let source = fs::read_to_string(repo_root().join("scripts/preflight.sh")).unwrap();
+    let script = root.join("preflight");
+    fs::write(
+        &script,
+        rewrite(
+            &source,
+            &root,
+            &[
+                "/usr/lib/x86_64-linux-gnu",
+                "/lib/x86_64-linux-gnu",
+                "/usr/lib64",
+                "/lib64",
+                "/run/systemd",
+                "/lib/modules",
+                "/usr/src",
+                "/sys/firmware",
+                "/proc/cpuinfo",
+            ],
+        ) + "\npreflight \"${1:-0}\"\n",
+    )
+    .unwrap();
+    plant_shared_libs(&root);
+    (root, bin, script)
+}
+
+#[test]
+fn sudo_uses_invoking_user_rustup() {
+    let (root, bin, script) = preflight_root("preflight-sudo-rustup");
+    let home = root.join("home/dev");
+    let cargo_bin = home.join(".cargo/bin");
+    fs::create_dir_all(&cargo_bin).unwrap();
+    bash_body(&cargo_bin.join("cargo"), "exit 0");
+    bash_body(
+        &cargo_bin.join("rustc"),
+        &format!(
+            "if [ \"${{VICTUS_HUB_INVOKED_AS_USER:-}}\" != 1 ]; then printf 'rustc was not run as the invoking user\\n' >&2; exit 1; fi\nif [ \"$HOME\" != '{home}' ]; then printf 'HOME=%s\\n' \"$HOME\" >&2; exit 1; fi\nprintf 'rustc 1.90.0\\n'",
+            home = home.display()
+        ),
+    );
+    bash_body(
+        &bin.join("getent"),
+        &format!("printf 'user:x:%s:%s::{home}:/bin/bash\\n' \"$2\" \"$2\"", home = home.display()),
+    );
+    bash_body(
+        &bin.join("sudo"),
+        "while [ $# -gt 0 ]; do\n  case \"$1\" in\n    --) shift; break ;;\n    -u|--user|-g|--group) shift 2 ;;\n    -*) shift ;;\n    *) break ;;\n  esac\ndone\nexport VICTUS_HUB_INVOKED_AS_USER=1\nexec \"$@\"\n",
+    );
+    std::os::unix::fs::symlink(which("env").unwrap(), bin.join("env")).unwrap();
+    let path = bin.display().to_string();
+    let result = run(&script, &["1"], &[("PATH", &path), ("SUDO_UID", "4242")]);
+    assert!(result.status.success(), "{}", text(&result.stderr));
+    assert!(text(&result.stdout).contains("Dependency preflight passed."), "{}", text(&result.stdout));
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn sudo_keeps_system_toolchain_without_user_rustup() {
+    let (root, bin, script) = preflight_root("preflight-sudo-system");
+    bash_body(&bin.join("cargo"), "exit 0");
+    bash_body(&bin.join("rustc"), "printf 'rustc 1.90.0\\n'");
+    let home = root.join("home/dev");
+    bash_body(
+        &bin.join("getent"),
+        &format!("printf 'user:x:%s:%s::{home}:/bin/bash\\n' \"$2\" \"$2\"", home = home.display()),
+    );
+    let path = bin.display().to_string();
+    let result = run(&script, &["1"], &[("PATH", &path), ("SUDO_UID", "4242")]);
+    assert!(result.status.success(), "{}", text(&result.stderr));
     let _ = fs::remove_dir_all(root);
 }
 
@@ -937,6 +1024,65 @@ fn success_installs_isolated_service_and_launcher() {
         assert!(!text.contains("QT_QPA_PLATFORM"), "{path}: {text}");
         assert!(!text.contains("GDK_BACKEND"), "{path}: {text}");
     }
+}
+
+#[test]
+fn sudo_build_uses_invoking_user_cargo() {
+    let mut harness = App::new();
+    let home = harness.root.join("home/dev");
+    let cargo_bin = home.join(".cargo/bin");
+    fs::create_dir_all(&cargo_bin).unwrap();
+    fs::remove_file(harness.bin.join("cargo")).unwrap();
+    let home_text = home.display().to_string();
+    let cargo_text = cargo_bin.display().to_string();
+    let cargo_body = r#"case "$PATH" in
+  CARGO_BIN:*) ;;
+  *) printf 'PATH=%s\n' "$PATH" >&2; exit 1 ;;
+esac
+if [ "$HOME" != 'HOME_DIR' ]; then printf 'HOME=%s\n' "$HOME" >&2; exit 1; fi
+printf 'cargo-path %s\n' "$PATH" >> "$TEST_LOG"
+printf 'cargo %s\n' "$*" >> "$TEST_LOG"
+target=
+prev=
+for arg in "$@"; do
+  if [ "$prev" = --target-dir ]; then target=$arg; fi
+  prev=$arg
+done
+mkdir -p "$target/release"
+for name in victus-hub victus-hubd; do
+  printf '%s\n' '#!/bin/sh' 'printf "%s\n" "$*" >> "$TEST_LOG"' 'exit 0' > "$target/release/$name"
+  chmod 755 "$target/release/$name"
+done
+"#
+    .replace("CARGO_BIN", &cargo_text)
+    .replace("HOME_DIR", &home_text);
+    bash_body(&cargo_bin.join("cargo"), &cargo_body);
+    bash_body(&harness.bin.join("id"), "printf '0\\n'");
+    bash_body(
+        &harness.bin.join("getent"),
+        &format!("printf 'user:x:%s:%s::{home_text}:/bin/bash\\n' \"$2\" \"$2\""),
+    );
+    bash_body(
+        &harness.bin.join("sudo"),
+        "while [ $# -gt 0 ]; do\n  case \"$1\" in\n    --) shift; break ;;\n    -u|--user|-g|--group) shift 2 ;;\n    -*) shift ;;\n    *) break ;;\n  esac\ndone\nexec \"$@\"\n",
+    );
+    for name in [
+        "mktemp", "install", "chmod", "rm", "ln", "mv", "tee", "cmp", "seq", "readlink", "dirname", "find", "sort",
+        "cut", "env", "mkdir",
+    ] {
+        let dest = harness.bin.join(name);
+        if !dest.exists() {
+            std::os::unix::fs::symlink(which(name).unwrap(), &dest).unwrap();
+        }
+    }
+    harness.env_set("PATH", &harness.bin.display().to_string());
+    harness.env_set("SUDO_UID", "4242");
+    harness.env_set("SUDO_GID", "4242");
+    let result = harness.install();
+    assert!(result.status.success(), "{}\n{}", text(&result.stdout), text(&result.stderr));
+    let log = fs::read_to_string(&harness.log).unwrap();
+    assert!(log.contains("cargo build --locked --release"), "{log}");
+    assert!(log.contains(&cargo_text), "{log}");
 }
 
 fn seed_old_releases(root: &Path) -> PathBuf {

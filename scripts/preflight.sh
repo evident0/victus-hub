@@ -8,8 +8,39 @@ have_shared_lib() {
 	return 1
 }
 
+# sudo replaces PATH with secure_path, which hides rustup in ~/.cargo/bin.
+# `curl | sudo bash` and `sudo ./scripts/install` still set SUDO_UID.
+prepare_rustup_path() {
+	local home cargo_bin
+	unset VICTUS_HUB_BUILD_HOME
+	[ "$(id -u)" -eq 0 ] || return 0
+	[ -n "${SUDO_UID:-}" ] || return 0
+	home=$(getent passwd "$SUDO_UID" 2>/dev/null | cut -d: -f6 || true)
+	[ -n "$home" ] || return 0
+	cargo_bin="$home/.cargo/bin"
+	if [ ! -x "$cargo_bin/cargo" ] && [ ! -x "$cargo_bin/rustc" ]; then
+		return 0
+	fi
+	if [[ ":$PATH:" != *":$cargo_bin:"* ]]; then
+		PATH="$cargo_bin:$PATH"
+	fi
+	export PATH
+	export VICTUS_HUB_BUILD_HOME="$home"
+}
+
+# Running the user's rustup as root writes root-owned files into ~/.rustup.
+as_build_user() {
+	if [ -n "${VICTUS_HUB_BUILD_HOME:-}" ]; then
+		# -n and stdin from /dev/null: curl | sudo bash must not prompt or consume the script.
+		sudo -n -u "#$SUDO_UID" -- env HOME="$VICTUS_HUB_BUILD_HOME" PATH="$VICTUS_HUB_BUILD_HOME/.cargo/bin:$PATH" "$@" </dev/null
+	else
+		"$@"
+	fi
+}
+
 preflight() {
 	local app_only=${1:-0} kernel missing=() tool packages header
+	prepare_rustup_path
 	kernel=$(uname -r)
 	for tool in python3 cargo rustc pkg-config systemctl loginctl gdbus; do
 		command -v "$tool" >/dev/null 2>&1 || missing+=("$tool")
@@ -19,7 +50,7 @@ preflight() {
 	done
 	if command -v rustc >/dev/null 2>&1; then
 		local rust_version
-		rust_version=$(rustc --version)
+		rust_version=$(as_build_user rustc --version)
 		if ! [[ "$rust_version" =~ ^rustc\ ([0-9]+)\.([0-9]+) ]] ||
 			! (( BASH_REMATCH[1] > 1 || (BASH_REMATCH[1] == 1 && BASH_REMATCH[2] >= 90) )); then
 			missing+=("Rust >= 1.90")
