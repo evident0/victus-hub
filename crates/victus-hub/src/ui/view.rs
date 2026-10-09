@@ -17,8 +17,8 @@ use super::graph;
 use super::host::{notify_sensors, refresh_frequency};
 use super::keyboard::{ignores_color, needs_color2, sync_color_entries};
 use super::labels::{
-    accent_hex, accent_rgb, configure_scale, curve_points, fan_description, fan_mode_from_key, fan_mode_key,
-    light_subtitle, mark_key, mode_name, power_subtitle,
+    accent_hex, accent_rgb, curve_points, fan_description, fan_mode_from_key, fan_mode_key,
+    light_subtitle, mark_key, mode_name, power_subtitle, program_frequency_slider,
 };
 use super::maintenance::{show_diagnostics, show_release};
 use super::pages;
@@ -381,12 +381,8 @@ pub(super) fn apply_frequency_view(session: &Session, result: Result<crate::Freq
     let dirty = session.applied_freq.get().is_some_and(|applied| pending != applied);
     let (minimum, maximum) = if dirty { (pending.0.clamp(window.lower, window.upper), pending.1.clamp(window.lower, window.upper)) } else { (window.minimum, window.maximum) };
     session.suppress.set(true);
-    for (slider, value) in [(&session.built.power.freq_min, minimum.min(maximum)), (&session.built.power.freq_max, maximum)] {
-        configure_scale(&slider.scale, f64::from(window.lower), f64::from(window.upper), 1000.0);
-        slider.value.set_range(f64::from(window.lower) / 1000.0, f64::from(window.upper) / 1000.0);
-        slider.scale.set_value(f64::from(value));
-        slider.value.set_value(f64::from(value) / 1000.0);
-    }
+    program_frequency_slider(&session.built.power.freq_min, window.lower, window.upper, minimum.min(maximum));
+    program_frequency_slider(&session.built.power.freq_max, window.lower, window.upper, maximum);
     session.suppress.set(false);
     session.applied_freq.set(Some((window.minimum, window.maximum)));
     session.built.power.freq_note.set_text(&frequency_note(&window));

@@ -13,7 +13,7 @@ use victus_core::{
 
 use super::host::{notify_sensors, refresh_frequency};
 use super::keyboard::sync_color_entries;
-use super::labels::configure_scale;
+use super::labels::{configure_scale, program_frequency_slider};
 use super::paint;
 use super::session::{BackgroundEvent, ControlRequest, Session};
 use super::shell::arm_tick;
@@ -39,9 +39,6 @@ pub(super) fn sync_controls(session: &Session) {
     session.built.power.limits.set_visible(power.enabled);
     session.built.power.note.set_visible(!power.enabled);
     if let Some(window) = model.host.frequency.clone() {
-        let step = 1000.0;
-        configure_scale(&session.built.power.freq_min.scale, f64::from(window.lower), f64::from(window.upper), step);
-        configure_scale(&session.built.power.freq_max.scale, f64::from(window.lower), f64::from(window.upper), step);
         let (mut minimum, mut maximum) = model.state.cpu_frequency.unwrap_or((window.minimum, window.maximum));
         minimum = minimum.clamp(window.lower, window.upper);
         maximum = maximum.clamp(window.lower, window.upper);
@@ -49,8 +46,8 @@ pub(super) fn sync_controls(session: &Session) {
             minimum = window.lower;
             maximum = window.upper;
         }
-        session.built.power.freq_min.scale.set_value(f64::from(minimum));
-        session.built.power.freq_max.scale.set_value(f64::from(maximum));
+        program_frequency_slider(&session.built.power.freq_min, window.lower, window.upper, minimum.min(maximum));
+        program_frequency_slider(&session.built.power.freq_max, window.lower, window.upper, maximum);
         session.applied_freq.set(Some((window.minimum, window.maximum)));
         session.built.power.freq_sliders.set_sensitive(true);
         session.built.power.freq_note.set_text(&frequency_note(&window));

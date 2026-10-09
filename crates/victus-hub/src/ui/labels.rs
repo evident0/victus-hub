@@ -105,8 +105,29 @@ pub(super) fn mark_key(buttons: &[gtk4::Button], keys: &[String], key: &str) {
 
 pub(super) fn configure_scale(scale: &gtk4::Scale, lower: f64, upper: f64, step: f64) {
     let adjustment = scale.adjustment();
+    // Raise the ceiling first. Setting a floor above the current ceiling clamps
+    // the value to that floor and the coupled slider copies it.
+    if upper > adjustment.upper() {
+        adjustment.set_upper(upper);
+    }
     adjustment.set_lower(lower);
     adjustment.set_upper(upper);
     adjustment.set_step_increment(step);
     adjustment.set_page_increment(step);
+}
+
+/// CPU limits are kHz on the scale and MHz on the spin, matching the Qt rows.
+/// Callers block scale and spin signals first so the new floor is not copied across.
+pub(super) fn program_frequency_slider(slider: &widgets::Slider, lower: i32, upper: i32, khz: i32) {
+    configure_scale(&slider.scale, f64::from(lower), f64::from(upper), 1000.0);
+    let mhz_lower = f64::from(lower) / 1000.0;
+    let mhz_upper = f64::from(upper) / 1000.0;
+    let spin = slider.value.adjustment();
+    if mhz_upper > spin.upper() {
+        spin.set_upper(mhz_upper);
+    }
+    spin.set_lower(mhz_lower);
+    spin.set_upper(mhz_upper);
+    slider.scale.set_value(f64::from(khz));
+    slider.value.set_value(f64::from(khz) / 1000.0);
 }

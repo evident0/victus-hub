@@ -99,7 +99,7 @@ fn wire_power(session: &Rc<Session>) {
     for (slider, unit) in [(&session.built.power.stapm, "W"), (&session.built.power.fast, "W"), (&session.built.power.slow, "W"),
         (&session.built.power.tctl, "°C"), (&session.built.power.reapply, "s"), (&session.built.power.freq_min, "MHz"),
         (&session.built.power.freq_max, "MHz"), (&session.built.power.uv_core, "mV"), (&session.built.power.uv_cache, "mV")] {
-        bind_power_label(slider, unit);
+        bind_power_label(session, slider, unit);
         let weak = Rc::downgrade(session);
         slider.scale.connect_value_changed(move |_| {
             if let Some(session) = weak.upgrade().filter(|session| !session.suppress.get()) { refresh_power_actions(&session); }
@@ -120,17 +120,28 @@ fn wire_power(session: &Rc<Session>) {
     on_click(session, &session.built.power.uv_apply, apply_undervolt);
 }
 
-fn bind_power_label(slider: &widgets::Slider, unit: &'static str) {
+fn bind_power_label(session: &Rc<Session>, slider: &widgets::Slider, unit: &'static str) {
     slider.unit.set_text(unit);
     widgets::spin_suffix(&slider.value, unit);
     let value = slider.value.clone();
     let divisor = slider.divisor;
+    let weak = Rc::downgrade(session);
     slider.scale.connect_value_changed(move |scale| {
+        // Python blocks both signals while a policy refresh assigns the range.
+        if weak.upgrade().is_some_and(|session| session.suppress.get()) {
+            return;
+        }
         value.set_range(scale.adjustment().lower() / divisor, scale.adjustment().upper() / divisor);
         value.set_value(scale.value() / divisor);
     });
     let scale = slider.scale.clone();
-    slider.value.connect_value_changed(move |spin| scale.set_value(spin.value() * divisor));
+    let weak = Rc::downgrade(session);
+    slider.value.connect_value_changed(move |spin| {
+        if weak.upgrade().is_some_and(|session| session.suppress.get()) {
+            return;
+        }
+        scale.set_value(spin.value() * divisor);
+    });
 }
 
 fn couple_limits(session: &Rc<Session>, lower: &gtk4::Scale, upper: &gtk4::Scale) {

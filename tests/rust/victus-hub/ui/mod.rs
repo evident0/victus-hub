@@ -316,3 +316,48 @@ fn frequency_range_is_the_intersection_of_all_policies() {
     assert!(common.mixed);
     assert!(frequency_window(&[policy(400_000, 700_000, 400_000, 700_000), policy(800_000, 3_800_000, 800_000, 3_800_000)]).is_err());
 }
+
+#[test]
+#[ignore = "requires a GTK display; run under Xvfb"]
+fn frequency_sliders_show_kernel_limits_not_the_hardware_floor() {
+    gtk4::init().unwrap();
+    libadwaita::init().unwrap();
+    let app = libadwaita::Application::new(None, ApplicationFlags::NON_UNIQUE);
+    app.register(None::<&gtk4::gio::Cancellable>).unwrap();
+    let model = Rc::new(RefCell::new(Model::offline(1)));
+    let (_, wake) = UnixStream::pair().unwrap();
+    let session = build_ui(
+        &app, &model, &Arc::new(AtomicUsize::new(0)), &Arc::new(AtomicBool::new(true)),
+        &Arc::new(AtomicBool::new(false)), &Rc::new(RefCell::new(None)),
+        &Arc::new(Mutex::new(Vec::new())), &Arc::new(wake), &Rc::new(RefCell::new(None)),
+        &Arc::new((Mutex::new(0), Condvar::new())),
+    );
+    // Startup has no policy yet, same as the real window. The later read is the
+    // hardware floor plus the kernel's current scaling limits.
+    apply_frequency_view(&session, Ok(crate::FrequencyWindow {
+        lower: 419_421,
+        upper: 5_137_904,
+        minimum: 1_658_352,
+        maximum: 4_600_000,
+        policies: 16,
+        mixed: false,
+    }));
+    let shown = (
+        session.built.power.freq_min.value.value(),
+        session.built.power.freq_max.value.value(),
+        session.built.power.freq_min.scale.value(),
+        session.built.power.freq_max.scale.value(),
+    );
+    assert_eq!(shown, (1658.352, 4600.0, 1_658_352.0, 4_600_000.0), "CPU min and max both stuck: {shown:?}");
+    // A second identical policy must not move a pending edit back to the floor.
+    session.built.power.freq_min.scale.set_value(1_200_000.0);
+    apply_frequency_view(&session, Ok(crate::FrequencyWindow {
+        lower: 419_421,
+        upper: 5_137_904,
+        minimum: 1_658_352,
+        maximum: 4_600_000,
+        policies: 16,
+        mixed: false,
+    }));
+    assert_eq!(session.built.power.freq_min.scale.value(), 1_200_000.0);
+}
