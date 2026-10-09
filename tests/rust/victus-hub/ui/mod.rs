@@ -319,6 +319,35 @@ fn frequency_range_is_the_intersection_of_all_policies() {
 
 #[test]
 #[ignore = "requires a GTK display; run under Xvfb"]
+fn fan_mode_explanation_uses_one_line() {
+    gtk4::init().unwrap();
+    libadwaita::init().unwrap();
+    configure_font_rendering();
+    let app = libadwaita::Application::new(None, ApplicationFlags::NON_UNIQUE);
+    app.register(None::<&gtk4::gio::Cancellable>).unwrap();
+    let model = Rc::new(RefCell::new(Model::offline(4)));
+    let (_, wake) = UnixStream::pair().unwrap();
+    let session = build_ui(
+        &app, &model, &Arc::new(AtomicUsize::new(0)), &Arc::new(AtomicBool::new(true)),
+        &Arc::new(AtomicBool::new(false)), &Rc::new(RefCell::new(None)),
+        &Arc::new(Mutex::new(Vec::new())), &Arc::new(wake), &Rc::new(RefCell::new(None)),
+        &Arc::new((Mutex::new(0), Condvar::new())),
+    );
+    show_page(&session, 2);
+    for mode in [FanMode::Auto, FanMode::Smart, FanMode::Max] {
+        session.model.borrow_mut().select_fan_mode(mode);
+        refresh_view(&session);
+        settle_ui();
+        let layout = session.built.fans.info.layout();
+        let lines = layout.line_count();
+        assert_eq!(lines, 1, "{mode:?} explanation is {}px wide", session.built.fans.info.width());
+        snapshot_ui(&session, &format!("fans-{}", super::labels::fan_mode_key(mode)));
+    }
+    quit(&session);
+}
+
+#[test]
+#[ignore = "requires a GTK display; run under Xvfb"]
 fn frequency_sliders_show_kernel_limits_not_the_hardware_floor() {
     gtk4::init().unwrap();
     libadwaita::init().unwrap();

@@ -585,7 +585,12 @@ fn fans(modes: &[String]) -> (Box, Fans) {
     page.append(&editor);
     let info = Label::new(None);
     info.set_wrap(true);
-    info.set_halign(Align::Start);
+    // GTK's default natural size for a wrapping label is roughly square, so
+    // Auto, Smart, and Max stacked one phrase per line. Prefer one line and
+    // wrap only when the page is narrower than the sentence.
+    info.set_natural_wrap_mode(gtk4::NaturalWrapMode::None);
+    info.set_hexpand(true);
+    info.set_halign(Align::Fill);
     info.set_xalign(0.0);
     info.set_margin_top(24);
     info.set_vexpand(true);
