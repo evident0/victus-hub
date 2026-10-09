@@ -45,6 +45,12 @@ fn main() {
     let runtime = Arc::new(Mutex::new(Runtime::new(args.state, &args.shortcuts, platform)));
     {
         let mut guard = runtime.lock().expect("runtime lock");
+        if !guard.snapshot().initialized
+            && let Some(dir) = saved_desktop_config()
+            && guard.import_desktop_config(&dir)
+        {
+            eprintln!("imported desktop hardware settings from {}", dir.display());
+        }
         guard.refresh_host(true);
         guard.apply_fan_mode();
     }
@@ -459,6 +465,17 @@ fn activate_program_shortcut(runtime: &Arc<Mutex<Runtime<SysPlatform>>>, mods: &
         });
     }
     if let Err(error) = victus_hw::run_prepared_command(&mut command, Duration::from_secs(10)) { log::error!("program shortcut activation: {error}"); }
+}
+
+fn saved_desktop_config() -> Option<PathBuf> {
+    let override_dir = env::var_os("VICTUS_HUB_CONFIG_DIR").filter(|value| !value.is_empty()).map(PathBuf::from);
+    victus_core::desktop_config_dir(override_dir.as_deref(), seat0_home().as_deref(), Path::new("/home"))
+}
+
+fn seat0_home() -> Option<PathBuf> {
+    let peer = active_desktop_peer()?;
+    let user = nix::unistd::User::from_uid(nix::unistd::Uid::from_raw(peer.uid)).ok().flatten()?;
+    Some(user.dir)
 }
 
 fn active_desktop_peer() -> Option<Peer> {

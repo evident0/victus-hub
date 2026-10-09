@@ -11,6 +11,7 @@ mod diagnostics;
 mod error;
 mod fan;
 mod keys;
+mod legacy;
 mod lighting;
 mod loglevel;
 mod power;
@@ -38,6 +39,7 @@ pub use keys::{
     keys_for_page, request_key_for_graph, requestable_keys, unknown_sensor_keys, FANS_PAGE_KEYS, GPU_QUERY_KEYS,
     HOME_PAGE_KEYS, KEYBOARD_PAGE_KEYS, POWER_PAGE_KEYS,
 };
+pub use legacy::{desktop_config_dir, migrated_state, settings};
 pub use lighting::{
     compute_anim_color, effect_is_animated, effects_for_zone_count, hex_to_rgb, lighting_frames,
     lighting_from_value, lighting_to_value, normalize_effect, normalize_lighting_settings, rgb_to_hex,

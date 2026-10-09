@@ -221,11 +221,17 @@ class PowerPage(QWidget):
         if saved_frequency is None and self._frequency_min.isEnabled():
             self._frequency_min.setValue(self._frequency_min.slider.minimum())
             self._frequency_max.setValue(self._frequency_max.slider.maximum())
-        if saved_frequency is not None and self._frequency_min.isEnabled():
+        elif saved_frequency is not None and self._frequency_min.isEnabled():
             minimum, maximum = saved_frequency
             self._frequency_max.setValue(maximum)
             self._frequency_min.setValue(minimum)
-            self._on_apply_frequency()
+            # The daemon already applied its saved limits. Display them
+            # without writing sysfs or pushing the policy again.
+            self._applied_frequency = (
+                self._frequency_min.slider.value(),
+                self._frequency_max.slider.value(),
+            )
+            self._update_frequency_apply_enabled()
 
         if self._intel:
             self._add_undervolt_controls(layout)

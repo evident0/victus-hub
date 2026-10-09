@@ -11,7 +11,7 @@ The panel and the root daemon are a Cargo workspace (`victus-hub` and `victus-hu
 
 Building requires Rust 1.90 or newer, GTK 4.14 or newer, libadwaita 1.5 or newer, and their development/pkg-config packages. The installer builds in a temporary directory using the invoking user's home and cache, including when the source checkout under `/opt` belongs to root.
 
-The Sensors page uses `libsensors.so.5` when available, honoring lm-sensors `compute`, `label`, and `ignore` configuration without starting a subprocess for each sample. If the library is unavailable or cannot initialize, it falls back to raw hwmon readings. Qt user settings are imported once when the daemon has no initialized policy; an existing daemon policy remains authoritative.
+The Sensors page uses `libsensors.so.5` when available, honoring lm-sensors `compute`, `label`, and `ignore` configuration without starting a subprocess for each sample. If the library is unavailable or cannot initialize, it falls back to raw hwmon readings. At startup the daemon imports the desktop user's `~/.config/victus-hub` once when it has no initialized policy, then applies that policy itself. It uses `VICTUS_HUB_CONFIG_DIR` when set, otherwise the active seat0 account, otherwise the only account under `/home` that has those files. An existing daemon policy stays authoritative.
 
 ## Install (One-Liner)
 ```

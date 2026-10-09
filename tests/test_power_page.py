@@ -171,16 +171,18 @@ class TestPowerPage(unittest.TestCase):
         self.page._frequency_max.value.setValue(4199)
         self.assertFalse(self.page._frequency_btn.isEnabled())
 
-    def test_saved_frequency_is_applied_once_at_initialization(self):
+    def test_saved_frequency_is_shown_without_applying(self):
         self.saved.return_value = (1200000, 4200000)
         with patch.object(PowerPage, "_on_apply_frequency") as apply:
             page = PowerPage()
             self.addCleanup(page.deleteLater)
-            apply.assert_called_once_with()
+            apply.assert_not_called()
             self.assertEqual(page._frequency_min.slider.value(), 1200000)
             self.assertEqual(page._frequency_max.slider.value(), 4200000)
+            self.assertEqual(page._applied_frequency, (1200000, 4200000))
+            self.assertFalse(page._frequency_btn.isEnabled())
             page._load_frequency_limits()
-            apply.assert_called_once_with()
+            apply.assert_not_called()
 
     def test_unavailable_hardware_and_apply_error(self):
         self.page._on_frequency_applied("daemon unavailable")

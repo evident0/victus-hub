@@ -139,6 +139,48 @@ impl<P: Platform> Runtime<P> {
         Ok("legacy settings migrated".into())
     }
 
+    /// Load `dir` when this daemon has no initialized policy.
+    ///
+    /// `dir` contains `victus-hub.conf` and `config.json`. A missing or rejected
+    /// config stays uninitialized so a later import can still run. Returns
+    /// whether the policy was saved and applied.
+    pub fn import_desktop_config(&mut self, dir: &Path) -> bool {
+        if self.state.initialized {
+            return false;
+        }
+        let text = std::fs::read_to_string(dir.join("victus-hub.conf")).unwrap_or_default();
+        let fan = std::fs::read_to_string(dir.join("config.json"))
+            .ok()
+            .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
+            .filter(serde_json::Value::is_object);
+        let Some(state) = victus_core::migrated_state(&text, fan.as_ref(), self.platform.intel_cpu()) else {
+            return false;
+        };
+        if state.power.enabled {
+            let check = if self.platform.intel_cpu() {
+                victus_core::validate_intel_power(state.power.slow_limit, state.power.fast_limit)
+            } else {
+                victus_core::validate_ryzenadj(
+                    state.power.stapm_limit,
+                    state.power.fast_limit,
+                    state.power.slow_limit,
+                    state.power.tctl_temp,
+                )
+            };
+            if let Err(error) = check {
+                log::error!("desktop settings import rejected: {error}");
+                return false;
+            }
+        }
+        match self.initialize_state(state) {
+            Ok(_) => true,
+            Err(error) => {
+                log::error!("desktop settings import failed: {error}");
+                false
+            }
+        }
+    }
+
     pub fn set_fan_config(&mut self, config: FanConfig) -> String {
         self.state.fan = config;
         self.sync_gpu_policy();
@@ -560,3 +602,7 @@ impl<P: Platform> FanIo for FanBridge<'_, P> {
         self.suspended
     }
 }
+
+#[cfg(test)]
+#[path = "../../../tests/rust/victus-hubd/runtime.rs"]
+mod tests;
