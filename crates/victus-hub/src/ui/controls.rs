@@ -128,6 +128,7 @@ fn bind_power_label(session: &Rc<Session>, slider: &widgets::Slider, unit: &'sta
     let weak = Rc::downgrade(session);
     slider.scale.connect_value_changed(move |scale| {
         // Python blocks both signals while a policy refresh assigns the range.
+        // Callers that change the value during that window must also set the spin.
         if weak.upgrade().is_some_and(|session| session.suppress.get()) {
             return;
         }

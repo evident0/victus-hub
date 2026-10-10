@@ -389,3 +389,55 @@ fn frequency_sliders_show_kernel_limits_not_the_hardware_floor() {
     }));
     assert_eq!(session.built.power.freq_min.scale.value(), 1_200_000.0);
 }
+
+#[test]
+#[ignore = "requires a GTK display; run under Xvfb"]
+fn power_sliders_show_saved_limits_not_the_range_floor() {
+    gtk4::init().unwrap();
+    libadwaita::init().unwrap();
+    let app = libadwaita::Application::new(None, ApplicationFlags::NON_UNIQUE);
+    app.register(None::<&gtk4::gio::Cancellable>).unwrap();
+    let mut model = Model::offline(1);
+    model.state.power.enabled = true;
+    model.state.power.stapm_limit = 40_000;
+    model.state.power.fast_limit = 55_000;
+    model.state.power.slow_limit = 35_000;
+    model.state.power.tctl_temp = 90;
+    model.state.power.reapply_seconds = 8;
+    let model = Rc::new(RefCell::new(model));
+    let (_, wake) = UnixStream::pair().unwrap();
+    let session = build_ui(
+        &app, &model, &Arc::new(AtomicUsize::new(0)), &Arc::new(AtomicBool::new(true)),
+        &Arc::new(AtomicBool::new(false)), &Rc::new(RefCell::new(None)),
+        &Arc::new(Mutex::new(Vec::new())), &Arc::new(wake), &Rc::new(RefCell::new(None)),
+        &Arc::new((Mutex::new(0), Condvar::new())),
+    );
+    let shown = |slider: &crate::ui::widgets::Slider| (slider.scale.value(), slider.value.value());
+    assert_eq!(shown(&session.built.power.stapm), (40.0, 40.0), "STAPM stuck on the 15 W floor");
+    assert_eq!(shown(&session.built.power.fast), (55.0, 55.0), "fast limit stuck on the 15 W floor");
+    assert_eq!(shown(&session.built.power.slow), (35.0, 35.0), "slow limit stuck on the 15 W floor");
+    assert_eq!(shown(&session.built.power.tctl), (90.0, 90.0), "Tctl stuck on the 75 °C floor");
+    assert_eq!(shown(&session.built.power.reapply), (8.0, 8.0), "reapply stuck on 1 s");
+    assert_eq!(session.built.power.stapm.value.text().as_str(), "40 W");
+    assert_eq!(session.built.power.tctl.value.text().as_str(), "90 °C");
+    assert_eq!(session.built.power.reapply.value.text().as_str(), "8 s");
+
+    let mut remote = model.borrow().state.clone();
+    remote.power.stapm_limit = 45_000;
+    remote.power.tctl_temp = 88;
+    remote.power.reapply_seconds = 12;
+    let mut value = victus_core::state_to_value(&remote);
+    value["instance"] = "test-daemon".into();
+    value["revision"] = 1.into();
+    apply_remote_state(&session, &value);
+    assert_eq!(shown(&session.built.power.stapm), (45.0, 45.0));
+    assert_eq!(shown(&session.built.power.tctl), (88.0, 88.0));
+    assert_eq!(shown(&session.built.power.reapply), (12.0, 12.0));
+
+    session.built.power.stapm.scale.set_value(42.0);
+    value["revision"] = 2.into();
+    value["power"]["stapm_limit"] = 50_000.into();
+    apply_remote_state(&session, &value);
+    assert_eq!(shown(&session.built.power.stapm), (42.0, 42.0), "a pending power edit was overwritten");
+    quit(&session);
+}

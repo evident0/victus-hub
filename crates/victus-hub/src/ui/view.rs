@@ -18,7 +18,7 @@ use super::host::{notify_sensors, refresh_frequency};
 use super::keyboard::{ignores_color, needs_color2, sync_color_entries};
 use super::labels::{
     accent_hex, accent_rgb, curve_points, fan_description, fan_mode_from_key, fan_mode_key,
-    light_subtitle, mark_key, mode_name, power_subtitle, program_frequency_slider,
+    light_subtitle, mark_key, mode_name, power_subtitle, program_frequency_slider, program_power_slider,
 };
 use super::maintenance::{show_diagnostics, show_release};
 use super::pages;
@@ -335,8 +335,15 @@ pub(super) fn apply_remote_state(session: &Session, value: &serde_json::Value) {
     session.suppress.set(true);
     if pristine_power {
         session.built.power.enabled.set_active(remote_power.enabled);
-        for (scale, value) in [(&session.built.power.stapm.scale, remote_power.stapm_limit / 1000), (&session.built.power.fast.scale, remote_power.fast_limit / 1000),
-            (&session.built.power.slow.scale, remote_power.slow_limit / 1000), (&session.built.power.tctl.scale, remote_power.tctl_temp), (&session.built.power.reapply.scale, remote_power.reapply_seconds)] { scale.set_value(f64::from(value)); }
+        for (slider, value) in [
+            (&session.built.power.stapm, f64::from(remote_power.stapm_limit) / 1000.0),
+            (&session.built.power.fast, f64::from(remote_power.fast_limit) / 1000.0),
+            (&session.built.power.slow, f64::from(remote_power.slow_limit) / 1000.0),
+            (&session.built.power.tctl, f64::from(remote_power.tctl_temp)),
+            (&session.built.power.reapply, f64::from(remote_power.reapply_seconds)),
+        ] {
+            program_power_slider(slider, value);
+        }
     }
     *session.applied_power.borrow_mut() = remote_power;
     session.built.settings.battery.set_active(model.state.battery_power_save);

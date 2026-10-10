@@ -131,3 +131,11 @@ pub(super) fn program_frequency_slider(slider: &widgets::Slider, lower: i32, upp
     slider.scale.set_value(f64::from(khz));
     slider.value.set_value(f64::from(khz) / 1000.0);
 }
+
+/// Power, Tctl, and reapply rows keep a fixed range. Callers suppress signals
+/// first. The scale handler then skips the spin, so the readout would stay on
+/// the constructor floor (15 W, 75 °C, 1 s) unless this assigns both widgets.
+pub(super) fn program_power_slider(slider: &widgets::Slider, value: f64) {
+    slider.scale.set_value(value);
+    slider.value.set_value(value / slider.divisor);
+}

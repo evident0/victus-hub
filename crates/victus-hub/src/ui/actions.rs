@@ -13,7 +13,7 @@ use victus_core::{
 
 use super::host::{notify_sensors, refresh_frequency};
 use super::keyboard::sync_color_entries;
-use super::labels::{configure_scale, program_frequency_slider};
+use super::labels::{configure_scale, program_frequency_slider, program_power_slider};
 use super::paint;
 use super::session::{BackgroundEvent, ControlRequest, Session};
 use super::shell::arm_tick;
@@ -30,11 +30,11 @@ pub(super) fn sync_controls(session: &Session) {
     let model = session.model.borrow();
     let power = &model.state.power;
     session.built.power.enabled.set_active(power.enabled);
-    session.built.power.stapm.scale.set_value(f64::from(power.stapm_limit) / 1000.0);
-    session.built.power.fast.scale.set_value(f64::from(power.fast_limit) / 1000.0);
-    session.built.power.slow.scale.set_value(f64::from(power.slow_limit) / 1000.0);
-    session.built.power.tctl.scale.set_value(f64::from(power.tctl_temp));
-    session.built.power.reapply.scale.set_value(f64::from(power.reapply_seconds));
+    program_power_slider(&session.built.power.stapm, f64::from(power.stapm_limit) / 1000.0);
+    program_power_slider(&session.built.power.fast, f64::from(power.fast_limit) / 1000.0);
+    program_power_slider(&session.built.power.slow, f64::from(power.slow_limit) / 1000.0);
+    program_power_slider(&session.built.power.tctl, f64::from(power.tctl_temp));
+    program_power_slider(&session.built.power.reapply, f64::from(power.reapply_seconds));
     *session.applied_power.borrow_mut() = power.clone();
     session.built.power.limits.set_visible(power.enabled);
     session.built.power.note.set_visible(!power.enabled);
@@ -66,8 +66,8 @@ pub(super) fn sync_controls(session: &Session) {
         };
         session.built.power.freq_note.set_text(note);
     }
-    session.built.power.uv_core.scale.set_value(f64::from(model.host.undervolt.0));
-    session.built.power.uv_cache.scale.set_value(f64::from(model.host.undervolt.1));
+    program_power_slider(&session.built.power.uv_core, f64::from(model.host.undervolt.0));
+    program_power_slider(&session.built.power.uv_cache, f64::from(model.host.undervolt.1));
     session.applied_uv.set(None);
     session.built.settings.battery.set_active(model.state.battery_power_save);
     session.built.settings.nvidia.set_active(model.state.disable_nvidia_queries);
