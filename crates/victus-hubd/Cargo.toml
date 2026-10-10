@@ -1,0 +1,41 @@
+[package]
+name = "victus-hubd"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Root daemon for Victus Hub"
+
+[lib]
+name = "victus_hubd"
+path = "src/lib.rs"
+
+[[bin]]
+name = "victus-hubd"
+path = "src/main.rs"
+
+[dependencies]
+victus-core = { path = "../victus-core" }
+victus-hw = { path = "../victus-hw" }
+serde_json.workspace = true
+log.workspace = true
+nix.workspace = true
+libloading.workspace = true
+gio = "0.21"
+
+[lints.rust]
+unsafe_code = "warn"
+
+[lints.clippy]
+all = "warn"
+pedantic = "warn"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+must_use_candidate = "allow"
+cast_possible_truncation = "allow"
+cast_sign_loss = "allow"
+cast_precision_loss = "allow"
+module_name_repetitions = "allow"
+doc_markdown = "allow"
+too_many_lines = "allow"
+too_many_arguments = "allow"

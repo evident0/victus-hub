@@ -1,0 +1,41 @@
+[package]
+name = "victus-hub"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "GTK 4 control panel for HP Victus and Omen laptops"
+
+[lib]
+name = "victus_hub"
+path = "src/lib.rs"
+
+[[bin]]
+name = "victus-hub"
+path = "src/main.rs"
+
+[dependencies]
+victus-core = { path = "../victus-core" }
+victus-hw = { path = "../victus-hw" }
+gtk4.workspace = true
+pangocairo = "0.21"
+libadwaita.workspace = true
+serde_json.workspace = true
+# KSNI backend. The default feature pulls GTK 3, which cannot share this process.
+tray-icon = { version = "0.26.1", default-features = false, features = ["ksni"] }
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = "warn"
+pedantic = "warn"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+must_use_candidate = "allow"
+cast_possible_truncation = "allow"
+cast_sign_loss = "allow"
+cast_precision_loss = "allow"
+module_name_repetitions = "allow"
+doc_markdown = "allow"
+too_many_lines = "allow"

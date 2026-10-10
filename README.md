@@ -7,6 +7,12 @@ A lightweight control panel for HP Victus and Omen laptops on Linux.
 It was built and tested on 8BD4 (HP Victus 16-s0001nv) 
 with Fedora.
 
+The panel and the root daemon are a Cargo workspace (`victus-hub` and `victus-hubd`). The panel is a GTK 4 and libadwaita window. `cargo build --release` writes both binaries under `target/release/`. `scripts/install` builds them and installs the binaries. `VICTUS_HUB_OFFLINE=1` opens the panel without connecting to a daemon.
+
+Building requires Rust 1.90 or newer, GTK 4.14 or newer, libadwaita 1.5 or newer, and their development/pkg-config packages. The installer builds in a temporary directory using the invoking user's home and cache, including when the source checkout under `/opt` belongs to root.
+
+The Sensors page uses `libsensors.so.5` when available, honoring lm-sensors `compute`, `label`, and `ignore` configuration without starting a subprocess for each sample. If the library is unavailable or cannot initialize, it falls back to raw hwmon readings. At startup the daemon imports the desktop user's `~/.config/victus-hub` once when it has no initialized policy, then applies that policy itself. It uses `VICTUS_HUB_CONFIG_DIR` when set, otherwise the active seat0 account, otherwise the only account under `/home` that has those files. An existing daemon policy stays authoritative.
+
 ## Install (One-Liner)
 ```
 curl -sL https://raw.githubusercontent.com/evident0/victus-hub/master/install.sh | sudo bash
@@ -175,16 +181,16 @@ your UI from the updated installation. It requests sudo for system changes and
 leaves kernel modules and the RyzenAdj installation in place. The UI runs in
 the terminal; the daemon stays running after it closes.
 
-For UI-only development, `./scripts/ui-test 3` installs the checkout into
-`.venv` and emulates RGB without hardware writes. This helper uninstalls the
-daemon; use `./scripts/install --app-only` to restore it afterward.
+For UI-only development, `./scripts/ui-test` runs the Rust panel with
+offline sensor graphs and emulated RGB, without hardware writes or connecting
+to the installed daemon.
 
 The app logs to the terminal it was launched from (so run it from a
 terminal or check the desktop entry's output). The daemon logs via
 `journalctl -u victus-hubd`.
 
-`scripts/ui-test` accepts an optional terminal debug level; for the installed
-app, set `VICTUS_HUB_DEBUG_LEVEL`:
+`scripts/ui-test` takes no arguments. For the installed app, set
+`VICTUS_HUB_DEBUG_LEVEL`:
 
 | Level | Terminal messages |
 | --- | --- |
@@ -206,12 +212,30 @@ Save, then apply it and follow the logs:
 sudo systemctl restart victus-hubd
 journalctl -u victus-hubd -f -o cat
 
+## UI regression checks
+
+Run the model/backend tests with `cargo test --workspace`. The GTK regression
+test also exercises all six pages, AMD/Intel controls, single-/multi-zone
+keyboards, numeric editing, and the sensor context menu. It needs a display:
+
+```bash
+xvfb-run -a env GDK_BACKEND=x11 GSK_RENDERER=cairo G_DEBUG=fatal-warnings cargo test -p victus-hub \
+  gtk_controls_preserve_pending_edits_and_wire_lighting_and_navigation \
+  -- --ignored --nocapture
+```
+
+To save page screenshots, add `VICTUS_HUB_UI_SNAPSHOTS=/tmp/victus-ui-snapshots`
+to the environment in that command. Screenshots include default pages and
+alternate power, fan, lighting, and hardware configurations.
+
 ## Project Structure
 
-- **`victus_hub/`** — the Qt GUI. The user runs this unprivileged. It
+- **`crates/victus-hub/`** — the GTK GUI. The user runs this unprivileged. It
   sends desired state (fan curves, lighting, power policy) to the daemon
   over a Unix socket. Sensor display and the keyboard preview stay in the UI.
-- **`victus_hubd/`** — the root daemon. Runs as a systemd service
+  Fonts and icons live in `assets/` and are compiled into the binary. The
+  installer also copies `assets/icons/logoV.png`.
+- **`crates/victus-hubd/`** — the root daemon. Runs as a systemd service
   (`victus-hubd.service`), listens on `/run/victus-hubd/victus-hub.sock`,
   owns the control loops, and persists last policy under
   `/var/lib/victus-hubd/` so fans, lighting, and power limits keep working

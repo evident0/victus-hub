@@ -1,0 +1,400 @@
+window.victus {
+  background: #161616;
+  color: #ededed;
+  font-family: "IBM Plex Sans", Cantarell, sans-serif;
+  font-size: 13px;
+}
+window.victus .victus-page,
+window.victus .victus-root,
+window.victus .victus-scroll,
+window.victus .victus-scroll > viewport,
+window.victus list.sensors,
+window.victus list.sensors > row {
+  background: #161616;
+  color: #ededed;
+}
+window.victus .title {
+  font-size: 15px;
+  font-weight: 600;
+}
+window.victus .metric {
+  font-size: 42px;
+  font-weight: 600;
+}
+window.victus .unit {
+  color: #969696;
+  font-size: 13px;
+}
+window.victus .temp-unit { font-size: 18px; }
+window.victus .rpm-unit { font-size: 15px; }
+window.victus .hot { color: #ff4444; }
+window.victus .caption,
+window.victus .sub,
+window.victus .row-sub {
+  color: #969696;
+  font-size: 12px;
+}
+window.victus .row-sub { color: #909090; }
+window.victus .row-title {
+  font-size: 14px;
+  font-weight: 400;
+}
+window.victus .sensor-group-title { font-weight: 700; }
+window.victus .heartbeat { font-size: 8px; }
+window.victus .mono {
+  font-family: "IBM Plex Mono", monospace;
+  color: #8a8a8a;
+  font-size: 12px;
+}
+window.victus .head-status { font-size: 11px; }
+window.victus .footer-text { font-size: 11px; color: #7e7e7e; }
+window.victus .chart-hint { font-size: 11px; }
+window.victus .hex-value { color: #a2a2a2; }
+window.victus .small-title { font-size: 13px; }
+window.victus .select-label { font-size: 13px; color: #a8a8a8; }
+window.victus .jump-arrow { font-size: 15px; }
+window.victus .ok { color: #4ac06c; }
+window.victus .warn { color: #f3821d; }
+window.victus .accent { color: #3f8cff; }
+window.victus .hairline { background: #2c2c2c; }
+window.victus .seg {
+  background: #0f0f0f;
+  border-radius: 10px;
+  padding: 4px;
+}
+window.victus button.seg-btn {
+  background: transparent;
+  color: #a8a8a8;
+  border: none;
+  box-shadow: none;
+  border-radius: 8px;
+  padding: 9px 6px;
+  min-height: 16px;
+  font-size: 13px;
+  font-weight: 400;
+}
+window.victus button.seg-btn label { font-weight: 400; }
+window.victus button.seg-btn.on {
+  background: #3f8cff;
+  color: #ffffff;
+  font-weight: 600;
+}
+window.victus button.seg-btn.on label { font-weight: 600; }
+window.victus button.seg-btn.animated-seg.on { background: transparent; }
+window.victus button.seg-btn:hover:not(:disabled) { color: #ededed; }
+window.victus button.seg-btn.on:hover:not(:disabled) { color: #ffffff; }
+window.victus button.seg-btn:disabled { color: #7e7e7e; }
+window.victus .compact-seg { padding: 3px; border-radius: 9px; }
+window.victus .compact-seg button.seg-btn { padding: 7px 6px; min-height: 0; min-width: 41px; font-size: 12px; }
+window.graph-win {
+  background: #161616;
+  color: #ededed;
+}
+window.graph-win .graph-name { color: #cfcfcf; font-size: 11px; }
+window.graph-win .graph-value { color: #ffffff; font-size: 11px; font-weight: 800; }
+window.graph-win .graph-source { color: #969696; font-size: 11px; }
+window.graph-win .graph-scale { background: #3d3d3d; }
+window.graph-win entry {
+  background: #303030;
+  color: #ffffff;
+  border: 1px solid #555555;
+  border-radius: 2px;
+  min-height: 20px;
+  padding: 0 4px;
+  font-size: 11px;
+}
+popover.sensor-menu > contents {
+  background-color: #161616;
+  color: #ededed;
+  border: 1px solid #2c2c2c;
+  border-radius: 8px;
+  padding: 4px;
+  box-shadow: none;
+}
+popover.sensor-menu button {
+  background: transparent;
+  color: #ededed;
+  border: none;
+  box-shadow: none;
+  border-radius: 6px;
+  padding: 6px 14px;
+  margin: 1px 2px;
+  min-height: 0;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 400;
+}
+popover.sensor-menu button label { font-weight: 400; }
+popover.sensor-menu button:hover:not(:disabled) { background: #202020; }
+popover.sensor-menu button:disabled,
+popover.sensor-menu button:disabled label { color: #969696; background: transparent; }
+window.victus .linkish {
+  background: transparent;
+  color: #909090;
+  border: none;
+  box-shadow: none;
+  padding: 0;
+  min-height: 0;
+  font-size: 14px;
+  font-weight: 400;
+}
+window.victus button.linkish label {
+  font-size: 14px;
+  font-weight: 400;
+}
+window.victus button.curve-link,
+window.victus button.curve-link label { font-size: 12px; }
+window.victus .linkish.on { color: #3f8cff; }
+window.victus button.linkish:hover:not(:disabled) { color: #ededed; }
+window.victus button.linkish.on:hover:not(:disabled) { color: #6ba6ff; }
+window.victus button.linkish:disabled { color: #7e7e7e; }
+window.victus button.selection-link {
+  border-bottom: 1px solid transparent;
+  border-radius: 0;
+  padding-bottom: 4px;
+  transition: border-bottom-color 280ms ease-out;
+}
+window.victus button.selection-link.on {
+  color: #f4f4f4;
+  border-bottom-color: #3f8cff;
+}
+window.victus button.selection-link.on:hover:not(:disabled) { color: #f4f4f4; }
+window.victus button.selection-link.animated-link.on { border-bottom-color: transparent; }
+window.victus button.pill {
+  background: #202020;
+  color: #ededed;
+  border: 1px solid #343434;
+  box-shadow: none;
+  border-radius: 8px;
+  padding: 0 12px;
+  min-height: 32px;
+  font-size: 13px;
+  font-weight: 400;
+}
+window.victus button.pill label { font-weight: 400; }
+window.victus button.pill:hover:not(:disabled) { background: #343434; }
+window.victus button.pill:active:not(:disabled) { background: #313131; }
+window.victus button.pill:disabled { background: #0f0f0f; color: #7e7e7e; }
+window.victus button.accent-btn {
+  background: #3f8cff;
+  color: #ffffff;
+  border: none;
+  box-shadow: none;
+  border-radius: 8px;
+  padding: 7px 12px;
+  min-height: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+window.victus button.accent-btn label {
+  color: #ffffff;
+  font-weight: 600;
+}
+window.victus button.accent-btn:hover:not(:disabled) { background: #6ba6ff; }
+window.victus button.accent-btn:disabled { background: #202020; color: #7e7e7e; }
+window.victus button.accent-btn:disabled label { background: transparent; color: #7e7e7e; }
+window.victus .row-link {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  padding: 8px 0;
+}
+window.victus button.row-link label { font-weight: 400; }
+window.victus button.row-link .sensor-group-title { font-weight: 700; }
+window.victus .row-link:hover:not(:disabled) { background: #202020; border-radius: 10px; }
+window.victus button.home-jump,
+window.victus button.home-jump:hover:not(:disabled) { background: transparent; padding: 0; min-height: 0; }
+window.victus list.sensors button.row-link,
+window.victus list.sensors button.row-link:hover:not(:disabled) {
+  background: transparent;
+  border-radius: 0;
+}
+window.victus .sunken-chip {
+  background: #0f0f0f;
+  border-radius: 8px;
+  padding: 7px 10px;
+  color: #ededed;
+  font-weight: 600;
+}
+window.victus entry,
+window.victus spinbutton {
+  background: #0f0f0f;
+  color: #ededed;
+  border: 1px solid #2c2c2c;
+  border-radius: 8px;
+}
+window.victus .spin-well {
+  background: #0f0f0f;
+  border: 1px solid #343434;
+  border-radius: 8px;
+  min-height: 32px;
+}
+window.victus .spin-well:focus-within { background: #0d0d0d; }
+window.victus .power-spin { min-height: 30px; }
+window.victus spinbutton.embed-spin {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  padding: 4px;
+  min-height: 0;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 13px;
+}
+window.victus spinbutton.embed-spin > text {
+  background: transparent;
+  color: #ededed;
+  padding: 0;
+  min-width: 0;
+}
+window.victus .spin-well button {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  padding: 0;
+  min-height: 0;
+  min-width: 18px;
+  border-radius: 4px;
+}
+window.victus .spin-well button:hover { background: #202020; }
+window.victus dropdown > button {
+  background: #202020;
+  color: #ededed;
+  border: 1px solid #2c2c2c;
+  box-shadow: none;
+  border-radius: 6px;
+  padding: 4px 8px 4px 10px;
+  min-height: 24px;
+  font-weight: 400;
+}
+window.victus dropdown > button label,
+window.victus dropdown > button row { font-weight: 400; background: transparent; }
+window.victus dropdown > button:hover:not(:disabled) { background: #363636; }
+window.victus dropdown > button:checked,
+window.victus dropdown > button:active:not(:disabled) {
+  background: #202020;
+  border-color: #343434;
+}
+window.victus dropdown > button row { padding: 0; }
+window.victus dropdown arrow { -gtk-icon-size: 14px; min-width: 14px; min-height: 14px; }
+window.victus dropdown popover > contents {
+  background: #161616;
+  color: #ededed;
+  border: 1px solid #2c2c2c;
+  border-radius: 8px;
+  padding: 4px;
+  box-shadow: none;
+}
+window.victus dropdown popover label { font-weight: 400; }
+window.victus dropdown listview,
+window.victus dropdown listview > row {
+  background: transparent;
+  border-radius: 6px;
+  min-height: 0;
+  margin: 0;
+  padding: 2px 8px;
+}
+window.victus dropdown listview > row:hover,
+window.victus dropdown listview > row:selected { background: #202020; }
+window.victus entry.hex { font-family: "IBM Plex Mono", monospace; }
+window.victus .hex-field {
+  background: #0d0d0d;
+  border: 1px solid #343434;
+  padding-right: 10px;
+}
+window.victus .hex-field entry.hex {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  padding: 0;
+  min-height: 0;
+  font-size: 13px;
+}
+window.victus .hex-field label { font-size: 13px; color: #7e7e7e; }
+window.victus .sunken-chip { font-family: "IBM Plex Mono", monospace; }
+window.victus scale { padding: 6px 0; }
+window.victus scale trough {
+  background: #313131;
+  border: none;
+  box-shadow: none;
+  border-radius: 99px;
+  min-height: 2px;
+}
+window.victus scale highlight { background: #3f8cff; border: none; min-height: 2px; }
+window.victus scale slider {
+  background: #3f8cff;
+  border-radius: 99px;
+  min-width: 14px;
+  min-height: 14px;
+  /* Center the 14px thumb on the 2px track; Adwaita's -8px yields -2px sizes. */
+  margin: -6px;
+  border: none;
+  box-shadow: none;
+}
+window.victus scale:disabled { opacity: 0.45; }
+window.victus switch:checked { background: #3f8cff; }
+window.victus switch.qt-switch {
+  background: #363636;
+  border: none;
+  box-shadow: none;
+  border-radius: 11px;
+  padding: 3px;
+  min-width: 34px;
+  min-height: 16px;
+}
+window.victus switch.qt-switch > slider {
+  background: #8a8a8a;
+  border: none;
+  box-shadow: none;
+  border-radius: 99px;
+  margin: 0;
+  padding: 0;
+  min-width: 16px;
+  min-height: 16px;
+}
+window.victus switch.qt-switch:checked > slider { background: #ffffff; }
+window.victus switch.qt-switch:checked { background: #3f8cff; }
+window.victus switch.qt-switch > image { opacity: 0; -gtk-icon-size: 1px; }
+window.victus switch.qt-switch.small-switch { min-width: 32px; min-height: 15px; }
+window.victus switch.qt-switch.small-switch > slider { min-width: 15px; min-height: 15px; }
+window.victus .settings-footer { border-top: 1px solid #2c2c2c; padding: 16px 24px; }
+window.victus button.footer-link,
+window.victus button.footer-link label { color: #a8a8a8; font-size: 12.5px; }
+window.victus button.footer-link:hover label { color: #ededed; }
+window.victus.message-dialog .dialog-action-area { padding: 0 24px 16px; }
+window.victus scrollbar { background: transparent; }
+window.victus scrollbar slider { background: #3b3b3b; border: none; border-radius: 3px; min-width: 6px; min-height: 30px; margin: 0; }
+window.victus scrollbar slider:hover { background: #343434; }
+window.victus .sensor-head {
+  border-bottom: 1px solid #2c2c2c;
+}
+window.victus .sensor-head > label {
+  color: #969696;
+  font-size: 11px;
+  font-weight: 500;
+  font-family: "IBM Plex Mono", monospace;
+  padding: 4px 8px;
+  min-height: 16px;
+}
+window.victus .sensor-cell { padding: 3px 6px; font-size: 13px; }
+window.victus button.sensor-branch {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  padding: 0;
+  min-height: 0;
+  min-width: 0;
+  color: #ededed;
+}
+window.victus .sensor-group-title { font-weight: 700; }
+window.victus list.sensors > row {
+  padding: 0;
+  min-height: 0;
+  border: none;
+  border-radius: 0;
+}
+window.victus list.sensors > row:focus,
+window.victus list.sensors > row:focus-visible { outline: none; box-shadow: none; }
+window.victus list.sensors > row:hover,
+window.victus list.sensors > row:selected { background: #202020; }
+window.victus list.sensors label.mono { color: #ededed; }
+window.victus list.sensors label.hot { color: #ff4444; }
