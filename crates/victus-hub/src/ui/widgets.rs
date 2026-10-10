@@ -426,9 +426,9 @@ pub fn dropdown(labels: &[&str]) -> DropDown {
 
 fn chevron_texture(up: bool) -> gtk4::gdk::Texture {
     let bytes: &'static [u8] = if up {
-        include_bytes!("../../../../victus_hub/resources/icons/chevron-up.png")
+        include_bytes!("../../assets/icons/chevron-up.png")
     } else {
-        include_bytes!("../../../../victus_hub/resources/icons/chevron-down.png")
+        include_bytes!("../../assets/icons/chevron-down.png")
     };
     gtk4::gdk::Texture::from_bytes(&gtk4::glib::Bytes::from_static(bytes)).expect("bundled chevron")
 }

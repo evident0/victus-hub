@@ -7,7 +7,7 @@ A lightweight control panel for HP Victus and Omen laptops on Linux.
 It was built and tested on 8BD4 (HP Victus 16-s0001nv) 
 with Fedora.
 
-The panel and the root daemon are a Cargo workspace (`victus-hub` and `victus-hubd`). The panel is a GTK 4 and libadwaita window. Python stays in the tree as the behavior reference. `cargo build --release` writes both binaries under `target/release/`. `scripts/install` builds them and installs the binaries; it does not create a Python virtualenv. `VICTUS_HUB_OFFLINE=1` opens the panel without connecting to a daemon.
+The panel and the root daemon are a Cargo workspace (`victus-hub` and `victus-hubd`). The panel is a GTK 4 and libadwaita window. `cargo build --release` writes both binaries under `target/release/`. `scripts/install` builds them and installs the binaries. `VICTUS_HUB_OFFLINE=1` opens the panel without connecting to a daemon.
 
 Building requires Rust 1.90 or newer, GTK 4.14 or newer, libadwaita 1.5 or newer, and their development/pkg-config packages. The installer builds in a temporary directory using the invoking user's home and cache, including when the source checkout under `/opt` belongs to root.
 
@@ -224,16 +224,17 @@ xvfb-run -a env GDK_BACKEND=x11 GSK_RENDERER=cairo G_DEBUG=fatal-warnings cargo 
   -- --ignored --nocapture
 ```
 
-To save page screenshots for comparison with the Python/Qt reference, add
-`VICTUS_HUB_UI_SNAPSHOTS=/tmp/victus-ui-snapshots` to the environment in that
-command. Screenshots include default pages and alternate power, fan, lighting,
-and hardware configurations.
+To save page screenshots, add `VICTUS_HUB_UI_SNAPSHOTS=/tmp/victus-ui-snapshots`
+to the environment in that command. Screenshots include default pages and
+alternate power, fan, lighting, and hardware configurations.
 
 ## Project Structure
 
 - **`crates/victus-hub/`** — the GTK GUI. The user runs this unprivileged. It
   sends desired state (fan curves, lighting, power policy) to the daemon
   over a Unix socket. Sensor display and the keyboard preview stay in the UI.
+  Fonts and icons live in `assets/` and are compiled into the binary. The
+  installer also copies `assets/icons/logoV.png`.
 - **`crates/victus-hubd/`** — the root daemon. Runs as a systemd service
   (`victus-hubd.service`), listens on `/run/victus-hubd/victus-hub.sock`,
   owns the control loops, and persists last policy under

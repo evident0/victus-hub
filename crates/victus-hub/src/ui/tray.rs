@@ -133,7 +133,7 @@ fn activates(event: &TrayIconEvent) -> bool {
 }
 
 fn logo() -> Option<Icon> {
-    let bytes = include_bytes!("../../../../victus_hub/resources/icons/logoV.png");
+    let bytes = include_bytes!("../../assets/icons/logoV.png");
     let texture = gtk4::gdk::Texture::from_bytes(&gtk4::glib::Bytes::from_static(bytes)).ok()?;
     let width = texture.width();
     let height = texture.height();

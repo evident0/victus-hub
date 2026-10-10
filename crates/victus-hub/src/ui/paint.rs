@@ -74,7 +74,7 @@ pub fn sidebar_with_pill(cr: &Context, width: f64, height: f64, keyboard: bool, 
 }
 
 fn icon(cr: &Context, page: usize) {
-    // Match the 24-unit SVG paths in victus_hub/widgets/sidebar.py.
+    // 24-unit sidebar icons.
     match page {
         0 => {
             let _ = cr.new_sub_path();

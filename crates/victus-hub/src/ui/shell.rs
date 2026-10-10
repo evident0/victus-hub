@@ -174,11 +174,11 @@ pub(super) fn prepare_fonts() -> FontFiles {
         return FontFiles(None);
     }
     let fonts: &[(&str, &[u8])] = &[
-        ("IBMPlexSans-Regular.ttf", include_bytes!("../../../../victus_hub/resources/fonts/IBMPlexSans-Regular.ttf")),
-        ("IBMPlexSans-Medium.ttf", include_bytes!("../../../../victus_hub/resources/fonts/IBMPlexSans-Medium.ttf")),
-        ("IBMPlexSans-SemiBold.ttf", include_bytes!("../../../../victus_hub/resources/fonts/IBMPlexSans-SemiBold.ttf")),
-        ("IBMPlexMono-Regular.ttf", include_bytes!("../../../../victus_hub/resources/fonts/IBMPlexMono-Regular.ttf")),
-        ("IBMPlexMono-Medium.ttf", include_bytes!("../../../../victus_hub/resources/fonts/IBMPlexMono-Medium.ttf")),
+        ("IBMPlexSans-Regular.ttf", include_bytes!("../../assets/fonts/IBMPlexSans-Regular.ttf")),
+        ("IBMPlexSans-Medium.ttf", include_bytes!("../../assets/fonts/IBMPlexSans-Medium.ttf")),
+        ("IBMPlexSans-SemiBold.ttf", include_bytes!("../../assets/fonts/IBMPlexSans-SemiBold.ttf")),
+        ("IBMPlexMono-Regular.ttf", include_bytes!("../../assets/fonts/IBMPlexMono-Regular.ttf")),
+        ("IBMPlexMono-Medium.ttf", include_bytes!("../../assets/fonts/IBMPlexMono-Medium.ttf")),
     ];
     for (name, bytes) in fonts {
         let _ = std::fs::write(dir.join(name), bytes);

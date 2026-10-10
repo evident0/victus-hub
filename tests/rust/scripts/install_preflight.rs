@@ -1154,7 +1154,7 @@ fn icons_prefer_magick_and_support_legacy_convert() {
         }
     }
     harness.env_set("PATH", &harness.bin.display().to_string());
-    let icon = harness.root.join("victus_hub/resources/icons/logoV.png");
+    let icon = harness.root.join("crates/victus-hub/assets/icons/logoV.png");
     fs::create_dir_all(icon.parent().unwrap()).unwrap();
     fs::write(&icon, "").unwrap();
     for name in ["magick", "convert"] {

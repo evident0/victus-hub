@@ -6,10 +6,11 @@ Use this workflow when changing installers, uninstallers, DKMS hooks, desktop
 launchers, dependency checks, or development scripts. Run the checks in rootless
 Podman containers so package installation and simulated system changes stay
 outside the host. The checkout is mounted read-only; build a writable copy
-inside each container for the real Python package installation.
+inside each container for Cargo and the script checks.
 
-The current program is Rust/GTK; Python/Qt is the behavior reference. Run the
-Rust workspace and display checks below as well as the Python/script checks.
+The program is the Rust/GTK workspace. `scripts/stop-gui` is still Python
+because the installer and uninstaller call it. The dated results below record
+the last run that still included the Python application tests.
 
 ## Latest run: 2026-10-09
 
@@ -62,13 +63,13 @@ The branch review used these images:
 | Linux Mint 22 | No separate Mint image | Ubuntu/Python base and X11 compatibility checked through Ubuntu 24.04; no direct Mint desktop validation |
 
 Shell syntax checks and ShellCheck also passed. The commands below run the
-expanded suite on all three images; report the actual counts and skips from
-each new run. Arch's `latest` tag and distro packages change over time, so
-record image digests and Python/DKMS versions with results.
+script and Cargo checks on all three images; report the actual counts and
+skips from each new run. Arch's `latest` tag and distro packages change over
+time, so record image digests and DKMS versions with results.
 
-These checks exercise dependency availability, Python wheel installation,
-installer behavior in temporary filesystems, real ELF build IDs/compression,
-module indexing, and an actual Qt application under Xvfb. They do not prove
+These checks exercise dependency availability, installer behavior in temporary
+filesystems, real ELF build IDs/compression, module indexing, and the Rust
+workspace under Xvfb. They do not prove
 kernel-driver compilation/loading, booted systemd operation, physical hardware
 control, Secure Boot/MOK enrollment, SELinux service behavior, or suspend/resume
 on a laptop. Containers share the host kernel.
@@ -81,7 +82,8 @@ setup; the project workflow uses shim/MOK and DKMS 3 or newer.
 ## 1. Create disposable containers
 
 Run these commands from the checkout in the same host shell. Podman, network
-access, and enough disk space for packages/PySide6 are required. No host `sudo`
+access, and enough disk space for the distro packages and the Rust build are
+required. No host `sudo`
 is needed; container root is mapped through rootless Podman.
 
 ```bash
@@ -94,8 +96,8 @@ podman images --format '{{.Repository}}:{{.Tag}} {{.ID}}'
 
 Record existing images and containers so cleanup preserves other work. On a
 space-constrained device, complete steps 1–4 for **one distribution at a time**.
-Exclude `target/` from source copies (it was 8 GiB on this checkout), disable
-pip caching, and clear distro package caches. Monitor both the container storage
+Exclude `target/` from source copies (it was 8 GiB on this checkout) and clear
+distro package caches. Monitor both the container storage
 filesystem and `/tmp`; stop if storage free space drops below 3 GiB. Bound test
 logs (this run capped them at 2 MiB) and use timeouts for display tests.
 
@@ -138,7 +140,7 @@ test environment.
 podman exec vh-review-ubuntu bash -lc '
   apt-get update -qq &&
   DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
-    python3 python3-venv systemd libsystemd0 libglib2.0-bin \
+    python3 systemd libsystemd0 libglib2.0-bin \
     libdbus-1-3 libfontconfig1 libegl1 libgl1 \
     libwayland-client0 libwayland-cursor0 libwayland-egl1 libx11-xcb1 \
     libxkbcommon0 libxkbcommon-x11-0 libxcb-cursor0 libxcb-icccm4 \
@@ -155,7 +157,7 @@ podman exec vh-review-ubuntu bash -lc '
 ```bash
 podman exec vh-review-fedora bash -lc '
   dnf install -y -q --setopt=install_weak_deps=False \
-    python3 python3-pip systemd systemd-libs glib2 dbus-libs fontconfig \
+    python3 systemd systemd-libs glib2 dbus-libs fontconfig \
     mesa-libEGL libglvnd-glx libwayland-client libwayland-cursor libwayland-egl \
     libX11-xcb libxkbcommon libxkbcommon-x11 xcb-util-cursor xcb-util-wm \
     xcb-util-image xcb-util-keysyms xcb-util-renderutil libxcb \
@@ -184,22 +186,20 @@ podman exec vh-review-arch bash -lc '
 '
 ```
 
-## 3. Validate installation, scripts, and desktop fallback
+## 3. Validate installation, scripts, and the workspace
 
 Run this block after the selected distribution's dependency command succeeds.
-Each container uses a
-fresh system-Python virtual environment, installs the actual project and its
-PySide6 dependency, then runs the same checks. No pytest dependency is needed.
-The assertions and `check=True` calls make a failed check exit nonzero; stop
-and inspect the failure before claiming the distro passed.
+Each container copies the checkout, checks the shell scripts, then builds and
+tests the Rust workspace. `scripts/stop-gui` is Python and is covered by the
+installer tests, so leave it out of the Bash/ShellCheck list. The assertions
+and `check=True` calls make a failed check exit nonzero; stop and inspect the
+failure before claiming the distro passed.
 
 ```bash
 podman exec -i "$container" python3 - <<'PY'
-import os
 from pathlib import Path
 import shutil
 import subprocess
-import sys
 
 root = Path('/src')
 project = Path('/tmp/victus-review-project')
@@ -207,35 +207,8 @@ shutil.copytree(
     root, project, dirs_exist_ok=True,
     ignore=shutil.ignore_patterns('.git', '.venv', '__pycache__', '.pytest_cache', 'target', 'graphify-out'),
 )
-print(f'Python: {sys.version}', flush=True)
+print('Copied checkout', flush=True)
 subprocess.run(['dkms', '--version'], check=True)
-subprocess.run([sys.executable, '-I', '-m', 'venv', '/tmp/check-venv'], check=True)
-python = '/tmp/check-venv/bin/python'
-subprocess.run([
-    python, '-I', '-m', 'pip', 'install', '-q', '--no-cache-dir', '--disable-pip-version-check', str(project),
-], check=True)
-subprocess.run([
-    python, '-I', '-c',
-    'from victus_hubd import daemon; from victus_hub.main import main; '
-    'print("Installed app and daemon imports passed")',
-], check=True)
-subprocess.run([
-    python, '-m', 'unittest',
-    'tests.test_install_preflight', 'tests.test_hp_wmi_installation',
-    'tests.test_uninstall_cleanup', 'tests.test_script_portability',
-    'tests.test_update_check', 'tests.test_application_activation',
-    'tests.test_sensor_request', 'tests.test_daemon_runtime',
-], cwd=root, env=dict(os.environ, PYTHONDONTWRITEBYTECODE='1', QT_QPA_PLATFORM='offscreen'), check=True)
-
-runtime = Path('/tmp/victus-qt-runtime')
-runtime.mkdir(mode=0o700, exist_ok=True)
-subprocess.run([
-    'xvfb-run', '-a', 'env', 'QT_QPA_PLATFORM=wayland;xcb',
-    f'XDG_RUNTIME_DIR={runtime}', python, '-I', '-c',
-    'from PySide6.QtWidgets import QApplication; app=QApplication([]); '
-    'assert app.platformName() == "xcb", app.platformName(); '
-    'print("Wayland-to-X11 fallback passed")',
-], check=True)
 
 scripts = [root / 'install.sh', root / 'uninstall.sh']
 scripts += sorted(p for p in (root / 'scripts').iterdir() if p.is_file() and p.name != 'stop-gui')
@@ -248,22 +221,19 @@ subprocess.run([
 ], check=True)
 subprocess.run(['sh', '-n', str(root / 'data/victus-hub-sleep')], check=True)
 subprocess.run(['shellcheck', str(root / 'data/victus-hub-sleep')], check=True)
-print('All distro checks passed', flush=True)
+print('Script checks passed', flush=True)
 PY
 
 git diff --check
 git status --short
 ```
 
-- Qt may print that Wayland could not connect before successfully selecting
-  `xcb`; the assertion checks that fallback really happened.
-- Session-bus integration tests can skip when the container lacks a session
-  bus. Include skips in the reported result.
+- Include skips in the reported result.
 - `SC1091` is excluded for dynamically sourced helpers, and `SC2034` for
   variables consumed by callers of shared shell libraries. Review those uses
   manually. Other ShellCheck warnings must be investigated.
-- `scripts/stop-gui` is Python, not shell; application-activation tests exercise
-  it. Do not include it in the Bash/ShellCheck input list.
+- `scripts/stop-gui` is Python, not shell. Do not include it in the
+  Bash/ShellCheck input list.
 - Do not execute the actual top-level install/uninstall commands against the
   host. The installer tests rewrite system paths into temporary directories.
 
@@ -293,7 +263,7 @@ from pathlib import Path
 import subprocess
 
 fonts = Path('/tmp/victus-test-fonts.conf')
-fonts.write_text('<?xml version="1.0"?><fontconfig><include ignore_missing="yes">/etc/fonts/fonts.conf</include><dir>/src/victus_hub/resources/fonts</dir></fontconfig>')
+fonts.write_text('<?xml version="1.0"?><fontconfig><include ignore_missing="yes">/etc/fonts/fonts.conf</include><dir>/src/crates/victus-hub/assets/fonts</dir></fontconfig>')
 env = dict(os.environ, FONTCONFIG_FILE=str(fonts), GTK_A11Y='none', GSK_RENDERER='cairo')
 for name in (
     'fan_mode_explanation_uses_one_line',
