@@ -1,5 +1,5 @@
 /// Package version. Keep this aligned with the workspace version.
-pub const PROGRAM_VERSION: &str = "1.0.3";
+pub const PROGRAM_VERSION: &str = "2.0.0";
 
 /// Compare stable release tags such as `1.0.2` and `v1.0.2` numerically.
 pub fn release_is_newer(tag: &str, installed: &str) -> Result<bool, super::HubError> {

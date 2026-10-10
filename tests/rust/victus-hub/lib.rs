@@ -43,8 +43,8 @@ fn hydrate_keeps_daemon_policy_and_release_tags_parse_offline() {
     assert!(model.state.initialized);
     assert_eq!(parse_release_tag(r#"{"tag_name":"v1.2.3"}"#).as_deref(), Some("v1.2.3"));
     assert!(parse_release_tag(r#"{"tag_name":"main"}"#).is_none());
-    assert_eq!(update_choice("v1.0.3", PROGRAM_VERSION), UpdateChoice::Current);
-    assert_eq!(update_choice("v1.0.10", PROGRAM_VERSION), UpdateChoice::Available);
+    assert_eq!(update_choice("v2.0.0", PROGRAM_VERSION), UpdateChoice::Current);
+    assert_eq!(update_choice("v2.0.1", PROGRAM_VERSION), UpdateChoice::Available);
     assert!(update_shell().contains(GITHUB_INSTALL_COMMAND));
     assert!(!update_shell().contains("QT_QPA_PLATFORM"));
     assert_eq!(model.keyboard_zone("W", 10.0, 300.0), 3);
