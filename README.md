@@ -7,12 +7,6 @@ A lightweight control panel for HP Victus and Omen laptops on Linux.
 It was built and tested on 8BD4 (HP Victus 16-s0001nv) 
 with Fedora.
 
-The panel and the root daemon are a Cargo workspace (`victus-hub` and `victus-hubd`). The panel is a GTK 4 and libadwaita window. `cargo build --release` writes both binaries under `target/release/`. `scripts/install` builds them and installs the binaries. `VICTUS_HUB_OFFLINE=1` opens the panel without connecting to a daemon.
-
-Building requires Rust 1.90 or newer, GTK 4.14 or newer, libadwaita 1.5 or newer, and their development/pkg-config packages. The installer builds in a temporary directory using the invoking user's home and cache, including when the source checkout under `/opt` belongs to root.
-
-The Sensors page uses `libsensors.so.5` when available, honoring lm-sensors `compute`, `label`, and `ignore` configuration without starting a subprocess for each sample. If the library is unavailable or cannot initialize, it falls back to raw hwmon readings. At startup the daemon imports the desktop user's `~/.config/victus-hub` once when it has no initialized policy, then applies that policy itself. It uses `VICTUS_HUB_CONFIG_DIR` when set, otherwise the active seat0 account, otherwise the only account under `/home` that has those files. An existing daemon policy stays authoritative.
-
 ## Install (One-Liner)
 ```
 curl -sL https://raw.githubusercontent.com/evident0/victus-hub/master/install.sh | sudo bash
